@@ -1,6 +1,6 @@
 # OpenTofu + ORAS Backend
 
-> 🍴 **This is a fork of [opentofu/opentofu](https://github.com/opentofu/opentofu)** that adds an **ORAS backend** for storing OpenTofu state in OCI registries.
+> 🍴 **This is a fork of [opentofu/opentofu](https://github.com/opentofu/opentofu)** that adds an **ORAS backend** for storing OpenTofu state in OCI registries (such as GitHub Container Registry)
 
 [![Release](https://img.shields.io/github/v/release/vmvarela/opentofu?label=Latest%20Release&style=flat-square)](https://github.com/vmvarela/opentofu/releases/latest)
 [![OpenTofu Base](https://img.shields.io/badge/Based%20on-OpenTofu-blue?style=flat-square)](https://github.com/opentofu/opentofu)
