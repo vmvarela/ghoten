@@ -3,7 +3,7 @@
 # Usage: curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
 #
 # Environment variables:
-#   TOFU_ORAS_VERSION  - Specific version to install (e.g., v1.12.0-oci). Default: latest
+#   TOFU_ORAS_VERSION     - Specific version to install (e.g., v1.12.0-oras). Default: latest
 #   TOFU_ORAS_INSTALL_DIR - Installation directory. Default: /usr/local/bin
 #   TOFU_ORAS_BINARY_NAME - Binary name. Default: tofu-oras
 
@@ -76,7 +76,7 @@ download() {
     OUTPUT="$2"
     
     if command -v curl >/dev/null 2>&1; then
-        curl -sSL "$URL" -o "$OUTPUT"
+        curl -fsSL "$URL" -o "$OUTPUT"
     elif command -v wget >/dev/null 2>&1; then
         wget -q "$URL" -O "$OUTPUT"
     else
@@ -122,41 +122,13 @@ main() {
     
     TMP_FILE="${TMP_DIR}/${ARTIFACT_NAME}"
     
-    # Download
-    if ! download "$DOWNLOAD_URL" "$TMP_FILE"; then
     # Download binary
-    download "$DOWNLOAD_URL" "$TMP_FILE"
+    if ! download "$DOWNLOAD_URL" "$TMP_FILE"; then
+        error "Download failed. Check if version ${VERSION} exists and has binaries for ${OS}/${ARCH}."
+    fi
     
     if [ ! -f "$TMP_FILE" ]; then
-        error "Download failed"
-    fi
-    
-    # Download and verify checksum
-    CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/SHA256SUMS"
-    CHECKSUMS_FILE="${TMP_DIR}/SHA256SUMS"
-    
-    info "Downloading checksums from: ${CHECKSUMS_URL}"
-    download "$CHECKSUMS_URL" "$CHECKSUMS_FILE"
-    
-    if [ ! -f "$CHECKSUMS_FILE" ]; then
-        error "Failed to download checksum file"
-    fi
-    
-    EXPECTED_SUM=$(grep "  ${ARTIFACT_NAME}\$" "$CHECKSUMS_FILE" | awk '{print $1}')
-    if [ -z "$EXPECTED_SUM" ]; then
-        error "No checksum entry found for ${ARTIFACT_NAME} in SHA256SUMS"
-    fi
-    
-    if command -v sha256sum >/dev/null 2>&1; then
-        ACTUAL_SUM=$(sha256sum "$TMP_FILE" | awk '{print $1}')
-    elif command -v shasum >/dev/null 2>&1; then
-        ACTUAL_SUM=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
-    else
-        error "Neither sha256sum nor shasum is available; cannot verify checksum"
-    fi
-    
-    if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
-        error "Checksum verification failed for ${ARTIFACT_NAME}"
+        error "Download failed - file not found"
     fi
     
     # Make executable
@@ -183,7 +155,7 @@ main() {
     # Verify installation
     if [ -x "$INSTALL_PATH" ]; then
         echo ""
-        info "✅ Installation complete!"
+        info "Installation complete!"
         echo ""
         info "Binary installed: ${INSTALL_PATH}"
         info "Version: $(${INSTALL_PATH} version 2>/dev/null || echo "${VERSION}")"
