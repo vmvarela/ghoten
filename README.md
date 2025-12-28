@@ -1,27 +1,40 @@
 # OpenTofu + ORAS Backend
 
-> 🍴 **This is a fork of [opentofu/opentofu](https://github.com/opentofu/opentofu)** that adds an **ORAS backend** for storing OpenTofu state in OCI registries (such as GitHub Container Registry)
-
 [![Release](https://img.shields.io/github/v/release/vmvarela/opentofu?label=Latest%20Release&style=flat-square)](https://github.com/vmvarela/opentofu/releases/latest)
 [![OpenTofu Base](https://img.shields.io/badge/Based%20on-OpenTofu-blue?style=flat-square)](https://github.com/opentofu/opentofu)
 
----
-
-## 🤖 Why This Fork Exists
-
-This fork is maintained **independently** because:
-
-1. **AI-Generated Code**: The ORAS backend implementation was developed with AI assistance (GitHub Copilot). The upstream OpenTofu project [discourages AI coding assistants](https://github.com/opentofu/opentofu/blob/main/contributing/DEVELOPING.md#a-note-on-copyright) because LLMs may have been trained on BSL-licensed Terraform code.
-
-2. **Experimental Backend**: OpenTofu/Terraform Core has not added new remote state backends in years, preferring the generic HTTP backend for custom implementations. This fork provides a native OCI registry solution.
-
-This fork stays synchronized with upstream releases, allowing you to benefit from all OpenTofu improvements while having access to the ORAS backend.
+Store OpenTofu state in **OCI registries** (such as GitHub Container Registry) using **ORAS**.
+No SaaS. No cloud storage accounts. Just OCI.
 
 ---
 
-## 📦 What This Fork Adds
+## 🚀 5-minute Quick Start
 
-This fork includes an **ORAS backend** that allows you to store OpenTofu state in any OCI-compatible container registry (GitHub Container Registry, Amazon ECR, Azure ACR, Google GCR, Docker Hub, Harbor, etc.).
+```bash
+curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
+gh auth login
+tofu-oras init
+tofu-oras apply
+```
+
+This will initialize an ORAS backend configured in your Terraform files and store
+the state in your OCI registry (for example, GHCR).
+
+> ℹ️ This installs a separate binary called `tofu-oras`, so it does not interfere
+> with an existing OpenTofu (`tofu`) installation.
+
+
+## 📦 What This Adds
+
+This project adds an ORAS backend that allows you to store OpenTofu state in any
+OCI-compatible container registry:
+- GitHub Container Registry (GHCR)
+- Amazon ECR
+- Azure ACR
+- Google GCR
+- Docker Hub
+- Harbor
+- Any OCI-compliant registry
 
 ### Key Features
 
@@ -29,12 +42,26 @@ This fork includes an **ORAS backend** that allows you to store OpenTofu state i
 |---------|-------------|
 | **OCI Registry Storage** | Store state as OCI artifacts in your existing container registry |
 | **Reuse Existing Auth** | Uses Docker credentials and `tofu login` tokens |
-| **Distributed Locking** | Lock state to prevent concurrent modifications |
+| **Distributed Locking** | Best-effort locking to reduce concurrent modifications |
 | **State Versioning** | Keep history of state versions with configurable retention |
 | **Compression** | Optional gzip compression for state files |
 | **Encryption Compatible** | Works with OpenTofu's client-side state encryption |
 
-### Quick Start
+## ✅ When to use this backend
+
+- Individual operators or small teams
+- CI/CD pipelines
+- OSS projects
+- Environments where OCI registries are already available
+
+## 🚫 When NOT to use this backend
+
+- Large teams with heavy concurrent access
+- Strong locking or compliance requirements
+- Environments that mandate managed SaaS backends
+
+
+### 🧱 Minimal backend configuration
 
 ```hcl
 terraform {
@@ -44,7 +71,7 @@ terraform {
 }
 ```
 
-### Full Example (with versioning + encryption)
+### 🧰 Advanced Example (versioning + encryption)
 
 ```hcl
 terraform {
@@ -83,14 +110,18 @@ See the [ORAS Backend README](internal/backend/remote-state/oras/README.md) for 
 
 ---
 
+## 🧪 Project Status
+
+Actively developed and usable today.
+APIs and backend format may evolve based on feedback.
+
 ## 🔄 Release Versioning
 
 This fork follows OpenTofu releases with an `-oras` suffix:
 
 | OpenTofu Release | This Fork |
 |------------------|-----------|
-| `v1.12.0` | `v1.12.0-oras` |
-| `v1.11.1` | `v1.11.1-oras` |
+| `v1.11.2` | `v1.11.2-oras` |
 
 This allows you to choose which OpenTofu version you want with ORAS support.
 
@@ -151,6 +182,9 @@ go build -o tofu-oras ./cmd/tofu
 
 ---
 
+<details>
+<summary>📘 Original OpenTofu README</summary>
+
 # OpenTofu (Original Project)
 
 > The following is the original OpenTofu README.
@@ -206,3 +240,4 @@ In an effort to comply with applicable sanctions, we block access from specific 
 
 [Mozilla Public License v2.0](https://github.com/opentofu/opentofu/blob/main/LICENSE)
 
+</details>
