@@ -1,0 +1,51 @@
+name: 'Setup Ghoten'
+description: 'Install Ghoten (OpenTofu fork with ORAS backend) in GitHub Actions'
+author: 'vmvarela'
+
+branding:
+  icon: 'terminal'
+  color: 'purple'
+
+inputs:
+  ghoten_version:
+    description: |
+      The version of Ghoten to install. Accepts:
+      - 'latest' (default): Install the latest release
+      - Specific version: e.g., '1.12.0' or 'v1.12.0'
+    required: false
+    default: 'latest'
+  
+  ghoten_version_file:
+    description: |
+      Path to a file containing the version to install.
+      Supports:
+      - .ghoten-version: Plain version string (e.g., '1.12.0')
+      - .tool-versions (asdf format): 'ghoten 1.12.0'
+      Takes precedence over ghoten_version if both are set.
+    required: false
+    default: ''
+  
+  github_token:
+    description: |
+      GitHub token for API requests to avoid rate limiting.
+      Defaults to the automatic GITHUB_TOKEN.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: 'The version of Ghoten that was installed (without v prefix)'
+    value: ${{ steps.setup.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Ghoten
+      id: setup
+      shell: bash
+      env:
+        INPUT_GHOTEN_VERSION: ${{ inputs.ghoten_version }}
+        INPUT_GHOTEN_VERSION_FILE: ${{ inputs.ghoten_version_file }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        "${GITHUB_ACTION_PATH}/setup-ghoten.sh"
