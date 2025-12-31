@@ -4,13 +4,13 @@
 
 **Ghoten** is a personal fork of [opentofu/opentofu](https://github.com/opentofu/opentofu) that adds an **ORAS backend** for storing OpenTofu state in OCI registries (GHCR, ECR, ACR, Docker Hub, etc.).
 
-> 🎯 **Goal**: The ORAS backend developed here is intended to be contributed back to OpenTofu upstream.
+> 🎯 **Goal**: The ORAS backend mastered here is intended to be contributed back to OpenTofu upstream.
 
 ## Branch Strategy
 
 ```
 main      → Synchronized with opentofu/opentofu:main (tracking only, do not commit here)
-develop   → Main development branch (all PRs target here)
+master   → Main development branch (all PRs target here)
 ```
 
 ### Branch Rules
@@ -18,12 +18,12 @@ develop   → Main development branch (all PRs target here)
 | Branch | Purpose | Commits |
 |--------|---------|---------|
 | `main` | Tracks upstream opentofu/opentofu | Only via sync-upstream workflow |
-| `develop` | All fork development | Via Pull Requests |
+| `master` | All fork development | Via Pull Requests |
 
 ### Workflow
 
 1. **Sync upstream**: `sync-upstream.yml` runs daily and when new upstream tags are detected
-2. **PR to develop**: Creates PR `🚀 Release vX.Y.Z` from `main` → `develop`
+2. **PR to master**: Creates PR `🚀 Release vX.Y.Z` from `main` → `master`
 3. **Review & merge**: Manually merge the PR (resolve conflicts if any)
 4. **Auto-release**: `auto-release.yml` creates tag `vX.Y.Z` and GitHub Release
 5. **Build**: `release-fork.yml` builds `ghoten` binaries for all platforms
@@ -71,7 +71,7 @@ internal/backend/remote-state/oras/
 
 ### Creating PRs
 
-1. Always target `develop` branch
+1. Always target `master` branch
 2. Use descriptive titles for release notes generation
 3. Apply appropriate labels (auto-labeler will help):
    - `oras`, `oci`, `backend` - ORAS backend changes
@@ -85,7 +85,7 @@ internal/backend/remote-state/oras/
 No strict format required, but be descriptive. Examples:
 - `Add compression support to ORAS backend`
 - `Fix lock acquisition race condition`
-- `Update CI workflows for develop branch`
+- `Update CI workflows for master branch`
 
 ### Testing
 
@@ -100,7 +100,7 @@ go test ./...
 make build  # Creates ./ghoten
 ```
 
-## Files to NEVER modify on develop
+## Files to NEVER modify on master
 
 These files should only change via upstream sync:
 

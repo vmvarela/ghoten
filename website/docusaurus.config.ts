@@ -12,9 +12,9 @@ const config: Config = {
   },
 
   // GitHub Pages deployment config
-  url: 'https://victorcoder.github.io',
+  url: 'https://vmvarela.github.io',
   baseUrl: '/ghoten/',
-  organizationName: 'victorcoder',
+  organizationName: 'vmvarela',
   projectName: 'ghoten',
   trailingSlash: false,
 
@@ -32,7 +32,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/victorcoder/ghoten/tree/develop/website/',
+          editUrl: 'https://github.com/vmvarela/ghoten/tree/master/website/',
           routeBasePath: '/',
         },
         blog: false,
@@ -58,7 +58,7 @@ const config: Config = {
           label: 'Documentation',
         },
         {
-          href: 'https://github.com/victorcoder/ghoten',
+          href: 'https://github.com/vmvarela/ghoten',
           label: 'GitHub',
           position: 'right',
         },
@@ -89,7 +89,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/victorcoder/ghoten',
+              href: 'https://github.com/vmvarela/ghoten',
             },
             {
               label: 'OpenTofu',
