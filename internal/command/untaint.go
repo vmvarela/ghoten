@@ -207,7 +207,7 @@ func (c *UntaintCommand) Run(args []string) int {
 
 func (c *UntaintCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] untaint [options] name
+Usage: ghoten [global options] untaint [options] name
 
   OpenTofu uses the term "tainted" to describe a resource instance
   which may not be fully functional, either because its creation

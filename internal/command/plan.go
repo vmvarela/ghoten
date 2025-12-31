@@ -65,7 +65,7 @@ func (c *PlanCommand) Run(rawArgs []string) int {
 	c.Meta.input = args.InputEnabled
 
 	// FIXME: the -parallelism flag is used to control the concurrency of
-	// OpenTofu operations. At the moment, this value is used both to
+	// Ghoten operations. At the moment, this value is used both to
 	// initialize the backend via the ContextOpts field inside CLIOpts, and to
 	// set a largely unused field on the Operation request. Again, there is no
 	// clear path to pass this value down, so we continue to mutate the Meta
@@ -204,9 +204,9 @@ func (c *PlanCommand) GatherVariables(args *arguments.Vars) {
 
 func (c *PlanCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] plan [options]
+Usage: ghoten [global options] plan [options]
 
-  Generates a speculative execution plan, showing what actions OpenTofu would
+  Generates a speculative execution plan, showing what actions Ghoten would
   take to apply the current configuration. This command will not actually
   perform the planned actions.
 
@@ -215,13 +215,13 @@ Usage: tofu [global options] plan [options]
 
 Plan Customization Options:
 
-  The following options customize how OpenTofu will produce its plan. You can
-  also use these options when you run "tofu apply" without passing it a saved
+  The following options customize how Ghoten will produce its plan. You can
+  also use these options when you run "ghoten apply" without passing it a saved
   plan, in order to plan and apply in a single command.
 
   -destroy                Select the "destroy" planning mode, which creates a
                           plan to destroy all objects currently managed by this
-                          OpenTofu configuration instead of the usual behavior.
+                          Ghoten configuration instead of the usual behavior.
 
   -refresh-only           Select the "refresh only" planning mode, which checks
                           whether remote objects still match the outcome of the
@@ -237,7 +237,7 @@ Plan Customization Options:
   -replace=resource       Force replacement of a particular resource instance
                           using its resource address. If the plan would've
                           otherwise produced an update or no-op action for this
-                          instance, OpenTofu will plan to replace it instead.
+                          instance, Ghoten will plan to replace it instead.
                           You can use this option multiple times to replace
                           more than one object.
 
@@ -272,16 +272,16 @@ Plan Customization Options:
 
 Other Options:
 
-  -compact-warnings            If OpenTofu produces any warnings that are not
+  -compact-warnings            If Ghoten produces any warnings that are not
                                accompanied by errors, shows them in a more
                                compact form that includes only the summary
                                messages.
 
-  -consolidate-warnings=false  If OpenTofu produces any warnings, do not
+  -consolidate-warnings=false  If Ghoten produces any warnings, do not
                                attempt to consolidate similar messages. All
                                locations for all warnings will be listed.
 
-  -consolidate-errors          If OpenTofu produces any errors, attempt to
+  -consolidate-errors          If Ghoten produces any errors, attempt to
                                consolidate similar messages into a single item.
 
   -detailed-exitcode           Return detailed exit codes when the command

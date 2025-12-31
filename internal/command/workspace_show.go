@@ -46,7 +46,7 @@ func (c *WorkspaceShowCommand) AutocompleteFlags() complete.Flags {
 
 func (c *WorkspaceShowCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] workspace show
+Usage: ghoten [global options] workspace show
 
   Show the name of the current workspace.
 `

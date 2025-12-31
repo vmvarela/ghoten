@@ -121,7 +121,7 @@ func (c *ShowCommand) Run(rawArgs []string) int {
 
 func (c *ShowCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] show [target-selection-option] [other-options]
+Usage: ghoten [global options] show [target-selection-option] [other-options]
 
   Reads and outputs a OpenTofu state or plan file in a human-readable
   form. If no path is specified, the current state will be shown.

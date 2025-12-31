@@ -364,7 +364,7 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 
 func (c *ProvidersMirrorCommand) Help() string {
 	return `
-Usage: tofu [global options] providers mirror [options] <target-dir>
+Usage: ghoten [global options] providers mirror [options] <target-dir>
 
   Populates a local directory with copies of the provider plugins needed for
   the current configuration, so that the directory can be used either directly

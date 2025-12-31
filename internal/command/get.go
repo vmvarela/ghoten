@@ -69,7 +69,7 @@ func (c *GetCommand) Run(args []string) int {
 
 func (c *GetCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] get [options]
+Usage: ghoten [global options] get [options]
 
   Downloads and installs modules needed for the configuration in the 
   current working directory.
@@ -112,7 +112,7 @@ Options:
 }
 
 func (c *GetCommand) Synopsis() string {
-	return "Install or upgrade remote OpenTofu modules"
+	return "Install or upgrade remote Ghoten modules"
 }
 
 func getModules(ctx context.Context, m *Meta, path string, testsDir string, upgrade bool) (abort bool, diags tfdiags.Diagnostics) {

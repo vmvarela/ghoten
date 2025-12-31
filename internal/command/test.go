@@ -46,7 +46,7 @@ type TestCommand struct {
 
 func (c *TestCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] test [options]
+Usage: ghoten [global options] test [options]
 
   Executes automated integration tests against the current OpenTofu 
   configuration.
@@ -114,7 +114,7 @@ Options:
 }
 
 func (c *TestCommand) Synopsis() string {
-	return "Execute integration tests for OpenTofu modules"
+	return "Execute integration tests for Ghoten modules"
 }
 
 func (c *TestCommand) Run(rawArgs []string) int {

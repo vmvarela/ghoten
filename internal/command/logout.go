@@ -133,7 +133,7 @@ func (c *LogoutCommand) Help() string {
 	}
 
 	helpText := fmt.Sprintf(`
-Usage: tofu [global options] logout [hostname]
+Usage: ghoten [global options] logout [hostname]
 
   Removes locally-stored credentials for specified hostname.
 

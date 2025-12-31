@@ -23,7 +23,7 @@ func (c *MetadataCommand) Run(args []string) int {
 
 func (c *MetadataCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] metadata <subcommand> [options] [args]
+Usage: ghoten [global options] metadata <subcommand> [options] [args]
 
   This command has subcommands for metadata related purposes.
 

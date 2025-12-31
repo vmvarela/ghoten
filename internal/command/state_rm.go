@@ -170,7 +170,7 @@ func (c *StateRmCommand) Run(args []string) int {
 
 func (c *StateRmCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] state (remove|rm) [options] ADDRESS...
+Usage: ghoten [global options] state (remove|rm) [options] ADDRESS...
 
   Remove one or more items from the OpenTofu state, causing OpenTofu to
   "forget" those items without first destroying them in the remote system.

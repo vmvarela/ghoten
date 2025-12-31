@@ -23,7 +23,7 @@ func (c *StateCommand) Run(args []string) int {
 
 func (c *StateCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] state <subcommand> [options] [args]
+Usage: ghoten [global options] state <subcommand> [options] [args]
 
   This command has subcommands for advanced state management.
 

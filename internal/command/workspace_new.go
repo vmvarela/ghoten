@@ -198,7 +198,7 @@ func (c *WorkspaceNewCommand) AutocompleteFlags() complete.Flags {
 
 func (c *WorkspaceNewCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] workspace new [OPTIONS] NAME
+Usage: ghoten [global options] workspace new [OPTIONS] NAME
 
   Create a new OpenTofu workspace.
 

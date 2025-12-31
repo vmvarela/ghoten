@@ -211,7 +211,7 @@ func (c *ConsoleCommand) modePiped(session *repl.Session, ui cli.Ui) int {
 
 func (c *ConsoleCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] console [options]
+Usage: ghoten [global options] console [options]
 
   Starts an interactive console for experimenting with OpenTofu
   interpolations.
@@ -225,25 +225,25 @@ Usage: tofu [global options] console [options]
 
 Options:
 
-  -compact-warnings      If OpenTofu produces any warnings that are not
+  -compact-warnings      If Ghoten produces any warnings that are not
                          accompanied by errors, show them in a more compact
                          form that includes only the summary messages.
 
-  -consolidate-warnings  If OpenTofu produces any warnings, no consolidation
+  -consolidate-warnings  If Ghoten produces any warnings, no consolidation
                          will be performed. All locations, for all warnings
                          will be listed. Enabled by default.
 
-  -consolidate-errors    If OpenTofu produces any errors, no consolidation
+  -consolidate-errors    If Ghoten produces any errors, no consolidation
                          will be performed. All locations, for all errors
                          will be listed. Disabled by default
 
   -state=path            Legacy option for the local backend only. See the local
                          backend's documentation for more information.
 
-  -var 'foo=bar'         Set a variable in the OpenTofu configuration. This
+  -var 'foo=bar'         Set a variable in the Ghoten configuration. This
                          flag can be set multiple times.
 
-  -var-file=foo          Set variables in the OpenTofu configuration from
+  -var-file=foo          Set variables in the Ghoten configuration from
                          a file. If "terraform.tfvars" or any ".auto.tfvars"
                          files are present, they will be automatically loaded.
 `
@@ -251,5 +251,5 @@ Options:
 }
 
 func (c *ConsoleCommand) Synopsis() string {
-	return "Try OpenTofu expressions at an interactive command prompt"
+	return "Try Ghoten expressions at an interactive command prompt"
 }

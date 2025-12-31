@@ -97,11 +97,11 @@ func realMain() int {
 
 	ctx, err := tracing.OpenTelemetryInit(context.Background())
 	if err != nil {
-		// openTelemetryInit can only fail if OpenTofu was run with an
+		// openTelemetryInit can only fail if Ghoten was run with an
 		// explicit environment variable to enable telemetry collection,
 		// so in typical use we cannot get here.
 		Ui.Error(fmt.Sprintf("Could not initialize telemetry: %s", err))
-		Ui.Error(fmt.Sprintf("Unset environment variable %s if you don't intend to collect telemetry from OpenTofu.", tracing.OTELExporterEnvVar))
+		Ui.Error(fmt.Sprintf("Unset environment variable %s if you don't intend to collect telemetry from Ghoten.", tracing.OTELExporterEnvVar))
 
 		return 1
 	}
@@ -124,7 +124,7 @@ func realMain() int {
 		}
 	}
 
-	log.Printf("[INFO] OpenTofu version: %s %s", Version, VersionPrerelease)
+	log.Printf("[INFO] Ghoten version: %s %s", Version, VersionPrerelease)
 	if logging.IsDebugOrHigher() {
 		for _, depMod := range version.InterestingDependencies() {
 			log.Printf("[DEBUG] using %s %s", depMod.Path, depMod.Version)
@@ -132,11 +132,11 @@ func realMain() int {
 	}
 	log.Printf("[INFO] Go runtime version: %s", runtime.Version())
 	if fips140.Enabled() {
-		log.Printf("[WARNING] Go runtime FIPS 140-3 mode is enabled; OpenTofu is not supported in this configuration, which may cause undesirable behavior")
+		log.Printf("[WARNING] Go runtime FIPS 140-3 mode is enabled; Ghoten is not supported in this configuration, which may cause undesirable behavior")
 	}
 	log.Printf("[INFO] CLI args: %#v", os.Args)
 	if experimentsAreAllowed() {
-		log.Printf("[INFO] This build of OpenTofu allows using experimental features")
+		log.Printf("[INFO] This build of Ghoten allows using experimental features")
 	}
 
 	streams, err := terminal.Init()
@@ -185,7 +185,7 @@ func realMain() int {
 			Ui.Error(format.Diagnostic(diag, nil, earlyColor, 78))
 		}
 		if diags.HasErrors() {
-			Ui.Error("As a result of the above problems, OpenTofu may not behave as intended.\n\n")
+			Ui.Error("As a result of the above problems, Ghoten may not behave as intended.\n\n")
 			// We continue to run anyway, since OpenTofu has reasonable defaults.
 		}
 	}
@@ -264,7 +264,7 @@ func realMain() int {
 			Ui.Error(format.Diagnostic(diag, nil, earlyColor, 78))
 		}
 		if diags.HasErrors() {
-			Ui.Error("As a result of the above problems, OpenTofu's provider installer may not behave as intended.\n\n")
+			Ui.Error("As a result of the above problems, Ghoten's provider installer may not behave as intended.\n\n")
 			// We continue to run anyway, because most commands don't do provider installation.
 		}
 	}
@@ -366,7 +366,7 @@ func realMain() int {
 			if suggestion != "" {
 				suggestion = fmt.Sprintf(" Did you mean %q?", suggestion)
 			}
-			fmt.Fprintf(os.Stderr, "OpenTofu has no command named %q.%s\n\nTo see all of OpenTofu's top-level commands, run:\n  tofu -help\n\n", cmd, suggestion)
+			fmt.Fprintf(os.Stderr, "Ghoten has no command named %q.%s\n\nTo see all of Ghoten's top-level commands, run:\n  ghoten -help\n\n", cmd, suggestion)
 			return 1
 		}
 	}

@@ -206,7 +206,7 @@ func (c *TaintCommand) Run(args []string) int {
 
 func (c *TaintCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] taint [options] <address>
+Usage: ghoten [global options] taint [options] <address>
 
   OpenTofu uses the term "tainted" to describe a resource instance
   which may not be fully functional, either because its creation

@@ -565,7 +565,7 @@ func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, 
 	ctx, span := tracing.Tracer().Start(ctx, "Get Providers")
 	defer span.End()
 
-	// Dev overrides cause the result of "tofu init" to be irrelevant for
+	// Dev overrides cause the result of "ghoten init" to be irrelevant for
 	// any overridden providers, so we'll warn about it to avoid later
 	// confusion when OpenTofu ends up using a different provider than the
 	// lock file called for.
@@ -1005,7 +1005,7 @@ func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, 
 				diags = diags.Append(tfdiags.Sourceless(
 					tfdiags.Error,
 					`Provider dependency changes detected`,
-					`Changes to the required provider dependencies were detected, but the lock file is read-only. To use and record these requirements, run "tofu init" without the "-lockfile=readonly" flag.`,
+					`Changes to the required provider dependencies were detected, but the lock file is read-only. To use and record these requirements, run "ghoten init" without the "-lockfile=readonly" flag.`,
 				))
 				return true, true, diags
 			}
@@ -1015,7 +1015,7 @@ func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, 
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Warning,
 				`Provider lock file not updated`,
-				`Changes to the provider selections were detected, but not saved in the .terraform.lock.hcl file. To record these selections, run "tofu init" without the "-lockfile=readonly" flag.`,
+				`Changes to the provider selections were detected, but not saved in the .terraform.lock.hcl file. To record these selections, run "ghoten init" without the "-lockfile=readonly" flag.`,
 			))
 			return true, false, diags
 		}
@@ -1038,7 +1038,7 @@ func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, 
 
 		if previousLocks.Empty() {
 			// A change from empty to non-empty is special because it suggests
-			// we're running "tofu init" for the first time against a
+			// we're running "ghoten init" for the first time against a
 			// new configuration. In that case we'll take the opportunity to
 			// say a little about what the dependency lock file is, for new
 			// users or those who are upgrading from a previous Terraform
@@ -1047,7 +1047,7 @@ func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, 
 OpenTofu has created a lock file [bold].terraform.lock.hcl[reset] to record the provider
 selections it made above. Include this file in your version control repository
 so that OpenTofu can guarantee to make the same selections by default when
-you run "tofu init" in the future.`))
+you run "ghoten init" in the future.`))
 		} else {
 			c.Ui.Output(c.Colorize().Color(`
 OpenTofu has made some changes to the provider dependency selections recorded
@@ -1229,14 +1229,14 @@ func (c *InitCommand) AutocompleteFlags() complete.Flags {
 
 func (c *InitCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] init [options]
+Usage: ghoten [global options] init [options]
 
-  Initialize a new or existing OpenTofu working directory by creating
+  Initialize a new or existing Ghoten working directory by creating
   initial files, loading any remote state, downloading modules, etc.
 
   This is the first command that should be run for any new or existing
-  OpenTofu configuration per machine. This sets up all the local data
-  necessary to run OpenTofu that is typically not committed to version
+  Ghoten configuration per machine. This sets up all the local data
+  necessary to run Ghoten that is typically not committed to version
   control.
 
   This command is always safe to run multiple times. Though subsequent runs
@@ -1260,15 +1260,15 @@ Options:
                           times. The backend type must be in the configuration
                           itself.
 
-  -compact-warnings       If OpenTofu produces any warnings that are not
+  -compact-warnings       If Ghoten produces any warnings that are not
                           accompanied by errors, show them in a more compact
                           form that includes only the summary messages.
 
-  -consolidate-warnings   If OpenTofu produces any warnings, no consolidation
+  -consolidate-warnings   If Ghoten produces any warnings, no consolidation
                           will be performed. All locations, for all warnings
                           will be listed. Enabled by default.
 
-  -consolidate-errors     If OpenTofu produces any errors, no consolidation
+  -consolidate-errors     If Ghoten produces any errors, no consolidation
                           will be performed. All locations, for all errors
                           will be listed. Disabled by default
 
@@ -1349,7 +1349,7 @@ const errInitConfigError = `
 [reset]OpenTofu encountered problems during initialization, including problems
 with the configuration, described below.
 
-The OpenTofu configuration must be valid before initialization so that
+The Ghoten configuration must be valid before initialization so that
 OpenTofu can determine which modules and providers need to be installed.
 `
 
@@ -1364,8 +1364,8 @@ To initialize the configuration already in this working directory, omit the
 const outputInitEmpty = `
 [reset][bold]OpenTofu initialized in an empty directory![reset]
 
-The directory has no OpenTofu configuration files. You may begin working
-with OpenTofu immediately by creating OpenTofu configuration files.
+The directory has no Ghoten configuration files. You may begin working
+with OpenTofu immediately by creating Ghoten configuration files.
 `
 
 const outputInitSuccess = `
@@ -1377,7 +1377,7 @@ const outputInitSuccessCloud = `
 `
 
 const outputInitSuccessCLI = `[reset][green]
-You may now begin working with OpenTofu. Try running "tofu plan" to see
+You may now begin working with OpenTofu. Try running "ghoten plan" to see
 any changes that are required for your infrastructure. All OpenTofu commands
 should now work.
 
@@ -1387,10 +1387,10 @@ commands will detect it and remind you to do so if necessary.
 `
 
 const outputInitSuccessCLICloud = `[reset][green]
-You may now begin working with cloud backend. Try running "tofu plan" to
+You may now begin working with cloud backend. Try running "ghoten plan" to
 see any changes that are required for your infrastructure.
 
-If you ever set or change modules or OpenTofu Settings, run "tofu init"
+If you ever set or change modules or OpenTofu Settings, run "ghoten init"
 again to reinitialize your working directory.
 `
 

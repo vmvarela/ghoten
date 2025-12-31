@@ -377,7 +377,7 @@ func (c *ProvidersLockCommand) Run(args []string) int {
 
 func (c *ProvidersLockCommand) Help() string {
 	return `
-Usage: tofu [global options] providers lock [options] [providers...]
+Usage: ghoten [global options] providers lock [options] [providers...]
 
   Normally the dependency lock file (.terraform.lock.hcl) is updated
   automatically by "tofu init", but the information available to the

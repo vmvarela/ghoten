@@ -157,7 +157,7 @@ func (c *WorkspaceSelectCommand) AutocompleteFlags() complete.Flags {
 
 func (c *WorkspaceSelectCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] workspace select [options] NAME
+Usage: ghoten [global options] workspace select [options] NAME
 
   Select a different OpenTofu workspace.
 

@@ -167,7 +167,7 @@ func (c *StatePushCommand) Run(args []string) int {
 
 func (c *StatePushCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] state push [options] PATH
+Usage: ghoten [global options] state push [options] PATH
 
   Update remote state from a local state file at PATH.
 

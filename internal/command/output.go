@@ -130,7 +130,7 @@ func (c *OutputCommand) GatherVariables(args *arguments.Vars) {
 
 func (c *OutputCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] output [options] [NAME]
+Usage: ghoten [global options] output [options] [NAME]
 
   Reads an output variable from a OpenTofu state file and prints
   the value. With no additional arguments, output will display all

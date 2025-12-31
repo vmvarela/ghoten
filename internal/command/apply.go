@@ -95,7 +95,7 @@ func (c *ApplyCommand) Run(rawArgs []string) int {
 	c.Meta.input = args.InputEnabled
 
 	// FIXME: the -parallelism flag is used to control the concurrency of
-	// OpenTofu operations. At the moment, this value is used both to
+	// Ghoten operations. At the moment, this value is used both to
 	// initialize the backend via the ContextOpts field inside CLIOpts, and to
 	// set a largely unused field on the Operation request. Again, there is no
 	// clear path to pass this value down, so we continue to mutate the Meta
@@ -325,15 +325,15 @@ func (c *ApplyCommand) Synopsis() string {
 
 func (c *ApplyCommand) helpApply() string {
 	helpText := `
-Usage: tofu [global options] apply [options] [PLAN]
+Usage: ghoten [global options] apply [options] [PLAN]
 
-  Creates or updates infrastructure according to OpenTofu configuration
+  Creates or updates infrastructure according to Ghoten configuration
   files in the current directory.
 
-  By default, OpenTofu will generate a new plan and present it for your
+  By default, Ghoten will generate a new plan and present it for your
   approval before taking any action. You can optionally provide a plan
-  file created by a previous call to "tofu plan", in which case
-  OpenTofu will take the actions described in that plan without any
+  file created by a previous call to "ghoten plan", in which case
+  Ghoten will take the actions described in that plan without any
   confirmation prompt.
 
 Options:
@@ -344,19 +344,19 @@ Options:
                                modifying. Defaults to the "-state-out" path with
                                ".backup" extension. Set to "-" to disable backup.
 
-  -compact-warnings            If OpenTofu produces any warnings that are not
+  -compact-warnings            If Ghoten produces any warnings that are not
                                accompanied by errors, show them in a more compact
                                form that includes only the summary messages.
 
-  -consolidate-warnings=false  If OpenTofu produces any warnings, no consolidation
+  -consolidate-warnings=false  If Ghoten produces any warnings, no consolidation
                                will be performed. All locations, for all warnings
                                will be listed. Enabled by default.
 
-  -consolidate-errors          If OpenTofu produces any errors, no consolidation
+  -consolidate-errors          If Ghoten produces any errors, no consolidation
                                will be performed. All locations, for all errors
                                will be listed. Disabled by default.
 
-  -destroy                     Destroy OpenTofu-managed infrastructure.
+  -destroy                     Destroy Ghoten-managed infrastructure.
                                The command "tofu destroy" is a convenience alias
                                for this option.
 
@@ -388,10 +388,10 @@ Options:
                                operation completes successfully but leaves
                                forgotten instances behind.
 
-  -var 'foo=bar'               Set a variable in the OpenTofu configuration.
+  -var 'foo=bar'               Set a variable in the Ghoten configuration.
                                This flag can be set multiple times.
 
-  -var-file=foo                Set variables in the OpenTofu configuration from
+  -var-file=foo                Set variables in the Ghoten configuration from
                                a file.
                                If "terraform.tfvars" or any ".auto.tfvars"
                                files are present, they will be automatically
@@ -403,7 +403,7 @@ Options:
 
   -deprecation=module:m        Specify what type of warnings are shown. Accepted
                                values for "m": all, local, none. Default: all.
-                               When "all" is selected, OpenTofu will show the
+                               When "all" is selected, Ghoten will show the
                                deprecation warnings for all modules. When "local"
                                is selected, the warns will be shown only for the
                                modules that are imported with a relative path.
@@ -420,9 +420,9 @@ Options:
 
 func (c *ApplyCommand) helpDestroy() string {
 	helpText := `
-Usage: tofu [global options] destroy [options]
+Usage: ghoten [global options] destroy [options]
 
-  Destroy OpenTofu-managed infrastructure.
+  Destroy Ghoten-managed infrastructure.
 
   This command is a convenience alias for:
       tofu apply -destroy

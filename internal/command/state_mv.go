@@ -542,7 +542,7 @@ func (c *StateMvCommand) validateResourceMove(addrFrom, addrTo addrs.AbsResource
 
 func (c *StateMvCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] state (move|mv) [options] SOURCE DESTINATION
+Usage: ghoten [global options] state (move|mv) [options] SOURCE DESTINATION
 
  This command will move an item matched by the address given to the
  destination address. This command can also move to a destination address

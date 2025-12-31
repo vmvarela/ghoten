@@ -210,7 +210,7 @@ func (c *StateReplaceProviderCommand) Run(args []string) int {
 
 func (c *StateReplaceProviderCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] state replace-provider [options] FROM_PROVIDER_FQN TO_PROVIDER_FQN
+Usage: ghoten [global options] state replace-provider [options] FROM_PROVIDER_FQN TO_PROVIDER_FQN
 
   Replace provider for resources in the OpenTofu state.
 

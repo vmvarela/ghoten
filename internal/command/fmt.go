@@ -555,7 +555,7 @@ func (c *FmtCommand) trimNewlines(tokens hclwrite.Tokens) hclwrite.Tokens {
 
 func (c *FmtCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] fmt [options] [target...]
+Usage: ghoten [global options] fmt [options] [target...]
 
   Rewrites all OpenTofu configuration files to a canonical format. All
   configuration files (.tf), variables files (.tfvars), and testing files 

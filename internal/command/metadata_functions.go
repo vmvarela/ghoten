@@ -76,7 +76,7 @@ func (c *MetadataFunctionsCommand) Run(args []string) int {
 }
 
 const metadataFunctionsCommandHelp = `
-Usage: tofu [global options] metadata functions -json
+Usage: ghoten [global options] metadata functions -json
 
   Prints out a json representation of the available function signatures.
 `

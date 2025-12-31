@@ -36,9 +36,9 @@ type VersionOutput struct {
 
 func (c *VersionCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] version [options]
+Usage: ghoten [global options] version [options]
 
-  Displays the version of OpenTofu and all installed plugins
+  Displays the version of Ghoten and all installed plugins
 
 Options:
 
@@ -65,7 +65,7 @@ func (c *VersionCommand) Run(args []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(&versionString, "OpenTofu v%s", c.Version)
+	fmt.Fprintf(&versionString, "Ghoten v%s", c.Version)
 	if c.VersionPrerelease != "" {
 		fmt.Fprintf(&versionString, "-%s", c.VersionPrerelease)
 	}
@@ -139,5 +139,5 @@ func (c *VersionCommand) Run(args []string) int {
 }
 
 func (c *VersionCommand) Synopsis() string {
-	return "Show the current OpenTofu version"
+	return "Show the current Ghoten version"
 }

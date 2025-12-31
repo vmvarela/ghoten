@@ -173,7 +173,7 @@ func (c *ValidateCommand) Synopsis() string {
 
 func (c *ValidateCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] validate [options]
+Usage: ghoten [global options] validate [options]
 
   Validate the configuration files in a directory, referring only to the
   configuration and not accessing any remote services such as remote state,

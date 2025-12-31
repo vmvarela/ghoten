@@ -307,7 +307,7 @@ func (c *ImportCommand) Run(args []string) int {
 
 func (c *ImportCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] import [options] ADDR ID
+Usage: ghoten [global options] import [options] ADDR ID
 
   Import existing infrastructure into your OpenTofu state.
 
@@ -374,7 +374,7 @@ Options:
 }
 
 func (c *ImportCommand) Synopsis() string {
-	return "Associate existing infrastructure with a OpenTofu resource"
+	return "Associate existing infrastructure with a Ghoten resource"
 }
 
 const importCommandInvalidAddressReference = `For information on valid syntax, see:

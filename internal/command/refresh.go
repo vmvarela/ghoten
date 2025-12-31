@@ -185,7 +185,7 @@ func (c *RefreshCommand) GatherVariables(args *arguments.Vars) {
 
 func (c *RefreshCommand) Help() string {
 	helpText := `
-Usage: tofu [global options] refresh [options]
+Usage: ghoten [global options] refresh [options]
 
   Update the state file of your infrastructure with metadata that matches
   the physical resources they are tracking.

@@ -359,7 +359,7 @@ func (c *LoginCommand) Help() string {
 	}
 
 	helpText := fmt.Sprintf(`
-Usage: tofu [global options] login [hostname]
+Usage: ghoten [global options] login [hostname]
 
   Retrieves an authentication token for the given hostname, if it supports
   automatic login, and saves it in a credentials file in your home directory.
