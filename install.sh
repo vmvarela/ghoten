@@ -1,17 +1,17 @@
 #!/bin/sh
-# OpenTofu ORAS Fork Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
+# Ghoten Installer
+# Usage: curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
 #
 # Environment variables:
-#   TOFU_ORAS_VERSION     - Specific version to install (e.g., v1.12.0-oras). Default: latest
-#   TOFU_ORAS_INSTALL_DIR - Installation directory. Default: /usr/local/bin
-#   TOFU_ORAS_BINARY_NAME - Binary name. Default: tofu-oras
+#   GHOTEN_VERSION     - Specific version to install (e.g., v1.12.0). Default: latest
+#   GHOTEN_INSTALL_DIR - Installation directory. Default: /usr/local/bin
+#   GHOTEN_BINARY_NAME - Binary name. Default: ghoten
 
 set -e
 
-GITHUB_REPO="vmvarela/opentofu"
-BINARY_NAME="${TOFU_ORAS_BINARY_NAME:-tofu-oras}"
-INSTALL_DIR="${TOFU_ORAS_INSTALL_DIR:-/usr/local/bin}"
+GITHUB_REPO="vmvarela/ghoten"
+BINARY_NAME="${GHOTEN_BINARY_NAME:-ghoten}"
+INSTALL_DIR="${GHOTEN_INSTALL_DIR:-/usr/local/bin}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -86,7 +86,7 @@ download() {
 
 # Main installation
 main() {
-    info "OpenTofu ORAS Fork Installer"
+    info "Ghoten Installer"
     echo ""
     
     # Detect platform
@@ -95,12 +95,12 @@ main() {
     info "Detected platform: ${OS}/${ARCH}"
     
     # Get version
-    VERSION="${TOFU_ORAS_VERSION:-}"
+    VERSION="${GHOTEN_VERSION:-}"
     if [ -z "$VERSION" ]; then
         info "Fetching latest version..."
         VERSION=$(get_latest_version)
         if [ -z "$VERSION" ]; then
-            error "Could not determine latest version. Please set TOFU_ORAS_VERSION environment variable."
+            error "Could not determine latest version. Please set GHOTEN_VERSION environment variable."
         fi
     fi
     info "Version: ${VERSION}"
@@ -111,7 +111,7 @@ main() {
         BINARY_SUFFIX=".exe"
     fi
     
-    ARTIFACT_NAME="tofu_${OS}_${ARCH}${BINARY_SUFFIX}"
+    ARTIFACT_NAME="ghoten_${OS}_${ARCH}${BINARY_SUFFIX}"
     DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${ARTIFACT_NAME}"
     
     info "Downloading from: ${DOWNLOAD_URL}"

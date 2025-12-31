@@ -28,7 +28,7 @@ jobs:
           PR_TITLE="${{ github.event.pull_request.title }}"
           VERSION=$(echo "$PR_TITLE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=${VERSION}-oras" >> $GITHUB_OUTPUT
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
       - name: Configure Git
@@ -51,7 +51,7 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## OpenTofu ${{ steps.version.outputs.version }} + ORAS Backend
+            ## Ghoten ${{ steps.version.outputs.version }}
 
             This release is based on [OpenTofu ${{ steps.version.outputs.version }}](https://github.com/opentofu/opentofu/releases/tag/${{ steps.version.outputs.version }}) with the ORAS backend for OCI registry state storage.
 

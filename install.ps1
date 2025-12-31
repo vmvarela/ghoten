@@ -1,16 +1,16 @@
-# OpenTofu ORAS Fork Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.ps1 | iex
+# Ghoten Installer for Windows
+# Usage: irm https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.ps1 | iex
 #
 # Or with options:
-#   $env:TOFU_ORAS_VERSION = "v1.12.0-oras"
-#   $env:TOFU_ORAS_INSTALL_DIR = "$env:USERPROFILE\.local\bin"
-#   irm https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.ps1 | iex
+#   $env:GHOTEN_VERSION = "v1.12.0"
+#   $env:GHOTEN_INSTALL_DIR = "$env:USERPROFILE\.local\bin"
+#   irm https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$GitHubRepo = "vmvarela/opentofu"
-$BinaryName = if ($env:TOFU_ORAS_BINARY_NAME) { $env:TOFU_ORAS_BINARY_NAME } else { "tofu-oras" }
-$InstallDir = if ($env:TOFU_ORAS_INSTALL_DIR) { $env:TOFU_ORAS_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\tofu-oras" }
+$GitHubRepo = "vmvarela/ghoten"
+$BinaryName = if ($env:GHOTEN_BINARY_NAME) { $env:GHOTEN_BINARY_NAME } else { "ghoten" }
+$InstallDir = if ($env:GHOTEN_INSTALL_DIR) { $env:GHOTEN_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\ghoten" }
 
 function Write-Info {
     param([string]$Message)
@@ -66,7 +66,7 @@ function Add-ToPath {
 
 # Main
 Write-Host ""
-Write-Info "OpenTofu ORAS Fork Installer for Windows"
+Write-Info "Ghoten Installer for Windows"
 Write-Host ""
 
 # Detect architecture
@@ -74,7 +74,7 @@ $Arch = Get-Architecture
 Write-Info "Detected architecture: windows/$Arch"
 
 # Get version
-$Version = if ($env:TOFU_ORAS_VERSION) { $env:TOFU_ORAS_VERSION } else { $null }
+$Version = if ($env:GHOTEN_VERSION) { $env:GHOTEN_VERSION } else { $null }
 if (-not $Version) {
     Write-Info "Fetching latest version..."
     $Version = Get-LatestVersion
@@ -82,7 +82,7 @@ if (-not $Version) {
 Write-Info "Version: $Version"
 
 # Build download URL
-$ArtifactName = "tofu_windows_${Arch}.exe"
+$ArtifactName = "ghoten_windows_${Arch}.exe"
 $DownloadUrl = "https://github.com/$GitHubRepo/releases/download/$Version/$ArtifactName"
 Write-Info "Downloading from: $DownloadUrl"
 

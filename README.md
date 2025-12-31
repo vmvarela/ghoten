@@ -1,67 +1,18 @@
-# OpenTofu + ORAS Backend
+# Ghoten
 
-[![Release](https://img.shields.io/github/v/release/vmvarela/opentofu?label=Latest%20Release&style=flat-square)](https://github.com/vmvarela/opentofu/releases/latest)
+[![Release](https://img.shields.io/github/v/release/vmvarela/ghoten?label=Latest%20Release&style=flat-square)](https://github.com/vmvarela/ghoten/releases/latest)
 [![OpenTofu Base](https://img.shields.io/badge/Based%20on-OpenTofu-blue?style=flat-square)](https://github.com/opentofu/opentofu)
+[![License](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg?style=flat-square)](LICENSE)
 
-Store OpenTofu state in **OCI registries** (such as GitHub Container Registry) using **ORAS**.
-No SaaS. No cloud storage accounts. Just OCI.
+**Ghoten** is a personal fork of [OpenTofu](https://github.com/opentofu/opentofu) that adds native support for storing Terraform/OpenTofu state in **OCI registries** like GitHub Container Registry (GHCR), Amazon ECR, Azure ACR, and others.
+
+> 🎯 **Goal**: The ORAS backend developed here is intended to be contributed back to OpenTofu upstream.
 
 ---
 
-## 🚀 5-minute Quick Start
+## Why Ghoten?
 
-```bash
-curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
-gh auth login
-tofu-oras init
-tofu-oras apply
-```
-
-This will initialize an ORAS backend configured in your Terraform files and store
-the state in your OCI registry (for example, GHCR).
-
-> ℹ️ This installs a separate binary called `tofu-oras`, so it does not interfere
-> with an existing OpenTofu (`tofu`) installation.
-
-
-## 📦 What This Adds
-
-This project adds an ORAS backend that allows you to store OpenTofu state in any
-OCI-compatible container registry:
-- GitHub Container Registry (GHCR)
-- Amazon ECR
-- Azure ACR
-- Google GCR
-- Docker Hub
-- Harbor
-- Any OCI-compliant registry
-
-### Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **OCI Registry Storage** | Store state as OCI artifacts in your existing container registry |
-| **Reuse Existing Auth** | Uses Docker credentials and `tofu login` tokens |
-| **Distributed Locking** | Best-effort locking to reduce concurrent modifications |
-| **State Versioning** | Keep history of state versions with configurable retention |
-| **Compression** | Optional gzip compression for state files |
-| **Encryption Compatible** | Works with OpenTofu's client-side state encryption |
-
-## ✅ When to use this backend
-
-- Individual operators or small teams
-- CI/CD pipelines
-- OSS projects
-- Environments where OCI registries are already available
-
-## 🚫 When NOT to use this backend
-
-- Large teams with heavy concurrent access
-- Strong locking or compliance requirements
-- Environments that mandate managed SaaS backends
-
-
-### 🧱 Minimal backend configuration
+Store your infrastructure state alongside your container images. No additional cloud storage accounts, no SaaS dependencies—just your existing OCI registry.
 
 ```hcl
 terraform {
@@ -71,7 +22,68 @@ terraform {
 }
 ```
 
-### 🧰 Advanced Example (versioning + encryption)
+---
+
+## 🚀 Quick Start
+
+```bash
+# Install
+curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
+
+# Authenticate (for GHCR)
+gh auth login
+
+# Use it
+ghoten init
+ghoten apply
+```
+
+> ℹ️ Ghoten installs as a separate binary and doesn't interfere with existing `tofu` or `terraform` installations.
+
+---
+
+## 📦 Features
+
+| Feature | Description |
+|---------|-------------|
+| **OCI Registry Storage** | Store state as OCI artifacts in any compatible registry |
+| **Supported Registries** | GHCR, Amazon ECR, Azure ACR, Google GCR, Docker Hub, Harbor |
+| **Reuse Existing Auth** | Uses Docker credentials and registry login tokens |
+| **Distributed Locking** | Best-effort locking to prevent concurrent modifications |
+| **State Versioning** | Keep history of state versions with configurable retention |
+| **Compression** | Optional gzip compression for state files |
+| **Encryption Compatible** | Works with OpenTofu's client-side state encryption |
+
+---
+
+## ✅ When to Use Ghoten
+
+- Individual operators or small teams
+- CI/CD pipelines with existing OCI registry access
+- Open source projects
+- Environments where OCI registries are already available
+
+## 🚫 When NOT to Use
+
+- Large teams with heavy concurrent access
+- Strong locking or compliance requirements
+- Environments that mandate managed SaaS backends
+
+---
+
+## 🧰 Configuration Examples
+
+### Minimal
+
+```hcl
+terraform {
+  backend "oras" {
+    repository = "ghcr.io/your-org/tf-state"
+  }
+}
+```
+
+### Advanced (versioning + encryption)
 
 ```hcl
 terraform {
@@ -101,7 +113,7 @@ terraform {
 
 ### 📚 Full Documentation
 
-See the [ORAS Backend README](internal/backend/remote-state/oras/README.md) for complete documentation including:
+See the [ORAS Backend README](internal/backend/remote-state/oras/README.md) for:
 - All configuration parameters
 - Authentication setup
 - Locking behavior
@@ -110,88 +122,80 @@ See the [ORAS Backend README](internal/backend/remote-state/oras/README.md) for 
 
 ---
 
-## 🧪 Project Status
-
-Actively developed and usable today.
-APIs and backend format may evolve based on feedback.
-
-## 🔄 Release Versioning
-
-This fork follows OpenTofu releases with an `-oras` suffix:
-
-| OpenTofu Release | This Fork |
-|------------------|-----------|
-| `v1.11.2` | `v1.11.2-oras` |
-
-This allows you to choose which OpenTofu version you want with ORAS support.
-
----
-
 ## 📥 Installation
 
-### Quick Install (Linux/macOS)
+### Linux/macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
 ```
 
-### Quick Install (Windows PowerShell)
+### Windows PowerShell
 
 ```powershell
-irm https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.ps1 | iex
+irm https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.ps1 | iex
 ```
 
-This installs the binary as `tofu-oras` to avoid conflicts with the official `tofu` installation.
+### Installation Options
 
-#### Installation Options
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GHOTEN_VERSION` | Specific version to install | Latest |
+| `GHOTEN_INSTALL_DIR` | Installation directory | `/usr/local/bin` |
+| `GHOTEN_BINARY_NAME` | Binary name | `ghoten` |
 
-**Linux/macOS:**
+**Examples:**
+
 ```bash
 # Install specific version
-TOFU_ORAS_VERSION=v1.12.0-oras curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
+GHOTEN_VERSION=v1.12.0 curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
 
 # Install to custom directory
-TOFU_ORAS_INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
-
-# Install with custom binary name
-TOFU_ORAS_BINARY_NAME=tofu curl -sSL https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.sh | sh
+GHOTEN_INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
 ```
-
-**Windows PowerShell:**
-```powershell
-# Install specific version
-$env:TOFU_ORAS_VERSION = "v1.12.0-oras"
-irm https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.ps1 | iex
-
-# Install to custom directory
-$env:TOFU_ORAS_INSTALL_DIR = "$env:USERPROFILE\.local\bin"
-irm https://raw.githubusercontent.com/vmvarela/opentofu/develop/install.ps1 | iex
-```
-
-### Manual Download
-
-Download the binary for your platform from the [Releases](https://github.com/vmvarela/opentofu/releases) page.
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/vmvarela/opentofu.git
-cd opentofu
-go build -o tofu-oras ./cmd/tofu
+git clone https://github.com/vmvarela/ghoten.git
+cd ghoten
+make build  # Creates ./ghoten binary
 ```
+
+### Manual Download
+
+Download binaries from the [Releases](https://github.com/vmvarela/ghoten/releases) page.
 
 ---
 
+## 🔄 Versioning
+
+Ghoten follows OpenTofu releases:
+
+| OpenTofu | Ghoten |
+|----------|--------|
+| `v1.12.0` | `v1.12.0` |
+
+The fork syncs with upstream OpenTofu to incorporate improvements and security fixes.
+
+---
+
+## 🧪 Project Status
+
+Actively developed and usable. APIs and backend format may evolve based on feedback.
+
+---
+
+## 📜 About OpenTofu
+
 <details>
-<summary>📘 Original OpenTofu README</summary>
+<summary>Click to expand original OpenTofu information</summary>
 
-# OpenTofu (Original Project)
-
-> The following is the original OpenTofu README.
+# OpenTofu
 
 - [HomePage](https://opentofu.org/)
 - [How to install](https://opentofu.org/docs/intro/install)
-- [Join our Slack community!](https://opentofu.org/slack)
+- [Join the Slack community](https://opentofu.org/slack)
 
 ![](https://raw.githubusercontent.com/opentofu/brand-artifacts/main/full/transparent/SVG/on-dark.svg#gh-dark-mode-only)
 ![](https://raw.githubusercontent.com/opentofu/brand-artifacts/main/full/transparent/SVG/on-light.svg#gh-light-mode-only)
@@ -202,41 +206,18 @@ OpenTofu is an OSS tool for building, changing, and versioning infrastructure sa
 
 The key features of OpenTofu are:
 
-- **Infrastructure as Code**: Infrastructure is described using a high-level configuration syntax. This allows a blueprint of your datacenter to be versioned and treated as you would any other code. Additionally, infrastructure can be shared and re-used.
+- **Infrastructure as Code**: Infrastructure is described using a high-level configuration syntax.
+- **Execution Plans**: OpenTofu generates an execution plan showing what will change.
+- **Resource Graph**: Parallelizes creation of non-dependent resources.
+- **Change Automation**: Complex changesets with minimal human interaction.
 
-- **Execution Plans**: OpenTofu has a "planning" step where it generates an execution plan. The execution plan shows what OpenTofu will do when you call apply. This lets you avoid any surprises when OpenTofu manipulates infrastructure.
+### Getting help
 
-- **Resource Graph**: OpenTofu builds a graph of all your resources, and parallelizes the creation and modification of any non-dependent resources. Because of this, OpenTofu builds infrastructure as efficiently as possible, and operators get insight into dependencies in their infrastructure.
+- [GitHub Discussions](https://github.com/orgs/opentofu/discussions)
+- [GitHub Issues](https://github.com/opentofu/opentofu/issues/new/choose)
+- [OpenTofu Slack](https://opentofu.org/slack/)
 
-- **Change Automation**: Complex changesets can be applied to your infrastructure with minimal human interaction. With the previously mentioned execution plan and resource graph, you know exactly what OpenTofu will change and in what order, avoiding many possible human errors.
-
-## Getting help and contributing
-
-- Have a question?
-  - Post it in [GitHub Discussions](https://github.com/orgs/opentofu/discussions)
-  - Open a [GitHub issue](https://github.com/opentofu/opentofu/issues/new/choose)
-  - Join the [OpenTofu Slack](https://opentofu.org/slack/)!
-- Want to contribute?
-  - Please read the [Contribution Guide](CONTRIBUTING.md).
-- Recurring Events
-  - [Community Meetings](https://meet.google.com/xfm-cgms-has) on Wednesdays at 12:30 UTC at this link: https://meet.google.com/xfm-cgms-has ([📅 calendar link](https://calendar.google.com/calendar/event?eid=NDg0aWl2Y3U1aHFva3N0bGhyMHBhNzdpZmsgY18zZjJkZDNjMWZlMGVmNGU5M2VmM2ZjNDU2Y2EyZGQyMTlhMmU4ZmQ4NWY2YjQwNzUwYWYxNmMzZGYzNzBiZjkzQGc))
-  - [Technical Steering Committee Meetings](https://meet.google.com/cry-houa-qbk) every other Tuesday at 4pm UTC at this link: https://meet.google.com/cry-houa-qbk ([📅 calendar link](https://calendar.google.com/calendar/u/0/event?eid=M3JyMWtuYWptdXI0Zms4ZnJpNmppcDczb3RfMjAyNTA1MjdUMTYwMDAwWiBjXzNmMmRkM2MxZmUwZWY0ZTkzZWYzZmM0NTZjYTJkZDIxOWEyZThmZDg1ZjZiNDA3NTBhZjE2YzNkZjM3MGJmOTNAZw))
-
-> [!TIP]
-> For more OpenTofu events, subscribe to the [OpenTofu Events Calendar](https://calendar.google.com/calendar/embed?src=c_3f2dd3c1fe0ef4e93ef3fc456ca2dd219a2e8fd85f6b40750af16c3df370bf93%40group.calendar.google.com)!
-
-## Reporting security vulnerabilities
-If you've found a vulnerability or a potential vulnerability in OpenTofu please follow [Security Policy](https://github.com/opentofu/opentofu/security/policy). We'll send a confirmation email to acknowledge your report, and we'll send an additional email when we've identified the issue positively or negatively.
-
-## Reporting possible copyright issues
-
-If you believe you have found any possible copyright or intellectual property issues, please contact liaison@opentofu.org. We'll send a confirmation email to acknowledge your report.
-
-## Registry Access
-
-In an effort to comply with applicable sanctions, we block access from specific countries of origin.
-
-## License
+### License
 
 [Mozilla Public License v2.0](https://github.com/opentofu/opentofu/blob/main/LICENSE)
 

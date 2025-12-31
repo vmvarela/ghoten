@@ -1,8 +1,10 @@
-# Copilot Instructions for OpenTofu ORAS Fork
+# Copilot Instructions for Ghoten
 
 ## Project Overview
 
-This is a **fork** of [opentofu/opentofu](https://github.com/opentofu/opentofu) that adds an **ORAS backend** for storing OpenTofu state in OCI registries (Docker, GHCR, ECR, etc.).
+**Ghoten** is a personal fork of [opentofu/opentofu](https://github.com/opentofu/opentofu) that adds an **ORAS backend** for storing OpenTofu state in OCI registries (GHCR, ECR, ACR, Docker Hub, etc.).
+
+> 🎯 **Goal**: The ORAS backend developed here is intended to be contributed back to OpenTofu upstream.
 
 ## Branch Strategy
 
@@ -23,17 +25,16 @@ develop   → Main development branch (all PRs target here)
 1. **Sync upstream**: `sync-upstream.yml` runs daily and when new upstream tags are detected
 2. **PR to develop**: Creates PR `🚀 Release vX.Y.Z` from `main` → `develop`
 3. **Review & merge**: Manually merge the PR (resolve conflicts if any)
-4. **Auto-release**: `auto-release.yml` creates tag `vX.Y.Z-oras` and GitHub Release
-5. **Build**: `release-fork.yml` builds binaries for all platforms
+4. **Auto-release**: `auto-release.yml` creates tag `vX.Y.Z` and GitHub Release
+5. **Build**: `release-fork.yml` builds `ghoten` binaries for all platforms
 
 ## Release Naming Convention
 
-Fork releases follow upstream versions with `-oras` suffix:
+Ghoten follows OpenTofu versions directly (no suffix):
 
-- Upstream: `v1.12.0`
-- Fork: `v1.12.0-oras`
-
-This allows users to choose which upstream version they want with ORAS support.
+| OpenTofu Release | Ghoten Release |
+|------------------|----------------|
+| `v1.12.0` | `v1.12.0` |
 
 ## Key Directories
 
@@ -57,6 +58,8 @@ internal/backend/remote-state/oras/
 ├── copilot-instructions.md    # This file
 ├── release.yml                # Release notes configuration
 ├── labeler.yml                # PR auto-labeling rules
+├── docker/
+│   └── Dockerfile             # Fork-specific Dockerfile
 └── workflows/
     ├── release-fork.yml       # Fork release workflow
     ├── sync-upstream.yml      # Upstream sync automation
@@ -92,6 +95,9 @@ go test ./internal/backend/remote-state/oras/...
 
 # Run all tests
 go test ./...
+
+# Build the binary
+make build  # Creates ./ghoten
 ```
 
 ## Files to NEVER modify on develop

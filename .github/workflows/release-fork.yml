@@ -21,82 +21,82 @@ jobs:
             goarch: 386
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_freebsd_386
+            artifact_name: ghoten_freebsd_386
           - goos: freebsd
             goarch: amd64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_freebsd_amd64
+            artifact_name: ghoten_freebsd_amd64
           - goos: freebsd
             goarch: arm
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_freebsd_arm
+            artifact_name: ghoten_freebsd_arm
 
           # linux builds
           - goos: linux
             goarch: 386
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_linux_386
+            artifact_name: ghoten_linux_386
           - goos: linux
             goarch: amd64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_linux_amd64
+            artifact_name: ghoten_linux_amd64
           - goos: linux
             goarch: arm
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_linux_arm
+            artifact_name: ghoten_linux_arm
           - goos: linux
             goarch: arm64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_linux_arm64
+            artifact_name: ghoten_linux_arm64
 
           # openbsd builds
           - goos: openbsd
             goarch: 386
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_openbsd_386
+            artifact_name: ghoten_openbsd_386
           - goos: openbsd
             goarch: amd64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_openbsd_amd64
+            artifact_name: ghoten_openbsd_amd64
 
           # solaris builds
           - goos: solaris
             goarch: amd64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_solaris_amd64
+            artifact_name: ghoten_solaris_amd64
 
           # windows builds
           - goos: windows
             goarch: 386
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_windows_386.exe
+            artifact_name: ghoten_windows_386.exe
           - goos: windows
             goarch: amd64
             runson: ubuntu-latest
             cgo_enabled: "0"
-            artifact_name: tofu_windows_amd64.exe
+            artifact_name: ghoten_windows_amd64.exe
 
           # darwin (macOS) builds
           - goos: darwin
             goarch: amd64
             runson: macos-latest
             cgo_enabled: "1"
-            artifact_name: tofu_darwin_amd64
+            artifact_name: ghoten_darwin_amd64
           - goos: darwin
             goarch: arm64
             runson: macos-latest
             cgo_enabled: "1"
-            artifact_name: tofu_darwin_arm64
+            artifact_name: ghoten_darwin_arm64
     
     steps:
       - name: Checkout code
@@ -126,7 +126,7 @@ jobs:
       - name: Set embedded version
         run: |
           # The version package reads from version/VERSION at build time.
-          # Our tags are like v1.11.2-oras, but VERSION must be SemVer without the leading 'v'.
+          # VERSION must be SemVer without the leading 'v'.
           echo "${GITHUB_REF_NAME#v}" > version/VERSION
           echo "Embedded VERSION: $(cat version/VERSION)"
       
@@ -134,14 +134,14 @@ jobs:
         run: |
           cd cmd/tofu
           CGO_ENABLED=${{ matrix.cgo_enabled }} GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -o tofu_${{ matrix.goos }}_${{ matrix.goarch }} \
+            go build -o ghoten_${{ matrix.goos }}_${{ matrix.goarch }} \
             -ldflags "-X github.com/opentofu/opentofu/version.dev=no"
           
           # Create directory structure
           mkdir -p ../dist
           
           # Move binary to dist
-          mv tofu_${{ matrix.goos }}_${{ matrix.goarch }} ../dist/${{ matrix.artifact_name }}
+          mv ghoten_${{ matrix.goos }}_${{ matrix.goarch }} ../dist/${{ matrix.artifact_name }}
           
           ls -lh ../dist/
       
@@ -158,7 +158,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tofu-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: ghoten-${{ matrix.goos }}-${{ matrix.goarch }}
           path: cmd/dist/${{ matrix.artifact_name }}*
           retention-days: 1
 

@@ -47,9 +47,9 @@ jobs:
           echo "Latest upstream tag: $LATEST_UPSTREAM_TAG"
           echo "latest_tag=$LATEST_UPSTREAM_TAG" >> $GITHUB_OUTPUT
 
-          # Check if we already have this tag with -oras suffix
-          if git tag -l "${LATEST_UPSTREAM_TAG}-oras" | grep -q .; then
-            echo "Tag ${LATEST_UPSTREAM_TAG}-oras already exists"
+          # Check if we already have this tag (same version, no suffix)
+          if git tag -l "${LATEST_UPSTREAM_TAG}" | grep -q .; then
+            echo "Tag ${LATEST_UPSTREAM_TAG} already exists"
             echo "has_new_tag=false" >> $GITHUB_OUTPUT
           else
             echo "New tag available: $LATEST_UPSTREAM_TAG"
@@ -122,7 +122,7 @@ jobs:
 
             ### After Merging
 
-            When this PR is merged, a new release `${{ needs.check-upstream.outputs.latest_tag }}-oras` will be created automatically.
+            When this PR is merged, a new release `${{ needs.check-upstream.outputs.latest_tag }}` will be created automatically.
 
             ### Checklist
 
