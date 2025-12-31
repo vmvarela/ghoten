@@ -111,7 +111,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: release/${{ needs.check-upstream.outputs.latest_tag }}
-          base: develop
+          base: master
           title: "🚀 Release ${{ needs.check-upstream.outputs.latest_tag }}"
           body: |
             ## Upstream Release

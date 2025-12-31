@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - develop
+      - master
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-          ref: develop
+          ref: master
 
       - name: Extract version from PR title
         id: version
@@ -73,7 +73,7 @@ jobs:
             }
             ```
 
-            See [ORAS Backend Documentation](https://github.com/${{ github.repository }}/blob/develop/internal/backend/remote-state/oras/README.md) for full configuration options.
+            See [ORAS Backend Documentation](https://github.com/${{ github.repository }}/blob/master/internal/backend/remote-state/oras/README.md) for full configuration options.
 
             ---
 
