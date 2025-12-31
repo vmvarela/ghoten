@@ -6,11 +6,10 @@ hide_table_of_contents: true
 ---
 
 import DocCardList from "@theme/DocCardList";
-import DocVersionBadge from "@theme/DocVersionBadge";
 
-### OpenTofu Documentation <DocVersionBadge />
+### Ghoten Documentation
 
-Welcome to OpenTofu 1.11! This version brings a lot of new features and improvements to OpenTofu. If you are coming from a previous OpenTofu or Terraform version you can [read the details about the new features here &raquo;](intro/whats-new.mdx)
+Welcome to Ghoten! Ghoten is a fork of OpenTofu that adds an **ORAS backend** for storing state in OCI registries (GHCR, ECR, ACR, Docker Hub, etc.).
 
 <DocCardList
     items={[
@@ -19,28 +18,28 @@ Welcome to OpenTofu 1.11! This version brings a lot of new features and improvem
             href: "intro/",
             label: "Getting started",
             description:
-                "Get started with OpenTofu or migrate from a previous version. This section has all the info you need.",
+                "Get started with Ghoten or migrate from OpenTofu/Terraform. This section has all the info you need.",
         },
         {
             type: "link",
             href: "language/",
             label: "Language",
             description:
-                "Use the OpenTofu configuration language to describe the infrastructure that OpenTofu manages.",
+                "Use the Ghoten configuration language to describe the infrastructure that Ghoten manages.",
         },
         {
             type: "link",
             href: "cli/",
             label: "CLI Documentation",
             description:
-                "Learn OpenTofu's CLI-based workflows. You can use the CLI alone or with cloud backends.",
+                "Learn Ghoten's CLI-based workflows. You can use the CLI alone or with cloud backends.",
         },
         {
             type: "link",
             href: "internals/",
             label: "Internals",
             description:
-                "Learn how OpenTofu generates the resource dependency graph and executes other internal processes.",
+                "Learn how Ghoten generates the resource dependency graph and executes other internal processes.",
         },
     ]}
 />

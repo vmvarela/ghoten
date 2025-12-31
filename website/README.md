@@ -1,41 +1,37 @@
-# OpenTofu Documentation
+# Ghoten Documentation
 
-This directory contains the portions of [the OpenTofu website](https://opentofu.org) that pertain to the core functionality, excluding providers and the overall configuration.
+This directory contains the documentation website for Ghoten, built with [Docusaurus](https://docusaurus.io/).
 
-## Development server
+## Development
 
-You can start a local development server with Docker by running the following command from this (the `website`) directory:
+Start the development server:
 
+```bash
+cd website
+npm install
+npm start
 ```
-docker compose up --build
+
+The site will be available at http://localhost:3000/ghoten/
+
+## Build
+
+Build the static site:
+
+```bash
+npm run build
 ```
 
-The development server will be available on http://localhost:3000/docs/main/ .
+## Deployment
 
-Under `Docs` in the navigation bar, select `Development` version to see local changes.
+The documentation is automatically deployed to GitHub Pages when changes are pushed to the `develop` branch via the `.github/workflows/deploy-docs.yml` workflow.
 
-## Suggesting Changes
+The site will be available at: https://victorcoder.github.io/ghoten/
 
-You can [submit an issue](https://github.com/opentofu/opentofu/issues/new/choose) with documentation requests or submit a pull request with suggested changes.
+## Structure
 
-Click **Edit this page** at the bottom of any OpenTofu website page to go directly to the associated markdown file in GitHub.
-
-## Modifying Sidebar Navigation
-
-You must update the sidebar navigation when you add or delete documentation .mdx files. If you do not update the navigation, the website deploy preview fails.
-
-To update the sidebar navigation, you must edit the appropriate `nav-data.json` file. This repository contains the sidebar navigation files for the following documentation sets:
-
-- OpenTofu Language: [`language-nav-data.json`](https://github.com/opentofu/opentofu/blob/main/website/data/language-nav-data.json)
-- OpenTofu CLI: [`cli-nav-data.json`](https://github.com/opentofu/opentofu/blob/main/website/data/cli-nav-data.json)
-- Introduction to OpenTofu: [`intro-nav-data.json`](https://github.com/opentofu/opentofu/blob/main/website/data/intro-nav-data.json)
-
-## Previewing Changes
-
-Currently, you can preview your changes through the [opentofu/opentofu.org](https://github.com/opentofu/opentofu.org/blob/main/README.md) repository.
-
-Follow the [Getting Started](https://github.com/opentofu/opentofu.org/blob/main/README.md#getting-started) guide.
-
-## Copyright headers for code examples
-
-In order to not include copyright headers for code examples used in docs, please, add the files under `examples` folder. This way, it will be ignored on automated copyright headers check.
+- `docs/` - Documentation content (MDX files)
+- `src/` - React components and CSS
+- `static/` - Static assets (images, etc.)
+- `docusaurus.config.ts` - Docusaurus configuration
+- `sidebars.ts` - Sidebar navigation configuration
