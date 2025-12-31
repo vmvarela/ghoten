@@ -42,3 +42,6 @@ dist/
 
 # Development temp folder
 tmp
+
+# Excluded files
+users.json
