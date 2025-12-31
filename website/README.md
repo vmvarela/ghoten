@@ -24,7 +24,7 @@ npm run build
 
 ## Deployment
 
-The documentation is automatically deployed to GitHub Pages when changes are pushed to the `develop` branch via the `.github/workflows/deploy-docs.yml` workflow.
+The documentation is automatically deployed to GitHub Pages when changes are pushed to the `master` branch via the `.github/workflows/deploy-docs.yml` workflow.
 
 The site will be available at: https://vmvarela.github.io/ghoten/
 

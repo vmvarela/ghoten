@@ -28,7 +28,7 @@ terraform {
 
 ```bash
 # Install
-curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/master/install.sh | sh
 
 # Authenticate (for GHCR)
 gh auth login
@@ -127,13 +127,13 @@ See the [ORAS Backend README](internal/backend/remote-state/oras/README.md) for:
 ### Linux/macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/master/install.sh | sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-irm https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.ps1 | iex
+irm https://raw.githubusercontent.com/vmvarela/ghoten/master/install.ps1 | iex
 ```
 
 ### Installation Options
@@ -148,10 +148,10 @@ irm https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.ps1 | iex
 
 ```bash
 # Install specific version
-GHOTEN_VERSION=v1.12.0 curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
+GHOTEN_VERSION=v1.12.0 curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/master/install.sh | sh
 
 # Install to custom directory
-GHOTEN_INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/develop/install.sh | sh
+GHOTEN_INSTALL_DIR=~/.local/bin curl -sSL https://raw.githubusercontent.com/vmvarela/ghoten/master/install.sh | sh
 ```
 
 ### Build from Source
