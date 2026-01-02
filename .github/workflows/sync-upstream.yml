@@ -37,17 +37,19 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
-          git fetch upstream --tags
 
       - name: Check for updates
         id: check
         run: |
-          # Get latest upstream tag (stable releases only, no alpha/beta/rc)
-          LATEST_UPSTREAM_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -E '(alpha|beta|rc)' | head -n1)
+          # Get latest upstream tag remotely (stable releases only, no alpha/beta/rc)
+          # Using ls-remote to avoid fetching/overwriting local tags
+          LATEST_UPSTREAM_TAG=$(git ls-remote --tags upstream 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' | \
+            awk '{print $2}' | sed 's|refs/tags/||' | grep -v -E '(alpha|beta|rc|\^{})' | \
+            sort -V | tail -n1)
           echo "Latest upstream tag: $LATEST_UPSTREAM_TAG"
           echo "latest_tag=$LATEST_UPSTREAM_TAG" >> $GITHUB_OUTPUT
 
-          # Check if we already have this tag (same version, no suffix)
+          # Check if we already have this tag locally
           if git tag -l "${LATEST_UPSTREAM_TAG}" | grep -q .; then
             echo "Tag ${LATEST_UPSTREAM_TAG} already exists"
             echo "has_new_tag=false" >> $GITHUB_OUTPUT
@@ -88,7 +90,7 @@ jobs:
       - name: Sync main with upstream
         run: |
           git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
-          git fetch upstream ${{ env.UPSTREAM_BRANCH }} --tags
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }}
 
           git checkout main
           git reset --hard upstream/${{ env.UPSTREAM_BRANCH }}
