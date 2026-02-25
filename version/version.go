@@ -28,6 +28,11 @@ var rawVersion string
 // linker flags when building binaries for release.
 var dev string = "yes"
 
+// versionOverride, when set via -ldflags, takes precedence over the
+// embedded VERSION file. This allows the release workflow to inject the
+// exact version from the git tag (e.g. "1.12.0-rc1").
+var versionOverride string
+
 // The main version number that is being run at the moment, populated from the raw version.
 var Version string
 
@@ -40,7 +45,11 @@ var Prerelease string
 var SemVer *version.Version
 
 func init() {
-	semVerFull := version.Must(version.NewVersion(strings.TrimSpace(rawVersion)))
+	raw := rawVersion
+	if versionOverride != "" {
+		raw = versionOverride
+	}
+	semVerFull := version.Must(version.NewVersion(strings.TrimSpace(raw)))
 	SemVer = semVerFull.Core()
 	Version = SemVer.String()
 

@@ -115,7 +115,7 @@ jobs:
           go build \
             -mod=readonly \
             -trimpath \
-            -ldflags="-s -w -X 'github.com/vmvarela/ghoten/version.dev=no'" \
+            -ldflags="-s -w -X 'github.com/vmvarela/ghoten/version.dev=no' -X 'github.com/vmvarela/ghoten/version.versionOverride=${VERSION}'" \
             -o "${BINARY}" \
             ./cmd/ghoten
 
