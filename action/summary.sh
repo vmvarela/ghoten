@@ -98,7 +98,7 @@ fi
 
 # ─── Write summary ───────────────────────────────────────────────────────────
 {
-  echo "## ${EMOJI} Ghoten \`${COMMAND}\` — ${STATUS}"
+  echo "## ${EMOJI} \`${COMMAND}\` — ${STATUS}"
   echo ""
 
   # Metadata table

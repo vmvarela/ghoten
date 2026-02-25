@@ -76,7 +76,7 @@ case "$COMMAND" in
 esac
 
 # Labels
-TITLE_PARTS="${EMOJI} Ghoten \`${COMMAND}\`"
+TITLE_PARTS="${EMOJI} \`${COMMAND}\`"
 [[ "$WORKING_DIR" != "." ]] && TITLE_PARTS="${TITLE_PARTS} · \`${WORKING_DIR}\`"
 [[ "$WORKSPACE" != "default" ]] && TITLE_PARTS="${TITLE_PARTS} · \`${WORKSPACE}\`"
 
