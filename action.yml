@@ -1,4 +1,4 @@
-name: 'Ghoten'
+name: 'Ghoten Action'
 description: 'Run Ghoten (OpenTofu + ORAS) with automatic GHCR auth, PR comments, and Job Summaries'
 author: 'Victor M. Varela'
 
