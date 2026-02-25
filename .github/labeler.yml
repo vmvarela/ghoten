@@ -1,0 +1,120 @@
+area/core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/ghoten/**
+          - internal/command/**
+          - internal/engine/**
+          - internal/dag/**
+
+area/backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/backend/**
+          - internal/cloud/**
+
+area/configs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/configs/**
+          - internal/addrs/**
+
+area/providers:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/providers/**
+          - internal/getproviders/**
+          - internal/providercache/**
+          - internal/provisioners/**
+          - internal/provisioner-local-exec/**
+          - internal/grpcwrap/**
+          - internal/plugin/**
+          - internal/plugin6/**
+          - internal/plugins/**
+          - internal/tfplugin5/**
+          - internal/tfplugin6/**
+
+area/states:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/states/**
+          - internal/ghotenmigrate/**
+
+area/lang:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/lang/**
+          - internal/repl/**
+
+area/encryption:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/encryption/**
+
+area/plans:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/plans/**
+          - internal/refactoring/**
+          - internal/checks/**
+          - internal/instances/**
+
+area/registry:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/registry/**
+          - internal/getmodules/**
+          - internal/initwd/**
+          - internal/modsdir/**
+          - internal/depsfile/**
+
+area/diagnostics:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/tfdiags/**
+          - internal/terminal/**
+          - internal/logging/**
+          - internal/tracing/**
+
+# ─── Tipo de cambio ──────────────────────────────────────────
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - website/**
+          - "*.md"
+          - rfc/**
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - codecov.yml
+          - .golangci.yml
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - testing/**
+          - internal/e2e/**
+          - internal/moduletest/**
+          - "**/*_test.go"
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Makefile
+          - Dockerfile
+          - Dockerfile.minimal
+          - go.mod
+          - go.sum
+          - scripts/**
+          - tools/**
+          - version/**
+          - cmd/**
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - go.mod
+          - go.sum

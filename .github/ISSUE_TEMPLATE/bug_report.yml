@@ -1,0 +1,104 @@
+name: "\U0001F41B Bug Report"
+description: Report a bug or unexpected behaviour in Ghoten.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug! Please fill out the form below so we can investigate.
+
+  - type: input
+    id: version
+    attributes:
+      label: Ghoten Version
+      description: "Output of `ghoten version`"
+      placeholder: "v1.12.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - FreeBSD
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: registry
+    attributes:
+      label: OCI Registry (if applicable)
+      description: "Which OCI registry are you using?"
+      placeholder: "ghcr.io / Docker Hub / ECR / other"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behaviour.
+      value: |
+        1. Configure backend with ...
+        2. Run `ghoten ...`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug Logs
+      description: |
+        Paste relevant logs from `TF_LOG=DEBUG ghoten plan` (redact sensitive data).
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Configuration
+      description: |
+        Paste relevant backend/provider configuration (redact sensitive data).
+      render: hcl
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information.
+    validations:
+      required: false

@@ -1,0 +1,84 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package cloud
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mitchellh/cli"
+
+	"github.com/vmvarela/ghoten/internal/backend"
+	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/command/clistate"
+	"github.com/vmvarela/ghoten/internal/command/views"
+	"github.com/vmvarela/ghoten/internal/initwd"
+	"github.com/vmvarela/ghoten/internal/plans"
+	"github.com/vmvarela/ghoten/internal/states/statemgr"
+	"github.com/vmvarela/ghoten/internal/terminal"
+)
+
+func testOperationRefresh(t *testing.T, configDir string) (*backend.Operation, func(*testing.T) *terminal.TestOutput) {
+	t.Helper()
+
+	return testOperationRefreshWithTimeout(t, configDir, 0)
+}
+
+func testOperationRefreshWithTimeout(t *testing.T, configDir string, timeout time.Duration) (*backend.Operation, func(*testing.T) *terminal.TestOutput) {
+	t.Helper()
+
+	_, configLoader := initwd.MustLoadConfigForTests(t, configDir, "tests")
+
+	streams, done := terminal.StreamsForTesting(t)
+	view := views.NewView(streams)
+	stateLockerView := views.NewStateLocker(arguments.ViewOptions{ViewType: arguments.ViewHuman}, view)
+	operationView := views.NewOperation(arguments.ViewHuman, false, view)
+
+	return &backend.Operation{
+		ConfigDir:    configDir,
+		ConfigLoader: configLoader,
+		PlanRefresh:  true,
+		StateLocker:  clistate.NewLocker(timeout, stateLockerView),
+		Type:         backend.OperationTypeRefresh,
+		View:         operationView,
+	}, done
+}
+
+func TestCloud_refreshBasicActuallyRunsApplyRefresh(t *testing.T) {
+	b, bCleanup := testBackendWithName(t)
+	defer bCleanup()
+
+	op, done := testOperationRefresh(t, "./testdata/refresh")
+	defer done(t)
+
+	op.UIOut = b.CLI
+	b.CLIColor = b.cliColorize()
+	op.PlanMode = plans.RefreshOnlyMode
+	op.Workspace = testBackendSingleWorkspaceName
+
+	run, err := b.Operation(context.Background(), op)
+	if err != nil {
+		t.Fatalf("error starting operation: %v", err)
+	}
+
+	<-run.Done()
+	if run.Result != backend.OperationSuccess {
+		t.Fatalf("operation failed: %s", b.CLI.(*cli.MockUi).ErrorWriter.String())
+	}
+
+	output := b.CLI.(*cli.MockUi).OutputWriter.String()
+	if !strings.Contains(output, "Proceeding with 'tofu apply -refresh-only -auto-approve'") {
+		t.Fatalf("expected TFC header in output: %s", output)
+	}
+
+	stateMgr, _ := b.StateMgr(t.Context(), testBackendSingleWorkspaceName)
+	// An error suggests that the state was not unlocked after apply
+	if _, err := stateMgr.Lock(t.Context(), statemgr.NewLockInfo()); err != nil {
+		t.Fatalf("unexpected error locking state after apply: %s", err.Error())
+	}
+}

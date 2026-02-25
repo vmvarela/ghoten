@@ -1,0 +1,43 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      aws:
+        patterns:
+          - "github.com/aws/*"
+          - "github.com/hashicorp/aws-sdk-go-base/*"
+      azure:
+        patterns:
+          - "github.com/Azure/*"
+      gcp:
+        patterns:
+          - "cloud.google.com/go/*"
+          - "google.golang.org/*"
+          - "github.com/googleapis/*"
+      hashicorp:
+        patterns:
+          - "github.com/hashicorp/*"
+        exclude-patterns:
+          - "github.com/hashicorp/aws-sdk-go-base/*"
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+      k8s:
+        patterns:
+          - "k8s.io/*"
+      opentofu:
+        patterns:
+          - "github.com/opentofu/*"
+          - "github.com/opencontainers/*"
+          - "oras.land/*"

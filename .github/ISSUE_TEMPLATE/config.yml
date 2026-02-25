@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "\U0001F4AC OpenTofu Discussions"
+    url: https://github.com/orgs/opentofu/discussions
+    about: For general OpenTofu questions (not Ghoten-specific).
+  - name: "\U0001F4D6 Documentation"
+    url: https://github.com/vmvarela/ghoten#readme
+    about: Check the README for usage documentation and troubleshooting.

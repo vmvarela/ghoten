@@ -1,0 +1,52 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "v[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests
+        run: go test ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check go.mod tidiness
+        run: |
+          go mod tidy
+          if [[ -n "$(git status --porcelain go.mod go.sum)" ]]; then
+            echo "ERROR: go.mod/go.sum are not up-to-date. Run 'go mod tidy' and commit."
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        run: make golangci-lint

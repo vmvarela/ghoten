@@ -1,0 +1,138 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package ghoten
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
+
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/configs/hcl2shim"
+	"github.com/vmvarela/ghoten/internal/lang"
+	"github.com/vmvarela/ghoten/internal/lang/evalchecks"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
+)
+
+func buildProviderConfig(ctx context.Context, evalCtx EvalContext, addr addrs.AbsProviderConfig, config *configs.Provider) hcl.Body {
+	var configBody hcl.Body
+	if config != nil {
+		configBody = config.Config
+	}
+
+	var inputBody hcl.Body
+	inputConfig := evalCtx.ProviderInput(ctx, addr)
+	if len(inputConfig) > 0 {
+		inputBody = configs.SynthBody("<input-prompt>", inputConfig)
+	}
+
+	switch {
+	case configBody != nil && inputBody != nil:
+		log.Printf("[TRACE] buildProviderConfig for %s: merging explicit config and input", addr)
+		return hcl.MergeBodies([]hcl.Body{inputBody, configBody})
+	case configBody != nil:
+		log.Printf("[TRACE] buildProviderConfig for %s: using explicit config only", addr)
+		return configBody
+	case inputBody != nil:
+		log.Printf("[TRACE] buildProviderConfig for %s: using input only", addr)
+		return inputBody
+	default:
+		log.Printf("[TRACE] buildProviderConfig for %s: no configuration at all", addr)
+		addr := fmt.Sprintf("%s with no configuration", addr)
+		return hcl2shim.SynthBody(addr, make(map[string]cty.Value))
+	}
+}
+
+func resolveProviderResourceInstance(ctx context.Context, evalCtx EvalContext, keyExpr hcl.Expression, resourcePath addrs.AbsResourceInstance) (addrs.InstanceKey, tfdiags.Diagnostics) {
+	keyData := evalCtx.InstanceExpander().GetResourceInstanceRepetitionData(resourcePath)
+	keyScope := evalCtx.EvaluationScope(nil, nil, keyData)
+	return resolveProviderInstance(ctx, keyExpr, keyScope, resourcePath.String())
+}
+
+func resolveProviderModuleInstance(ctx context.Context, evalCtx EvalContext, keyExpr hcl.Expression, modulePath addrs.ModuleInstance, source string) (addrs.InstanceKey, tfdiags.Diagnostics) {
+	keyData := evalCtx.InstanceExpander().GetModuleInstanceRepetitionData(modulePath)
+	// module providers block is evaluated in the parent module scope, similar to GraphNodeReferenceOutside
+	evalPath := modulePath.Parent()
+	keyScope := evalCtx.WithPath(evalPath).EvaluationScope(nil, nil, keyData)
+	return resolveProviderInstance(ctx, keyExpr, keyScope, source)
+}
+
+func resolveProviderInstance(ctx context.Context, keyExpr hcl.Expression, keyScope *lang.Scope, source string) (addrs.InstanceKey, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	keyVal, keyDiags := keyScope.EvalExpr(ctx, keyExpr, cty.DynamicPseudoType)
+	diags = diags.Append(keyDiags)
+	if keyDiags.HasErrors() {
+		return nil, diags
+	}
+
+	if keyVal.HasMark(marks.Sensitive) {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   "A provider instance key must not be derived from a sensitive value.",
+			Subject:  keyExpr.Range().Ptr(),
+			Extra:    evalchecks.DiagnosticCausedByConfidentialValues(true),
+		})
+	}
+	if keyVal.HasMark(marks.Ephemeral) {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   "A provider instance key must not be derived from an ephemeral value.",
+			Subject:  keyExpr.Range().Ptr(),
+			Extra:    evalchecks.DiagnosticCausedByConfidentialValues(true),
+		})
+	}
+	if keyVal.IsNull() {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   "A provider instance key must not be null.",
+			Subject:  keyExpr.Range().Ptr(),
+		})
+	}
+	if !keyVal.IsKnown() {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   fmt.Sprintf("The provider instance key for %s depends on values that cannot be determined until apply, and so Ghoten cannot select a provider instance to create a plan for this resource instance.", source),
+			Subject:  keyExpr.Range().Ptr(),
+			Extra:    evalchecks.DiagnosticCausedByUnknown(true),
+		})
+	}
+
+	// bool and number type are converted to string
+	keyVal, convertErr := convert.Convert(keyVal, cty.String)
+	if convertErr != nil {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   fmt.Sprintf("The given instance key is unsuitable: %s.", tfdiags.FormatError(convertErr)),
+			Subject:  keyExpr.Range().Ptr(),
+		})
+	}
+
+	// Because of the string conversion before the call of the ParseInstanceKey function,
+	// no errors will be raised. Because keyVal is guaranteed to be a string.
+	// We can keep the error handling in case the implementation of ParseInstanceKey change in the future
+	parsedKey, parsedErr := addrs.ParseInstanceKey(keyVal)
+	if parsedErr != nil {
+		return nil, diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid provider instance key",
+			Detail:   fmt.Sprintf("The given instance key is unsuitable: %s.", tfdiags.FormatError(parsedErr)),
+			Subject:  keyExpr.Range().Ptr(),
+		})
+	}
+	return parsedKey, diags
+}

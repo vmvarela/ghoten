@@ -1,0 +1,371 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"context"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/vmvarela/ghoten/internal/command/workdir"
+	"github.com/vmvarela/ghoten/internal/terminal"
+	"github.com/opentofu/svchost"
+	"github.com/opentofu/svchost/disco"
+
+	"github.com/vmvarela/ghoten/internal/command/cliconfig"
+	"github.com/vmvarela/ghoten/internal/command/cliconfig/svcauthconfig"
+	oauthserver "github.com/vmvarela/ghoten/internal/command/testdata/login-oauth-server"
+	tfeserver "github.com/vmvarela/ghoten/internal/command/testdata/login-tfe-server"
+	"github.com/vmvarela/ghoten/internal/command/webbrowser"
+	"github.com/vmvarela/ghoten/internal/httpclient"
+)
+
+func TestLogin(t *testing.T) {
+	// oauthserver.Handler is a stub OAuth server implementation that will,
+	// on success, always issue a bearer token named "good-token".
+	s := httptest.NewServer(oauthserver.Handler)
+	defer s.Close()
+
+	// tfeserver.Handler is a stub TFE API implementation which will respond
+	// to ping and current account requests, when requests are authenticated
+	// with token "good-token"
+	ts := httptest.NewServer(tfeserver.Handler)
+	defer ts.Close()
+
+	loginTestCase := func(test func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput), useBrowserLauncher bool) func(t *testing.T) {
+		return func(t *testing.T) {
+			t.Helper()
+			workDir := t.TempDir()
+
+			// We'll use this context to avoid asynchronous tasks outliving
+			// a single test run.
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			loginView, loginDone := testView(t)
+
+			var browserLauncher webbrowser.Launcher = nil
+			if useBrowserLauncher {
+				browserLauncher = webbrowser.NewMockLauncher(ctx)
+			}
+
+			creds := cliconfig.EmptyCredentialsSourceForTests(filepath.Join(workDir, "credentials.tfrc.json"))
+			svcs := disco.New(
+				disco.WithCredentials(creds),
+				disco.WithHTTPClient(httpclient.New(t.Context())),
+			)
+
+			svcs.ForceHostServices(svchost.Hostname("example.com"), map[string]interface{}{
+				"login.v1": map[string]interface{}{
+					// For this fake hostname we'll use a conventional OAuth flow,
+					// with browser-based consent that we'll mock away using a
+					// mock browser launcher below.
+					"client": "anything-goes",
+					"authz":  s.URL + "/authz",
+					"token":  s.URL + "/token",
+				},
+			})
+			svcs.ForceHostServices(svchost.Hostname("with-scopes.example.com"), map[string]interface{}{
+				"login.v1": map[string]interface{}{
+					// with scopes
+					// mock browser launcher below.
+					"client": "scopes_test",
+					"authz":  s.URL + "/authz",
+					"token":  s.URL + "/token",
+					"scopes": []interface{}{"app1.full_access", "app2.read_only"},
+				},
+			})
+			svcs.ForceHostServices(svchost.Hostname(hcpTerraformHost), map[string]interface{}{
+				// This represents Terraform Cloud, which does not yet support the
+				// login API, but does support its own bespoke tokens API.
+				"tfe.v2":   ts.URL + "/api/v2",
+				"tfe.v2.1": ts.URL + "/api/v2",
+				"tfe.v2.2": ts.URL + "/api/v2",
+				"motd.v1":  ts.URL + "/api/terraform/motd",
+			})
+			svcs.ForceHostServices(svchost.Hostname("tfe.acme.com"), map[string]interface{}{
+				// This represents a Terraform Enterprise instance which does not
+				// yet support the login API, but does support its own bespoke tokens API.
+				"tfe.v2":   ts.URL + "/api/v2",
+				"tfe.v2.1": ts.URL + "/api/v2",
+				"tfe.v2.2": ts.URL + "/api/v2",
+			})
+			svcs.ForceHostServices(svchost.Hostname("unsupported.example.net"), map[string]interface{}{
+				// This host intentionally left blank.
+			})
+
+			c := &LoginCommand{
+				Meta: Meta{
+					WorkingDir:      workdir.NewDir("."),
+					View:            loginView,
+					BrowserLauncher: browserLauncher,
+					Services:        svcs,
+				},
+			}
+
+			test(t, c, loginDone)
+		}
+	}
+
+	t.Run("no hostname provided", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		status := c.Run([]string{})
+		loginOutput := closeView(t)
+		if status == 0 {
+			t.Fatalf("successful exit; want error")
+		}
+
+		if got, want := loginOutput.Stderr(), "The login command expects exactly one argument"; !strings.Contains(got, want) {
+			t.Fatalf("missing expected error message\nwant: %s\nfull output:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run(hcpTerraformHost+" (special-cased login support)", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt, then paste a token with some
+		// accidental whitespace.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+			"token":   "  good-token ",
+		})()
+		status := c.Run([]string{"-no-color", hcpTerraformHost})
+		loginOutput := closeView(t)
+		if status != 0 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		credsSrc := c.Services.CredentialsSource()
+		creds, err := credsSrc.ForHost(t.Context(), svchost.Hostname(hcpTerraformHost))
+		if err != nil {
+			t.Errorf("failed to retrieve credentials: %s", err)
+		}
+		if got, want := svcauthconfig.HostCredentialsBearerToken(t, creds), "good-token"; got != want {
+			t.Errorf("wrong token %q; want %q", got, want)
+		}
+		// NOTE: The "␀" control picture at the end of this is intentional,
+		// verifying that we correctly filtered the U+0000 character that's
+		// included in the test server's motd.v1 response. This is verifying
+		// that we disallow the remote server from directly including C0
+		// control characters in its output, because implementations are
+		// expected to implemented limited formatting using the colorstring
+		// library's syntax like "[bold]" and "[reset]". The input string
+		// also includes such sequences, and so those being no longer present
+		// in the output here confirms that the login command did use the
+		// colorstring library to prepare the string (which filters out the
+		// color codes entirely when running in no-color mode, as we are here).
+		if got, want := loginOutput.Stdout(), "Welcome to the cloud backend!␀"; !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q, but was:\n%s", want, got)
+		}
+		if !c.Meta.stateLock {
+			t.Errorf("stateLock always expected to be true for the login command")
+		}
+	}, true))
+
+	t.Run("example.com with authorization code flow", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+		})()
+		status := c.Run([]string{"example.com"})
+		loginOutput := closeView(t)
+		if status != 0 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		credsSrc := c.Services.CredentialsSource()
+		creds, err := credsSrc.ForHost(t.Context(), svchost.Hostname("example.com"))
+		if err != nil {
+			t.Errorf("failed to retrieve credentials: %s", err)
+		}
+		if got, want := svcauthconfig.HostCredentialsBearerToken(t, creds), "good-token"; got != want {
+			t.Errorf("wrong token %q; want %q", got, want)
+		}
+
+		if got, want := loginOutput.Stdout(), "Ghoten has obtained and saved an API token."; !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q, but was:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run("example.com results in no scopes", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+
+		host, _ := c.Services.Discover(t.Context(), "example.com")
+		client, _ := host.ServiceOAuthClient("login.v1")
+		if len(client.Scopes) != 0 {
+			t.Errorf("unexpected scopes %q; expected none", client.Scopes)
+		}
+	}, true))
+
+	t.Run("with-scopes.example.com with authorization code flow and scopes", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+		})()
+		status := c.Run([]string{"with-scopes.example.com"})
+		loginOutput := closeView(t)
+		if status != 0 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		credsSrc := c.Services.CredentialsSource()
+		creds, err := credsSrc.ForHost(t.Context(), svchost.Hostname("with-scopes.example.com"))
+
+		if err != nil {
+			t.Errorf("failed to retrieve credentials: %s", err)
+		}
+
+		if got, want := svcauthconfig.HostCredentialsBearerToken(t, creds), "good-token"; got != want {
+			t.Errorf("wrong token %q; want %q", got, want)
+		}
+
+		if got, want := loginOutput.Stdout(), "Ghoten has obtained and saved an API token."; !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q, but was:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run("with-scopes.example.com results in expected scopes", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+
+		host, _ := c.Services.Discover(t.Context(), "with-scopes.example.com")
+		client, _ := host.ServiceOAuthClient("login.v1")
+
+		expectedScopes := [2]string{"app1.full_access", "app2.read_only"}
+
+		var foundScopes [2]string
+		copy(foundScopes[:], client.Scopes)
+
+		if foundScopes != expectedScopes || len(client.Scopes) != len(expectedScopes) {
+			t.Errorf("unexpected scopes %q; want %q", client.Scopes, expectedScopes)
+		}
+	}, true))
+
+	t.Run("TFE host without login support", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt, then paste a token with some
+		// accidental whitespace.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+			"token":   "  good-token ",
+		})()
+		status := c.Run([]string{"tfe.acme.com"})
+		loginOutput := closeView(t)
+		if status != 0 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		credsSrc := c.Services.CredentialsSource()
+		creds, err := credsSrc.ForHost(t.Context(), svchost.Hostname("tfe.acme.com"))
+		if err != nil {
+			t.Errorf("failed to retrieve credentials: %s", err)
+		}
+		if got, want := svcauthconfig.HostCredentialsBearerToken(t, creds), "good-token"; got != want {
+			t.Errorf("wrong token %q; want %q", got, want)
+		}
+
+		if got, want := loginOutput.Stdout(), "Logged in to the cloud backend"; !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q, but was:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run("TFE host without login support, incorrectly pasted token", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt, then paste an invalid token.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+			"token":   "good-tok",
+		})()
+		status := c.Run([]string{"tfe.acme.com"})
+		loginOutput := closeView(t)
+		if status != 1 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		credsSrc := c.Services.CredentialsSource()
+		creds, err := credsSrc.ForHost(t.Context(), svchost.Hostname("tfe.acme.com"))
+		if err != nil {
+			t.Errorf("failed to retrieve credentials: %s", err)
+		}
+		if creds != nil {
+			t.Errorf("wrong token %q; should have no token", svcauthconfig.HostCredentialsBearerToken(t, creds))
+		}
+	}, true))
+
+	t.Run("host without login or TFE API support", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		status := c.Run([]string{"-no-color", "unsupported.example.net"})
+		loginOutput := closeView(t)
+		if status == 0 {
+			t.Fatalf("successful exit; want error")
+		}
+
+		if got, want := loginOutput.Stderr(), "Error: Host does not support Ghoten tokens API"; !strings.Contains(got, want) {
+			t.Fatalf("missing expected error message\nwant: %s\nfull output:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run("answering no cancels", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "no" at the consent prompt
+		defer testInputMap(t, map[string]string{
+			"approve": "no",
+		})()
+		status := c.Run([]string{hcpTerraformHost})
+		loginOutput := closeView(t)
+		if status != 1 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		if got, want := loginOutput.Stderr(), "Login cancelled"; !strings.Contains(got, want) {
+			t.Fatalf("missing expected error message\nwant: %s\nfull output:\n%s", want, got)
+		}
+	}, true))
+
+	t.Run("answering y cancels", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "y" at the consent prompt
+		defer testInputMap(t, map[string]string{
+			"approve": "y",
+		})()
+		status := c.Run([]string{hcpTerraformHost})
+		loginOutput := closeView(t)
+		if status != 1 {
+			t.Fatalf("unexpected error code %d\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		if got, want := loginOutput.Stderr(), "Login cancelled"; !strings.Contains(got, want) {
+			t.Fatalf("missing expected error message\nwant: %s\nfull output:\n%s", want, got)
+		}
+	}, true))
+
+	// The following test does not use browser MockLauncher() and forces `tofu login` command print URL
+	// and wait for the callback with code.
+	// There is no timeout in `tofu login` OAuth2 callback server code, so the only way to interrupt it
+	// is to write to the shutdown channel (or complete the login process).
+	t.Run("example.com Ctrl+C interrupts login command", loginTestCase(func(t *testing.T, c *LoginCommand, closeView func(*testing.T) *terminal.TestOutput) {
+		// Enter "yes" at the consent prompt.
+		defer testInputMap(t, map[string]string{
+			"approve": "yes",
+		})()
+
+		// override the command's shutdown channel so we can write to it
+		abortCh := make(chan struct{})
+		c.ShutdownCh = abortCh
+
+		// statusCh will receive command Run result
+		statusCh := make(chan int)
+		defer close(statusCh)
+		go func() {
+			statusCh <- c.Run([]string{"example.com"})
+		}()
+
+		// abort background Login command and wait for its result
+		// removing the following lint results in default test timeout, since we don't run mocked webbrowser
+		// and OAuth2 callback server will never get request with 'code'.
+		abortCh <- struct{}{}
+		status := <-statusCh
+		loginOutput := closeView(t)
+		if status != 1 {
+			t.Fatalf("unexpected error code %d after interrupting the command\nstderr:\n%s", status, loginOutput.Stderr())
+		}
+
+		if got, want := loginOutput.Stderr(), "Action aborted"; !strings.Contains(got, want) {
+			t.Fatalf("missing expected error message\nwant: %s\nfull output:\n%s", want, got)
+		}
+	}, false))
+}

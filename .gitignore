@@ -1,0 +1,45 @@
+*.dll
+*.exe
+.DS_Store
+bin/
+modules-dev/
+/pkg/
+website/.vagrant
+website/.bundle
+website/build
+website/node_modules
+.vagrant/
+*.backup
+*.bak
+*~
+.*.swp
+.idea
+*.iml
+*.test
+*.iml
+
+/ghoten
+
+website/vendor
+vendor/
+
+# "make golangci-lint" places its temprary golangci-lint executable here
+tools/golangci-lint*
+
+# VSCode debugging configurations
+.vscode/launch.json
+
+# Coverage
+coverage.html
+coverage.out
+coverage.txt
+
+# GoReleaser build directory
+dist/
+
+# Licensei cache file
+.licensei.cache
+
+# Development temp folder
+tmp
+.act/

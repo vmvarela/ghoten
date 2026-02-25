@@ -1,0 +1,849 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math/rand"
+	"net"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+
+	tfe "github.com/hashicorp/go-tfe"
+	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/command/views"
+	"github.com/vmvarela/ghoten/internal/tracing"
+	"github.com/opentofu/svchost"
+	"github.com/opentofu/svchost/disco"
+	"github.com/opentofu/svchost/svcauth"
+
+	"github.com/vmvarela/ghoten/internal/command/cliconfig"
+	"github.com/vmvarela/ghoten/internal/command/format"
+	"github.com/vmvarela/ghoten/internal/httpclient"
+	"github.com/vmvarela/ghoten/internal/logging"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
+	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/version"
+
+	uuid "github.com/hashicorp/go-uuid"
+	"golang.org/x/oauth2"
+)
+
+// This is HashiCorp's cloud host.
+// There are a few special circumstances that depend on this whitelisted hostname.
+const hcpTerraformHost = "app.terraform.io"
+
+// LoginCommand is a Command implementation that runs an interactive login
+// flow for a remote service host. It then stashes credentials in a tfrc
+// file in the user's home directory.
+type LoginCommand struct {
+	Meta
+}
+
+// Run implements cli.Command.
+func (c *LoginCommand) Run(rawArgs []string) int {
+	ctx := c.CommandContext()
+	ctx, span := tracing.Tracer().Start(ctx, "Login")
+	defer span.End()
+
+	common, rawArgs := arguments.ParseView(rawArgs)
+	c.View.Configure(common)
+	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
+	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
+	c.View.DiagsWithNewline()
+
+	// Propagate -no-color for legacy use of Ui. The remote backend and
+	// cloud package use this; it should be removed when/if they are
+	// migrated to views.
+	c.Meta.color = !common.NoColor
+	c.Meta.Color = c.Meta.color
+
+	// Parse and validate flags
+	args, closer, diags := arguments.ParseLogin(rawArgs)
+	defer closer()
+
+	// Instantiate the view, even if there are flag errors, so that we render
+	// diagnostics according to the desired view
+	view := views.NewLogin(args.ViewOptions, c.View)
+	// ... and initialise the Meta.Ui to wrap Meta.View into a new implementation
+	// that is able to print by using View abstraction and use the Meta.Ui
+	// to ask for the user input.
+	c.Meta.configureUiFromView(args.ViewOptions)
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		view.HelpPrompt(c.credentialsFileForHelp())
+		return 1
+	}
+
+	// FIXME: the -input flag value is needed to initialize the backend and the
+	// operation, but there is no clear path to pass this value down, so we
+	// continue to mutate the Meta object state for now.
+	c.Meta.input = args.ViewOptions.InputEnabled
+
+	// TODO meta-refactor: when the stateLock and stateLockTimeout are extracted to be configured separately, remove
+	// these and use a common way to configure this
+	// The stateLock=true is here this way because this command used before meta.extendedFlagSet which did the same
+	// and left for the command to configure flags for this if needed.
+	c.Meta.stateLock = true
+
+	if !c.input {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Login is an interactive command",
+			"The \"ghoten login\" command uses interactive prompts to obtain and record credentials, so it can't be run with input disabled.\n\nTo configure credentials in a non-interactive context, write existing credentials directly to a CLI configuration file.",
+		))
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	givenHostname := args.Host
+
+	hostname, err := svchost.ForComparison(givenHostname)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Invalid hostname",
+			fmt.Sprintf("The given hostname %q is not valid: %s.", givenHostname, err.Error()),
+		))
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// From now on, since we've validated the given hostname, we should use
+	// dispHostname in the UI to ensure we're presenting it in the canonical
+	// form, in case that helpers users with debugging when things aren't
+	// working as expected. (Perhaps the normalization is part of the cause.)
+	dispHostname := hostname.ForDisplay()
+
+	host, err := c.Services.Discover(ctx, hostname)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Service discovery failed for "+dispHostname,
+
+			// Contrary to usual Go idiom, the Discover function returns
+			// full sentences with initial capitalization in its error messages,
+			// and they are written with the end-user as the audience. We
+			// only need to add the trailing period to make them consistent
+			// with our usual error reporting standards.
+			err.Error()+".",
+		))
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	creds := c.Services.CredentialsSource().(*cliconfig.CredentialsSource)
+	filename, _ := creds.CredentialsFilePath()
+	credsCtx := &loginCredentialsContext{
+		Location:      creds.HostCredentialsLocation(hostname),
+		LocalFilename: filename, // empty in the very unlikely event that we can't select a config directory for this user
+		HelperType:    creds.CredentialsHelperType(),
+	}
+
+	clientConfig, err := host.ServiceOAuthClient("login.v1")
+	switch err.(type) {
+	case nil:
+		// Great! No problem, then.
+	case *disco.ErrServiceNotProvided:
+		// This is also fine! We'll try the manual token creation process.
+	case *disco.ErrVersionNotSupported:
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Warning,
+			"Host does not support Ghoten login",
+			fmt.Sprintf("The given hostname %q allows creating Ghoten authorization tokens, but requires a newer version of Ghoten CLI to do so.", dispHostname),
+		))
+	default:
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Warning,
+			"Host does not support Ghoten login",
+			fmt.Sprintf("The given hostname %q cannot support \"ghoten login\": %s.", dispHostname, err),
+		))
+	}
+
+	// If login service is unavailable, check for a TFE v2 API as fallback
+	var tfeservice *url.URL
+	if clientConfig == nil {
+		tfeservice, err = host.ServiceURL("tfe.v2")
+		switch err.(type) {
+		case nil:
+			// Success!
+		case *disco.ErrServiceNotProvided:
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Host does not support Ghoten tokens API",
+				fmt.Sprintf("The given hostname %q does not support creating Ghoten authorization tokens.", dispHostname),
+			))
+		case *disco.ErrVersionNotSupported:
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Host does not support Ghoten tokens API",
+				fmt.Sprintf("The given hostname %q allows creating Ghoten authorization tokens, but requires a newer version of Ghoten CLI to do so.", dispHostname),
+			))
+		default:
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Host does not support Ghoten tokens API",
+				fmt.Sprintf("The given hostname %q cannot support \"ghoten login\": %s.", dispHostname, err),
+			))
+		}
+	}
+
+	if credsCtx.Location == cliconfig.CredentialsInOtherFile {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			fmt.Sprintf("Credentials for %s are manually configured", dispHostname),
+			"The \"ghoten login\" command cannot log in because credentials for this host are already configured in a CLI configuration file.\n\nTo log in, first revoke the existing credentials and remove that block from the CLI configuration.",
+		))
+	}
+
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	var token svcauth.HostCredentialsToken
+	var tokenDiags tfdiags.Diagnostics
+
+	// Prefer Ghoten login if available
+	if clientConfig != nil {
+		var oauthToken *oauth2.Token
+
+		switch {
+		case clientConfig.SupportedGrantTypes.Has(disco.OAuthAuthzCodeGrant):
+			// We prefer an OAuth code grant if the server supports it.
+			oauthToken, tokenDiags = c.interactiveGetTokenByCode(ctx, hostname, credsCtx, clientConfig, view)
+		case clientConfig.SupportedGrantTypes.Has(disco.OAuthOwnerPasswordGrant) && hostname == svchost.Hostname(hcpTerraformHost):
+			// The password grant type is allowed only for Terraform Cloud SaaS.
+			// Note this case is purely theoretical at this point, as TFC currently uses
+			// its own bespoke login protocol (tfe)
+			oauthToken, tokenDiags = c.interactiveGetTokenByPassword(ctx, hostname, credsCtx, clientConfig, view)
+		default:
+			tokenDiags = tokenDiags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Host does not support Ghoten login",
+				fmt.Sprintf("The given hostname %q does not allow any OAuth grant types that are supported by this version of Ghoten.", dispHostname),
+			))
+		}
+		if oauthToken != nil {
+			token = svcauth.HostCredentialsToken(oauthToken.AccessToken)
+		}
+	} else if tfeservice != nil {
+		token, tokenDiags = c.interactiveGetTokenByUI(ctx, hostname, credsCtx, tfeservice, view)
+	}
+
+	diags = diags.Append(tokenDiags)
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	err = creds.StoreForHost(ctx, hostname, token)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to save API token",
+			fmt.Sprintf("The given host returned an API token, but Ghoten failed to save it: %s.", err),
+		))
+	}
+
+	view.Diagnostics(diags)
+	if diags.HasErrors() {
+		return 1
+	}
+
+	view.UiSeparator()
+	if hostname == hcpTerraformHost { // HCP Terraform
+		var motd struct {
+			Message string        `json:"msg"`
+			Errors  []interface{} `json:"errors"`
+		}
+
+		// Throughout the entire process of fetching a MOTD from TFC, use a default
+		// message if the platform-provided message is unavailable for any reason -
+		// be it the service isn't provided, the request failed, or any sort of
+		// platform error returned.
+
+		motdServiceURL, err := host.ServiceURL("motd.v1")
+		if err != nil {
+			c.logMOTDError(err)
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+
+		req, err := http.NewRequest("GET", motdServiceURL.String(), nil)
+		if err != nil {
+			c.logMOTDError(err)
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+
+		req.Header.Set("Authorization", "Bearer "+token.Token())
+
+		resp, err := httpclient.New(ctx).Do(req)
+		if err != nil {
+			c.logMOTDError(err)
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.logMOTDError(err)
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+
+		defer resp.Body.Close()
+		if err := json.Unmarshal(body, &motd); err != nil {
+			c.logMOTDError(fmt.Errorf("platform responded with invalid motd payload: %w", err))
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+
+		if motd.Errors == nil && motd.Message != "" {
+			// NOTE: The motd service is allowed to use a limited set of
+			// control sequences to represent formatting like color and
+			// bold text, but the service must describe those using the
+			// syntax expected by c.Colorize() -- with substitution strings
+			// like "[bold]" and "[reset]" -- rather than using ECMA-48-style
+			// control sequences directly. We filter control characters here
+			// before calling c.Colorize, so the service cannot use any
+			// control sequences aside from the ones introduced by the
+			// colorstring library.
+			view.MOTDMessage(format.ReplaceControlChars(motd.Message))
+			return 0
+		} else {
+			c.logMOTDError(fmt.Errorf("platform responded with errors or an empty message"))
+			view.DefaultTFCLoginSuccess()
+			return 0
+		}
+	}
+
+	if tfeservice != nil { // Terraform Enterprise
+		view.DefaultTFELoginSuccess(dispHostname)
+	} else {
+		view.TokenObtainedConfirmation(dispHostname)
+	}
+
+	return 0
+}
+
+func (c *LoginCommand) logMOTDError(err error) {
+	log.Printf("[TRACE] login: An error occurred attempting to fetch a message of the day for cloud backend: %s", err)
+}
+
+// Help implements cli.Command.
+func (c *LoginCommand) Help() string {
+	defaultFile := c.credentialsFileForHelp()
+
+	helpText := fmt.Sprintf(`
+Usage: ghoten [global options] login [hostname]
+
+  Retrieves an authentication token for the given hostname, if it supports
+  automatic login, and saves it in a credentials file in your home directory.
+
+  If not overridden by credentials helper settings in the CLI configuration,
+  the credentials will be written to the following local file:
+      %s
+`, defaultFile)
+	return strings.TrimSpace(helpText)
+}
+
+// Synopsis implements cli.Command.
+func (c *LoginCommand) Synopsis() string {
+	return "Obtain and save credentials for a remote host"
+}
+
+func (c *LoginCommand) defaultOutputFile() string {
+	if c.CLIConfigDir == "" {
+		return "" // no default available
+	}
+	return filepath.Join(c.CLIConfigDir, "credentials.tfrc.json")
+}
+
+func (c *LoginCommand) interactiveGetTokenByCode(ctx context.Context, hostname svchost.Hostname, credsCtx *loginCredentialsContext, clientConfig *disco.OAuthClient, view views.Login) (*oauth2.Token, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	confirm, confirmDiags := c.interactiveContextConsent(ctx, hostname, disco.OAuthAuthzCodeGrant, credsCtx, view)
+	diags = diags.Append(confirmDiags)
+	if !confirm {
+		diags = diags.Append(errors.New("Login cancelled"))
+		return nil, diags
+	}
+
+	// We'll use an entirely pseudo-random UUID for our temporary request
+	// state. The OAuth server must echo this back to us in the callback
+	// request to make it difficult for some other running process to
+	// interfere by sending its own request to our temporary server.
+	reqState, err := uuid.GenerateUUID()
+	if err != nil {
+		// This should be very unlikely, but could potentially occur if e.g.
+		// there's not enough pseudo-random entropy available.
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Can't generate login request state",
+			fmt.Sprintf("Cannot generate random request identifier for login request: %s.", err),
+		))
+		return nil, diags
+	}
+
+	proofKey, proofKeyChallenge, err := c.proofKey()
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Can't generate login request state",
+			fmt.Sprintf("Cannot generate random prrof key for login request: %s.", err),
+		))
+		return nil, diags
+	}
+
+	listener, callbackURL, err := c.listenerForCallback(clientConfig.MinPort, clientConfig.MaxPort)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Can't start temporary login server",
+			fmt.Sprintf(
+				"The login process uses OAuth, which requires starting a temporary HTTP server on localhost. However, no TCP port numbers between %d and %d are available to create such a server.",
+				clientConfig.MinPort, clientConfig.MaxPort,
+			),
+		))
+		return nil, diags
+	}
+
+	// codeCh will allow our temporary HTTP server to transmit the OAuth code
+	// to the main execution path that follows.
+	codeCh := make(chan string)
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+			log.Printf("[TRACE] login: request to callback server")
+			err := req.ParseForm()
+			if err != nil {
+				log.Printf("[ERROR] login: cannot ParseForm on callback request: %s", err)
+				resp.WriteHeader(400)
+				return
+			}
+			gotState := req.Form.Get("state")
+			if gotState != reqState {
+				log.Printf("[ERROR] login: incorrect \"state\" value in callback request")
+				resp.WriteHeader(400)
+				return
+			}
+			gotCode := req.Form.Get("code")
+			if gotCode == "" {
+				log.Printf("[ERROR] login: no \"code\" argument in callback request")
+				resp.WriteHeader(400)
+				return
+			}
+
+			log.Printf("[TRACE] login: request contains an authorization code")
+
+			// Send the code to our blocking wait below, so that the token
+			// fetching process can continue.
+			codeCh <- gotCode
+			close(codeCh)
+
+			log.Printf("[TRACE] login: returning response from callback server")
+
+			resp.Header().Add("Content-Type", "text/html")
+			resp.WriteHeader(200)
+			if _, err := resp.Write([]byte(callbackSuccessMessage)); err != nil {
+				log.Printf("[ERROR] login: cannot write response: %s", err)
+				return
+			}
+		}),
+	}
+	panicHandler := logging.PanicHandlerWithTraceFn()
+	go func() {
+		defer panicHandler()
+		err := server.Serve(listener)
+		if err != nil && err != http.ErrServerClosed {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Can't start temporary login server",
+				fmt.Sprintf(
+					"The login process uses OAuth, which requires starting a temporary HTTP server on localhost. However, no TCP port numbers between %d and %d are available to create such a server.",
+					clientConfig.MinPort, clientConfig.MaxPort,
+				),
+			))
+			close(codeCh)
+		}
+	}()
+
+	oauthConfig := &oauth2.Config{
+		ClientID:    clientConfig.ID,
+		Endpoint:    clientConfig.Endpoint(),
+		RedirectURL: callbackURL,
+		Scopes:      clientConfig.Scopes,
+	}
+
+	authCodeURL := oauthConfig.AuthCodeURL(
+		reqState,
+		oauth2.SetAuthURLParam("code_challenge", proofKeyChallenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	)
+
+	launchBrowserManually := false
+	if c.BrowserLauncher != nil {
+		err = c.BrowserLauncher.OpenURL(authCodeURL)
+		if err == nil {
+			view.OpeningBrowserForOAuth(hostname.ForDisplay(), authCodeURL)
+		} else {
+			// Assume we're on a platform where opening a browser isn't possible.
+			launchBrowserManually = true
+		}
+	} else {
+		launchBrowserManually = true
+	}
+
+	if launchBrowserManually {
+		view.ManualBrowserLaunch(hostname.ForDisplay(), authCodeURL)
+	}
+
+	view.WaitingForHostSignal()
+
+	var code string
+	var ok bool
+	select {
+	case <-c.ShutdownCh:
+		diags = diags.Append(
+			tfdiags.Sourceless(
+				tfdiags.Error,
+				"Action aborted",
+				"Current command was aborted by the calling code.",
+			),
+		)
+		code, ok = "", true
+		close(codeCh)
+	case code, ok = <-codeCh:
+	}
+
+	if !ok {
+		// If we got no code at all then the server wasn't able to start
+		// up, so we'll just give up.
+		return nil, diags
+	}
+
+	if err := server.Close(); err != nil {
+		// The server will close soon enough when our process exits anyway,
+		// so we won't fuss about it for right now.
+		log.Printf("[WARN] login: callback server can't shut down: %s", err)
+	}
+
+	if code == "" {
+		// empty code is not possible in happy path as it is validated in the HTTP handler of our callback server
+		// so it means, the current command was interrupted by the shutdown signal
+		return nil, diags
+	}
+
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpclient.New(ctx))
+	token, err := oauthConfig.Exchange(
+		ctx, code,
+		oauth2.SetAuthURLParam("code_verifier", proofKey),
+	)
+	if err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to obtain auth token",
+			fmt.Sprintf("The remote server did not assign an auth token: %s.", err),
+		))
+		return nil, diags
+	}
+
+	return token, diags
+}
+
+func (c *LoginCommand) interactiveGetTokenByPassword(ctx context.Context, hostname svchost.Hostname, credsCtx *loginCredentialsContext, clientConfig *disco.OAuthClient, view views.Login) (*oauth2.Token, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	confirm, confirmDiags := c.interactiveContextConsent(ctx, hostname, disco.OAuthOwnerPasswordGrant, credsCtx, view)
+	diags = diags.Append(confirmDiags)
+	if !confirm {
+		diags = diags.Append(errors.New("Login cancelled"))
+		return nil, diags
+	}
+
+	view.UiSeparator()
+	view.PasswordRequestHeader()
+
+	username, err := c.UIInput().Input(ctx, &ghoten.InputOpts{
+		Id:    "username",
+		Query: fmt.Sprintf("Username for %s:", hostname.ForDisplay()),
+	})
+	if err != nil {
+		diags = diags.Append(fmt.Errorf("Failed to request username: %w", err))
+		return nil, diags
+	}
+	password, err := c.UIInput().Input(ctx, &ghoten.InputOpts{
+		Id:     "password",
+		Query:  fmt.Sprintf("Password for %s:", hostname.ForDisplay()),
+		Secret: true,
+	})
+	if err != nil {
+		diags = diags.Append(fmt.Errorf("Failed to request password: %w", err))
+		return nil, diags
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID: clientConfig.ID,
+		Endpoint: clientConfig.Endpoint(),
+		Scopes:   clientConfig.Scopes,
+	}
+	token, err := oauthConfig.PasswordCredentialsToken(ctx, username, password)
+	if err != nil {
+		// FIXME: The OAuth2 library generates errors that are not appropriate
+		// for a Terraform end-user audience, so once we have more experience
+		// with which errors are most common we should try to recognize them
+		// here and produce better error messages for them.
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to retrieve API token",
+			fmt.Sprintf("The remote host did not issue an API token: %s.", err),
+		))
+	}
+
+	return token, diags
+}
+
+func (c *LoginCommand) interactiveGetTokenByUI(ctx context.Context, hostname svchost.Hostname, credsCtx *loginCredentialsContext, service *url.URL, view views.Login) (svcauth.HostCredentialsToken, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+
+	confirm, confirmDiags := c.interactiveContextConsent(ctx, hostname, disco.OAuthGrantType(""), credsCtx, view)
+	diags = diags.Append(confirmDiags)
+	if !confirm {
+		diags = diags.Append(errors.New("Login cancelled"))
+		return "", diags
+	}
+
+	view.UiSeparator()
+
+	tokensURL := url.URL{
+		Scheme:   "https",
+		Host:     service.Hostname(),
+		Path:     "/app/settings/tokens",
+		RawQuery: "source=terraform-login",
+	}
+
+	launchBrowserManually := false
+	if c.BrowserLauncher != nil {
+		err := c.BrowserLauncher.OpenURL(tokensURL.String())
+		if err == nil {
+			view.OpeningBrowserForTokens(hostname.ForDisplay(), tokensURL.String())
+		} else {
+			log.Printf("[DEBUG] error opening web browser: %s", err)
+			// Assume we're on a platform where opening a browser isn't possible.
+			launchBrowserManually = true
+		}
+	} else {
+		launchBrowserManually = true
+	}
+
+	if launchBrowserManually {
+		view.ManualBrowserLaunchForTokens(hostname.ForDisplay(), tokensURL.String())
+	}
+
+	view.UiSeparator()
+	view.GenerateTokenInstruction()
+
+	// credsCtx might not be set if we're using a mock credentials source
+	// in a test, but it should always be set in normal use.
+	if credsCtx != nil {
+		switch credsCtx.Location {
+		case cliconfig.CredentialsViaHelper:
+			view.TokenStorageInHelper(credsCtx.HelperType)
+		case cliconfig.CredentialsInPrimaryFile, cliconfig.CredentialsNotAvailable:
+			view.TokenStorageInFile(credsCtx.LocalFilename)
+		}
+	}
+
+	token, err := c.UIInput().Input(ctx, &ghoten.InputOpts{
+		Id:     "token",
+		Query:  fmt.Sprintf("Token for %s:", hostname.ForDisplay()),
+		Secret: true,
+	})
+	if err != nil {
+		diags := diags.Append(fmt.Errorf("Failed to retrieve token: %w", err))
+		return "", diags
+	}
+
+	token = strings.TrimSpace(token)
+	cfg := &tfe.Config{
+		Address:  service.String(),
+		BasePath: service.Path,
+		Token:    token,
+		Headers:  make(http.Header),
+	}
+
+	// Update user-agent from 'go-tfe' to opentofu
+	cfg.Headers.Set("User-Agent", httpclient.GhotenUserAgent(version.String()))
+
+	client, err := tfe.NewClient(cfg)
+	if err != nil {
+		diags = diags.Append(fmt.Errorf("Failed to create API client: %w", err))
+		return "", diags
+	}
+	user, err := client.Users.ReadCurrent(ctx)
+	if err == tfe.ErrUnauthorized {
+		diags = diags.Append(fmt.Errorf("Token is invalid: %w", err))
+		return "", diags
+	} else if err != nil {
+		diags = diags.Append(fmt.Errorf("Failed to retrieve user account details: %w", err))
+		return "", diags
+	}
+	view.RetrievedTokenForUser(user.Username)
+
+	return svcauth.HostCredentialsToken(token), nil
+}
+
+func (c *LoginCommand) interactiveContextConsent(ctx context.Context, hostname svchost.Hostname, grantType disco.OAuthGrantType, credsCtx *loginCredentialsContext, view views.Login) (bool, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	mechanism := "OAuth"
+	if grantType == "" {
+		mechanism = "your browser"
+	}
+
+	view.RequestAPITokenMessage(hostname.ForDisplay(), mechanism)
+
+	if grantType.UsesAuthorizationEndpoint() {
+		view.BrowserBasedLoginInstruction()
+	}
+
+	// credsCtx might not be set if we're using a mock credentials source
+	// in a test, but it should always be set in normal use.
+	if credsCtx != nil {
+		switch credsCtx.Location {
+		case cliconfig.CredentialsViaHelper:
+			view.StorageLocationConsentInHelper(credsCtx.HelperType)
+		case cliconfig.CredentialsInPrimaryFile, cliconfig.CredentialsNotAvailable:
+			view.StorageLocationConsentInFile(credsCtx.LocalFilename)
+		}
+	}
+
+	v, err := c.UIInput().Input(ctx, &ghoten.InputOpts{
+		Id:          "approve",
+		Query:       "Do you want to proceed?",
+		Description: `Only 'yes' will be accepted to confirm.`,
+	})
+	if err != nil {
+		// Should not happen because this command checks that input is enabled
+		// before we get to this point.
+		diags = diags.Append(err)
+		return false, diags
+	}
+
+	return strings.ToLower(v) == "yes", diags
+}
+
+func (c *LoginCommand) listenerForCallback(minPort, maxPort uint16) (net.Listener, string, error) {
+	if minPort < 1024 || maxPort < 1024 {
+		// This should never happen because it should've been checked by
+		// the svchost/disco package when reading the service description,
+		// but we'll prefer to fail hard rather than inadvertently trying
+		// to open an unprivileged port if there are bugs at that layer.
+		panic("listenerForCallback called with privileged port number")
+	}
+
+	availCount := int(maxPort) - int(minPort)
+
+	// We're going to try port numbers within the range at random, so we need
+	// to terminate eventually in case _none_ of the ports are available.
+	// We'll make that 150% of the number of ports just to give us some room
+	// for the random number generator to generate the same port more than
+	// once.
+	// Note that we don't really care about true randomness here... we're just
+	// trying to hop around in the available port space rather than always
+	// working up from the lowest, because we have no information to predict
+	// that any particular number will be more likely to be available than
+	// another.
+	maxTries := availCount + (availCount / 2)
+
+	for tries := 0; tries < maxTries; tries++ {
+		port := rand.Intn(availCount) + int(minPort)
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		log.Printf("[TRACE] login: trying %s as a listen address for temporary OAuth callback server", addr)
+		l, err := net.Listen("tcp4", addr)
+		if err == nil {
+			// We use a path that doesn't end in a slash here because some
+			// OAuth server implementations don't allow callback URLs to
+			// end with slashes.
+			callbackURL := fmt.Sprintf("http://localhost:%d/login", port)
+			log.Printf("[TRACE] login: callback URL will be %s", callbackURL)
+			return l, callbackURL, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("no suitable TCP ports (between %d and %d) are available for the temporary OAuth callback server", minPort, maxPort)
+}
+
+func (c *LoginCommand) proofKey() (key, challenge string, err error) {
+	// We'll use a UUID-like string as the "proof key for code exchange" (PKCE)
+	// that will eventually authenticate our request to the token endpoint.
+	// Standard UUIDs are explicitly not suitable as secrets according to the
+	// UUID spec, but our go-uuid just generates totally random number sequences
+	// formatted in the conventional UUID syntax, so that concern does not
+	// apply here: this is just a 128-bit crypto-random number.
+	uu, err := uuid.GenerateUUID()
+	if err != nil {
+		return "", "", err
+	}
+
+	key = fmt.Sprintf("%s.%09d", uu, rand.Intn(999999999))
+
+	h := sha256.New()
+	h.Write([]byte(key))
+	challenge = base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	return key, challenge, nil
+}
+
+func (c *LoginCommand) credentialsFileForHelp() string {
+	defaultFile := c.defaultOutputFile()
+	if defaultFile == "" {
+		// Because this is just for the help message and it's very unlikely
+		// that a user wouldn't have a functioning home directory anyway,
+		// we'll just use a placeholder here. The real command has some
+		// more complex behavior for this case. This result is not correct
+		// on all platforms, but given how unlikely we are to hit this case
+		// that seems okay.
+		defaultFile = "~/.terraform/credentials.tfrc.json"
+	}
+	return defaultFile
+}
+
+type loginCredentialsContext struct {
+	Location      cliconfig.CredentialsLocation
+	LocalFilename string
+	HelperType    string
+}
+
+const callbackSuccessMessage = `
+<html>
+<head>
+<title>Ghoten Login</title>
+<style type="text/css">
+body {
+	font-family: monospace;
+	color: #fff;
+	background-color: #000;
+}
+</style>
+</head>
+<body>
+
+<p>The login server has returned an authentication code to Ghoten.</p>
+<p>Now close this page and return to the terminal where <tt>tofu login</tt>
+is running to see the result of the login process.</p>
+
+</body>
+</html>
+`

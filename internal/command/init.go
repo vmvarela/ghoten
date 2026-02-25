@@ -1,0 +1,1374 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package command
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/vmvarela/ghoten/internal/command/flags"
+	"github.com/opentofu/svchost"
+	"github.com/posener/complete"
+	"github.com/zclconf/go-cty/cty"
+
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/backend"
+	backendInit "github.com/vmvarela/ghoten/internal/backend/init"
+	"github.com/vmvarela/ghoten/internal/cloud"
+	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/command/views"
+	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/getproviders"
+	"github.com/vmvarela/ghoten/internal/providercache"
+	"github.com/vmvarela/ghoten/internal/states"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
+	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
+	"github.com/vmvarela/ghoten/internal/tracing"
+	"github.com/vmvarela/ghoten/internal/tracing/traceattrs"
+	tfversion "github.com/vmvarela/ghoten/version"
+)
+
+// InitCommand is a Command implementation that takes a Terraform
+// module and clones it to the working directory.
+type InitCommand struct {
+	Meta
+}
+
+func (c *InitCommand) Run(rawArgs []string) int {
+	ctx := c.CommandContext()
+	ctx, span := tracing.Tracer().Start(ctx, "Init")
+	defer span.End()
+
+	// new view
+	common, rawArgs := arguments.ParseView(rawArgs)
+	c.View.Configure(common)
+	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
+	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
+	c.View.DiagsWithNewline()
+
+	// Propagate -no-color for legacy use of Ui. The remote backend and
+	// cloud package use this; it should be removed when/if they are
+	// migrated to views.
+	c.Meta.color = !common.NoColor
+	c.Meta.Color = c.Meta.color
+
+	// Parse and validate flags
+	args, closer, diags := arguments.ParseInit(rawArgs)
+	defer closer()
+
+	// Instantiate the view, even if there are flag errors, so that we render
+	// diagnostics according to the desired view
+	view := views.NewInit(args.ViewOptions, c.View)
+	// ... and initialise the Meta.Ui to wrap Meta.View into a new implementation
+	// that is able to print by using View abstraction and use the Meta.Ui
+	// to ask for the user input.
+	c.Meta.configureUiFromView(args.ViewOptions)
+
+	if diags.HasErrors() {
+		view.Diagnostics(diags)
+		view.HelpPrompt()
+		return 1
+	}
+
+	// FIXME: the -input flag value is needed to initialize the backend and the
+	// operation, but there is no clear path to pass this value down, so we
+	// continue to mutate the Meta object state for now.
+	c.Meta.input = args.ViewOptions.InputEnabled
+	c.configureBackendFlags(args.Backend)
+
+	if len(args.FlagPluginPath) > 0 {
+		c.pluginPath = args.FlagPluginPath
+	}
+	c.GatherVariables(args.Vars)
+
+	// This gets the current directory as full path.
+	path := c.WorkingDir.NormalizePath(c.WorkingDir.RootModuleDir())
+
+	if err := c.storePluginPath(c.pluginPath); err != nil {
+		view.Diagnostics(diags.Append(fmt.Errorf("Error saving -plugin-path values: %w", err)))
+		return 1
+	}
+
+	// Initialization can be aborted by interruption signals
+	ctx, done := c.InterruptibleContext(ctx)
+	defer done()
+
+	// This will track whether we outputted anything so that we know whether
+	// to output a newline before the success message
+	var header bool
+
+	if args.FlagFromModule != "" {
+		src := args.FlagFromModule
+
+		empty, err := configs.IsEmptyDir(path)
+		if err != nil {
+			view.Diagnostics(diags.Append(fmt.Errorf("Error validating destination directory: %w", err)))
+			return 1
+		}
+		if !empty {
+			view.Diagnostics(diags.Append(errors.New(strings.TrimSpace(errInitCopyNotEmpty))))
+			return 1
+		}
+
+		view.CopyFromModule(src)
+		header = true
+
+		// do not show local directory, since they are in a weird location for init
+		hooks := view.Hooks(false)
+
+		ctx, span := tracing.Tracer().Start(ctx, "From module", tracing.SpanAttributes(
+			traceattrs.GhotenModuleSource(src),
+		))
+		defer span.End()
+
+		initDirFromModuleAbort, initDirFromModuleDiags := c.initDirFromModule(ctx, path, src, hooks)
+		diags = diags.Append(initDirFromModuleDiags)
+		if initDirFromModuleAbort || initDirFromModuleDiags.HasErrors() {
+			view.Diagnostics(diags)
+			tracing.SetSpanError(span, initDirFromModuleDiags)
+			span.End()
+			return 1
+		}
+
+		view.OutputNewline()
+	}
+
+	// If our directory is empty, then we're done. We can't get or set up
+	// the backend with an empty directory.
+	empty, err := configs.IsEmptyDir(path)
+	if err != nil {
+		view.Diagnostics(diags.Append(fmt.Errorf("Error checking configuration: %w", err)))
+		return 1
+	}
+	if empty {
+		view.InitialisedFromEmptyDir()
+		return 0
+	}
+
+	// Load just the root module to begin backend and module initialization
+	rootModEarly, earlyConfDiags := c.loadSingleModuleWithTests(ctx, path, args.TestsDirectory)
+
+	// There may be parsing errors in config loading but these will be shown later _after_
+	// checking for core version requirement errors. Not meeting the version requirement should
+	// be the first error displayed if that is an issue, but other operations are required
+	// before being able to check core version requirements.
+	if rootModEarly == nil {
+		view.ConfigError()
+		diags = diags.Append(earlyConfDiags)
+		view.Diagnostics(diags)
+
+		return 1
+	}
+
+	var enc encryption.Encryption
+	// If backend flag is explicitly set to false i.e -backend=false, we disable state and plan encryption
+	if args.BackendFlagSet && !args.FlagBackend {
+		enc = encryption.Disabled()
+	} else {
+		// Load the encryption configuration
+		var encDiags tfdiags.Diagnostics
+		enc, encDiags = c.EncryptionFromModule(ctx, rootModEarly)
+		diags = diags.Append(encDiags)
+		if encDiags.HasErrors() {
+			view.Diagnostics(diags)
+			return 1
+		}
+	}
+
+	var back backend.Backend
+
+	// There may be config errors or backend init errors but these will be shown later _after_
+	// checking for core version requirement errors.
+	var backDiags tfdiags.Diagnostics
+	var backendOutput bool
+
+	switch {
+	case args.FlagCloud && rootModEarly.CloudConfig != nil:
+		back, backendOutput, backDiags = c.initCloud(ctx, rootModEarly, args.FlagConfigExtra, enc, view)
+	case args.FlagBackend:
+		back, backendOutput, backDiags = c.initBackend(ctx, rootModEarly, args.FlagConfigExtra, enc, view)
+	default:
+		// load the previously-stored backend config
+		back, backDiags = c.Meta.backendFromState(ctx, enc.State())
+	}
+	if backendOutput {
+		header = true
+	}
+
+	var state *states.State
+
+	// If we have a functional backend (either just initialized or initialized
+	// on a previous run) we'll use the current state as a potential source
+	// of provider dependencies.
+	if back != nil {
+		c.ignoreRemoteVersionConflict(back)
+		workspace, err := c.Workspace(ctx)
+		if err != nil {
+			view.Diagnostics(diags.Append(fmt.Errorf("Error selecting workspace: %w", err)))
+			return 1
+		}
+		sMgr, err := back.StateMgr(ctx, workspace)
+		if err != nil {
+			view.Diagnostics(diags.Append(fmt.Errorf("Error loading state: %s", err)))
+			return 1
+		}
+
+		if err := sMgr.RefreshState(context.TODO()); err != nil {
+			view.Diagnostics(diags.Append(fmt.Errorf("Error refreshing state: %s", err)))
+			return 1
+		}
+
+		state = sMgr.State()
+	}
+
+	if args.FlagGet {
+		modsOutput, modsAbort, modsDiags := c.getModules(ctx, path, args.TestsDirectory, rootModEarly, args.FlagUpgrade, view)
+		diags = diags.Append(modsDiags)
+		if modsAbort || modsDiags.HasErrors() {
+			view.Diagnostics(diags)
+			return 1
+		}
+		if modsOutput {
+			header = true
+		}
+	}
+
+	// With all of the modules (hopefully) installed, we can now try to load the
+	// whole configuration tree.
+	config, confDiags := c.loadConfigWithTests(ctx, path, args.TestsDirectory)
+	// configDiags will be handled after the version constraint check, since an
+	// incorrect version of tofu may be producing errors for configuration
+	// constructs added in later versions.
+
+	// Before we go further, we'll check to make sure none of the modules in
+	// the configuration declare that they don't support this Ghoten
+	// version, so we can produce a version-related error message rather than
+	// potentially-confusing downstream errors.
+	versionDiags := ghoten.CheckCoreVersionRequirements(config)
+	if versionDiags.HasErrors() {
+		view.Diagnostics(versionDiags)
+		return 1
+	}
+
+	// We've passed the core version check, now we can show errors from the
+	// configuration and backend initialization.
+
+	// Now, we can check the diagnostics from the early configuration and the
+	// backend.
+	diags = diags.Append(earlyConfDiags.StrictDeduplicateMerge(backDiags))
+	if earlyConfDiags.HasErrors() {
+		view.ConfigError()
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// Now, we can show any errors from initializing the backend, but we won't
+	// show the errInitConfigError preamble as we didn't detect problems with
+	// the early configuration.
+	if backDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	// If everything is ok with the core version check and backend initialization,
+	// show other errors from loading the full configuration tree.
+	diags = diags.Append(confDiags)
+	if confDiags.HasErrors() {
+		view.ConfigError()
+		view.Diagnostics(diags)
+		return 1
+	}
+
+	if cb, ok := back.(*cloud.Cloud); ok {
+		if c.RunningInAutomation {
+			if err := cb.AssertImportCompatible(config); err != nil {
+				diags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Compatibility error", err.Error()))
+				view.Diagnostics(diags)
+				return 1
+			}
+		}
+	}
+
+	if state != nil {
+		// Since we now have the full configuration loaded, we can use it to migrate the in-memory state view
+		// prior to fetching providers.
+		migratedState, migrateDiags := ghotenmigrate.MigrateStateProviderAddresses(config, state)
+		diags = diags.Append(migrateDiags)
+		if migrateDiags.HasErrors() {
+			view.Diagnostics(diags)
+			return 1
+		}
+		state = migratedState
+	}
+
+	// Now that we have loaded all modules, check the module tree for missing providers.
+	providersOutput, providersAbort, providerDiags := c.getProviders(ctx, config, state, args.FlagUpgrade, args.FlagPluginPath, args.FlagLockfile, view)
+	diags = diags.Append(providerDiags)
+	if providersAbort || providerDiags.HasErrors() {
+		view.Diagnostics(diags)
+		return 1
+	}
+	if providersOutput {
+		header = true
+	}
+
+	// If we outputted information, then we need to output a newline
+	// so that our success message is nicely spaced out from prior text.
+	if header {
+		view.OutputNewline()
+	}
+
+	// If we accumulated any warnings along the way that weren't accompanied
+	// by errors then we'll output them here so that the success message is
+	// still the final thing shown.
+	view.Diagnostics(diags)
+	_, isCloud := back.(*cloud.Cloud)
+	view.InitSuccess(isCloud)
+	if !c.RunningInAutomation {
+		// If we're not running in an automation wrapper, give the user
+		// some more detailed next steps that are appropriate for interactive
+		// shell usage.
+		view.InitSuccessCLI(isCloud)
+	}
+	return 0
+}
+
+func (c *InitCommand) getModules(ctx context.Context, path, testsDir string, earlyRoot *configs.Module, upgrade bool, view views.Init) (output bool, abort bool, diags tfdiags.Diagnostics) {
+	testModules := false // We can also have modules buried in test files.
+	for _, file := range earlyRoot.Tests {
+		for _, run := range file.Runs {
+			if run.Module != nil {
+				testModules = true
+			}
+		}
+	}
+
+	if len(earlyRoot.ModuleCalls) == 0 && !testModules {
+		// Nothing to do
+		return false, false, nil
+	}
+
+	ctx, span := tracing.Tracer().Start(ctx, "Get Modules", tracing.SpanAttributes(
+		traceattrs.Bool("opentofu.modules.upgrade", upgrade),
+	))
+	defer span.End()
+
+	view.InitializingModules(upgrade)
+
+	hooks := view.Hooks(true)
+
+	installAbort, installDiags := c.installModules(ctx, path, testsDir, upgrade, false, hooks)
+	diags = diags.Append(installDiags)
+
+	// At this point, installModules may have generated error diags or been
+	// aborted by SIGINT. In any case we continue and the manifest as best
+	// we can.
+
+	// Since module installer has modified the module manifest on disk, we need
+	// to refresh the cache of it in the loader.
+	if c.configLoader != nil {
+		if err := c.configLoader.RefreshModules(); err != nil {
+			// Should never happen
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Failed to read module manifest",
+				fmt.Sprintf("After installing modules, Ghoten could not re-read the manifest of installed modules. This is a bug in Ghoten. %s.", err),
+			))
+		}
+	}
+
+	return true, installAbort, diags
+}
+
+func (c *InitCommand) initCloud(ctx context.Context, root *configs.Module, extraConfig flags.RawFlags, enc encryption.Encryption, view views.Init) (be backend.Backend, output bool, diags tfdiags.Diagnostics) {
+	ctx, span := tracing.Tracer().Start(ctx, "Cloud backend init")
+	_ = ctx // prevent staticcheck from complaining to avoid a maintenance hazard of having the wrong ctx in scope here
+	defer span.End()
+
+	view.InitializingCloudBackend()
+
+	if len(extraConfig.AllItems()) != 0 {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Invalid command-line option",
+			"The -backend-config=... command line option is only for state backends, and is not applicable to cloud backend-based configurations.\n\nTo change the set of workspaces associated with this configuration, edit the Cloud configuration block in the root module.",
+		))
+		return nil, true, diags
+	}
+
+	backendConfig := root.CloudConfig.ToBackendConfig()
+
+	opts := &BackendOpts{
+		Config: &backendConfig,
+		Init:   true,
+	}
+
+	back, backDiags := c.Backend(ctx, opts, enc.State())
+	diags = diags.Append(backDiags)
+	return back, true, diags
+}
+
+func (c *InitCommand) initBackend(ctx context.Context, root *configs.Module, extraConfig flags.RawFlags, enc encryption.Encryption, view views.Init) (be backend.Backend, output bool, diags tfdiags.Diagnostics) {
+	ctx, span := tracing.Tracer().Start(ctx, "Backend init")
+	_ = ctx // prevent staticcheck from complaining to avoid a maintenance hazard of having the wrong ctx in scope here
+	defer span.End()
+
+	view.InitializingBackend()
+
+	var backendConfig *configs.Backend
+	var backendConfigOverride hcl.Body
+	if root.Backend != nil {
+		backendType := root.Backend.Type
+		if backendType == "cloud" {
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unsupported backend type",
+				Detail:   fmt.Sprintf("There is no explicit backend type named %q. To configure cloud backend, declare a 'cloud' block instead.", backendType),
+				Subject:  &root.Backend.TypeRange,
+			})
+			return nil, true, diags
+		}
+
+		bf, canonType := backendInit.Backend(backendType)
+		if bf == nil {
+			detail := fmt.Sprintf("There is no backend type named %q.", backendType)
+			if msg, removed := backendInit.RemovedBackends[backendType]; removed {
+				detail = msg
+			}
+
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unsupported backend type",
+				Detail:   detail,
+				Subject:  &root.Backend.TypeRange,
+			})
+			return nil, true, diags
+		}
+		if backendType != canonType {
+			view.BackendTypeAlias(backendType, canonType)
+		}
+
+		b := bf(nil) // This is only used to get the schema, encryption should panic if attempted
+		backendSchema := b.ConfigSchema()
+		backendConfig = root.Backend
+
+		var overrideDiags tfdiags.Diagnostics
+		backendConfigOverride, overrideDiags = c.backendConfigOverrideBody(extraConfig, backendSchema)
+		diags = diags.Append(overrideDiags)
+		if overrideDiags.HasErrors() {
+			return nil, true, diags
+		}
+	} else {
+		// If the user supplied a -backend-config on the CLI but no backend
+		// block was found in the configuration, it's likely - but not
+		// necessarily - a mistake. Return a warning.
+		if !extraConfig.Empty() {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				"Missing backend configuration",
+				`-backend-config was used without a "backend" block in the configuration.
+
+If you intended to override the default local backend configuration,
+no action is required, but you may add an explicit backend block to your
+configuration to clear this warning:
+
+terraform {
+  backend "local" {}
+}
+
+However, if you intended to override a defined backend, please verify that
+the backend configuration is present and valid.
+`,
+			))
+		}
+	}
+
+	opts := &BackendOpts{
+		Config:         backendConfig,
+		ConfigOverride: backendConfigOverride,
+		Init:           true,
+	}
+
+	back, backDiags := c.Backend(ctx, opts, enc.State())
+	diags = diags.Append(backDiags)
+	return back, true, diags
+}
+
+// Load the complete module tree, and fetch any missing providers.
+// This method outputs its own Ui.
+func (c *InitCommand) getProviders(ctx context.Context, config *configs.Config, state *states.State, upgrade bool, pluginDirs []string, flagLockfile string, view views.Init) (output, abort bool, diags tfdiags.Diagnostics) {
+	ctx, span := tracing.Tracer().Start(ctx, "Get Providers")
+	defer span.End()
+
+	// Dev overrides cause the result of "ghoten init" to be irrelevant for
+	// any overridden providers, so we'll warn about it to avoid later
+	// confusion when Ghoten ends up using a different provider than the
+	// lock file called for.
+	diags = diags.Append(c.providerDevOverrideInitWarnings())
+
+	// First we'll collect all the provider dependencies we can see in the
+	// configuration and the state.
+	reqs, qualifs, hclDiags := config.ProviderRequirements()
+	diags = diags.Append(hclDiags)
+	if hclDiags.HasErrors() {
+		return false, true, diags
+	}
+	if state != nil {
+		stateReqs := state.ProviderRequirements()
+		reqs = reqs.Merge(stateReqs)
+	}
+
+	potentialProviderConflicts := make(map[string][]string)
+
+	for providerAddr := range reqs {
+		if providerAddr.Namespace == "hashicorp" || providerAddr.Namespace == "opentofu" {
+			potentialProviderConflicts[providerAddr.Type] = append(potentialProviderConflicts[providerAddr.Type], providerAddr.ForDisplay())
+		}
+
+		if providerAddr.IsLegacy() {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Invalid legacy provider address",
+				fmt.Sprintf(
+					"This configuration or its associated state refers to the unqualified provider %q.\n\nYou must complete the Terraform 0.13 upgrade process before upgrading to later versions.",
+					providerAddr.Type,
+				),
+			))
+		}
+	}
+
+	for name, addrs := range potentialProviderConflicts {
+		if len(addrs) > 1 {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				"Potential provider misconfiguration",
+				fmt.Sprintf(
+					"Ghoten has detected multiple providers of type %s (%s) which may be a misconfiguration.\n\nIf this is intentional you can ignore this warning",
+					name,
+					strings.Join(addrs, ", "),
+				),
+			))
+		}
+	}
+
+	previousLocks, moreDiags := c.lockedDependenciesWithPredecessorRegistryShimmed()
+	diags = diags.Append(moreDiags)
+
+	if diags.HasErrors() {
+		return false, true, diags
+	}
+
+	var inst *providercache.Installer
+	if len(pluginDirs) == 0 {
+		// By default we use a source that looks for providers in all of the
+		// standard locations, possibly customized by the user in CLI config.
+		inst = c.providerInstaller()
+	} else {
+		// If the user passes at least one -plugin-dir then that circumvents
+		// the usual sources and forces Ghoten to consult only the given
+		// directories. Anything not available in one of those directories
+		// is not available for installation.
+		source := c.providerCustomLocalDirectorySource(ctx, pluginDirs)
+		inst = c.providerInstallerCustomSource(source)
+
+		// The default (or configured) search paths are logged earlier, in provider_source.go
+		// Log that those are being overridden by the `-plugin-dir` command line options
+		log.Println("[DEBUG] init: overriding provider plugin search paths")
+		log.Printf("[DEBUG] will search for provider plugins in %s", pluginDirs)
+	}
+
+	// We want to print out a nice warning if we don't manage to pull
+	// checksums for all our providers. This is tracked via callbacks
+	// and incomplete providers are stored here for later analysis.
+	var incompleteProviders []string
+
+	// Because we're currently just streaming a series of events sequentially
+	// into the terminal, we're showing only a subset of the events to keep
+	// things relatively concise. Later it'd be nice to have a progress UI
+	// where statuses update in-place, but we can't do that as long as we
+	// are shimming our vt100 output to the legacy console API on Windows.
+	evts := &providercache.InstallerEvents{
+		PendingProviders: func(reqs map[addrs.Provider]getproviders.VersionConstraints) {
+			view.InitializingProviderPlugins()
+		},
+		ProviderAlreadyInstalled: func(provider addrs.Provider, selectedVersion getproviders.Version, inProviderCache bool) {
+			view.ProviderAlreadyInstalled(provider.ForDisplay(), selectedVersion.String(), inProviderCache)
+		},
+		BuiltInProviderAvailable: func(provider addrs.Provider) {
+			view.BuiltInProviderAvailable(provider.ForDisplay())
+		},
+		BuiltInProviderFailure: func(provider addrs.Provider, err error) {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Invalid dependency on built-in provider",
+				fmt.Sprintf("Cannot use %s: %s.", provider.ForDisplay(), err),
+			))
+		},
+		QueryPackagesBegin: func(provider addrs.Provider, versionConstraints getproviders.VersionConstraints, locked bool) {
+			if locked {
+				view.ReusingLockFileVersion(provider.ForDisplay())
+			} else {
+				if len(versionConstraints) > 0 {
+					view.FindingProviderVersions(provider.ForDisplay(), getproviders.VersionConstraintsString(versionConstraints))
+				} else {
+					view.FindingLatestProviderVersion(provider.ForDisplay())
+				}
+			}
+		},
+		LinkFromCacheBegin: func(provider addrs.Provider, version getproviders.Version, cacheRoot string) {
+			view.UsingProviderFromCache(provider.ForDisplay(), version.String())
+		},
+		FetchPackageBegin: func(provider addrs.Provider, version getproviders.Version, location getproviders.PackageLocation, inProviderCache bool) {
+			view.InstallingProvider(provider.ForDisplay(), version.String(), inProviderCache)
+		},
+		QueryPackagesFailure: func(provider addrs.Provider, err error) {
+			switch errorTy := err.(type) {
+			case getproviders.ErrProviderNotFound:
+				sources := errorTy.Sources
+				displaySources := make([]string, len(sources))
+				for i, source := range sources {
+					displaySources[i] = fmt.Sprintf("  - %s", source)
+				}
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to query available provider packages",
+					fmt.Sprintf("Could not retrieve the list of available versions for provider %s: %s\n\n%s",
+						provider.ForDisplay(), err, strings.Join(displaySources, "\n"),
+					),
+				))
+			case getproviders.ErrRegistryProviderNotKnown:
+				// We might be able to suggest an alternative provider to use
+				// instead of this one.
+				suggestion := fmt.Sprintf("\n\nAll modules should specify their required_providers so that external consumers will get the correct providers when using a module. To see which modules are currently depending on %s, run the following command:\n    ghoten providers", provider.ForDisplay())
+				alternative := getproviders.MissingProviderSuggestion(ctx, provider, inst.ProviderSource(), reqs)
+				if alternative != provider {
+					suggestion = fmt.Sprintf(
+						"\n\nDid you intend to use %s? If so, you must specify that source address in each module which requires that provider. To see which modules are currently depending on %s, run the following command:\n    ghoten providers",
+						alternative.ForDisplay(), provider.ForDisplay(),
+					)
+				}
+
+				if provider.Hostname == addrs.DefaultProviderRegistryHost {
+					suggestion += "\n\nIf you believe this provider is missing from the registry, please submit a issue on the Ghoten Registry https://github.com/opentofu/registry/issues/new/choose"
+				}
+
+				warnDiags := warnOnFailedImplicitProvReference(provider, qualifs)
+				diags = diags.Append(warnDiags)
+
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to query available provider packages",
+					fmt.Sprintf("Could not retrieve the list of available versions for provider %s: %s%s",
+						provider.ForDisplay(), err, suggestion,
+					),
+				))
+			case getproviders.ErrHostNoProviders:
+				switch {
+				case errorTy.Hostname == svchost.Hostname("github.com") && !errorTy.HasOtherVersion:
+					// If a user copies the URL of a GitHub repository into
+					// the source argument and removes the schema to make it
+					// provider-address-shaped then that's one way we can end up
+					// here. We'll use a specialized error message in anticipation
+					// of that mistake. We only do this if github.com isn't a
+					// provider registry, to allow for the (admittedly currently
+					// rather unlikely) possibility that github.com starts being
+					// a real Terraform provider registry in the future.
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						"Invalid provider registry host",
+						fmt.Sprintf("The given source address %q specifies a GitHub repository rather than a Ghoten provider. Refer to the documentation of the provider to find the correct source address to use.",
+							provider.String(),
+						),
+					))
+
+				case errorTy.HasOtherVersion:
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						"Invalid provider registry host",
+						fmt.Sprintf("The host %q given in provider source address %q does not offer a Ghoten provider registry that is compatible with this Ghoten version, but it may be compatible with a different Ghoten version.",
+							errorTy.Hostname, provider.String(),
+						),
+					))
+
+				default:
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						"Invalid provider registry host",
+						fmt.Sprintf("The host %q given in provider source address %q does not offer a Ghoten provider registry.",
+							errorTy.Hostname, provider.String(),
+						),
+					))
+				}
+
+			case getproviders.ErrRequestCanceled:
+				// We don't attribute cancellation to any particular operation,
+				// but rather just emit a single general message about it at
+				// the end, by checking ctx.Err().
+
+			default:
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to resolve provider packages",
+					fmt.Sprintf("Could not resolve provider %s: %s",
+						provider.ForDisplay(), err,
+					),
+				))
+			}
+
+		},
+		QueryPackagesWarning: func(provider addrs.Provider, warnings []string) {
+			displayWarnings := make([]string, len(warnings))
+			for i, warning := range warnings {
+				displayWarnings[i] = fmt.Sprintf("- %s", warning)
+			}
+
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				"Additional provider information from registry",
+				fmt.Sprintf("The remote registry returned warnings for %s:\n%s",
+					provider.String(),
+					strings.Join(displayWarnings, "\n"),
+				),
+			))
+		},
+		LinkFromCacheFailure: func(provider addrs.Provider, version getproviders.Version, err error) {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Failed to install provider from shared cache",
+				fmt.Sprintf("Error while importing %s v%s from the shared cache directory: %s.", provider.ForDisplay(), version, err),
+			))
+		},
+		FetchPackageFailure: func(provider addrs.Provider, version getproviders.Version, err error) {
+			const summaryIncompatible = "Incompatible provider version"
+			switch err := err.(type) {
+			case getproviders.ErrProtocolNotSupported:
+				closestAvailable := err.Suggestion
+				switch {
+				case closestAvailable == getproviders.UnspecifiedVersion:
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(errProviderVersionIncompatible, provider.String()),
+					))
+				case version.GreaterThan(closestAvailable):
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(providerProtocolTooNew, provider.ForDisplay(),
+							version, tfversion.String(), closestAvailable, closestAvailable,
+							getproviders.VersionConstraintsString(reqs[provider]),
+						),
+					))
+				default: // version is less than closestAvailable
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(providerProtocolTooOld, provider.ForDisplay(),
+							version, tfversion.String(), closestAvailable, closestAvailable,
+							getproviders.VersionConstraintsString(reqs[provider]),
+						),
+					))
+				}
+			case getproviders.ErrPlatformNotSupported:
+				switch {
+				case err.MirrorURL != nil:
+					// If we're installing from a mirror then it may just be
+					// the mirror lacking the package, rather than it being
+					// unavailable from upstream.
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(
+							"Your chosen provider mirror at %s does not have a %s v%s package available for your current platform, %s.\n\nProvider releases are separate from Ghoten CLI releases, so this provider might not support your current platform. Alternatively, the mirror itself might have only a subset of the plugin packages available in the origin registry, at %s.",
+							err.MirrorURL, err.Provider, err.Version, err.Platform,
+							err.Provider.Hostname,
+						),
+					))
+				default:
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						summaryIncompatible,
+						fmt.Sprintf(
+							"Provider %s v%s does not have a package available for your current platform, %s.\n\nProvider releases are separate from Ghoten CLI releases, so not all providers are available for all platforms. Other versions of this provider may have different platforms supported.",
+							err.Provider, err.Version, err.Platform,
+						),
+					))
+				}
+
+			case getproviders.ErrRequestCanceled:
+				// We don't attribute cancellation to any particular operation,
+				// but rather just emit a single general message about it at
+				// the end, by checking ctx.Err().
+
+			default:
+				// We can potentially end up in here under cancellation too,
+				// in spite of our getproviders.ErrRequestCanceled case above,
+				// because not all of the outgoing requests we do under the
+				// "fetch package" banner are source metadata requests.
+				// In that case we will emit a redundant error here about
+				// the request being cancelled, but we'll still detect it
+				// as a cancellation after the installer returns and do the
+				// normal cancellation handling.
+
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to install provider",
+					fmt.Sprintf("Error while installing %s v%s: %s", provider.ForDisplay(), version, err),
+				))
+			}
+		},
+		FetchPackageSuccess: func(provider addrs.Provider, version getproviders.Version, localDir string, authResult *getproviders.PackageAuthenticationResult) {
+			var keyID string
+			if authResult != nil && authResult.Signed() {
+				keyID = authResult.GPGKeyIDsString()
+			}
+
+			if authResult != nil && authResult.SigningSkipped() {
+				view.ProviderInstalledSkippedSignature(provider.ForDisplay(), version.String())
+			} else {
+				view.ProviderInstalled(provider.ForDisplay(), version.String(), authResult.String(), keyID)
+			}
+		},
+		CacheDirLockContended: func(cacheDir string) {
+			view.WaitingForCacheLock(cacheDir)
+		},
+		ProvidersLockUpdated: func(provider addrs.Provider, version getproviders.Version, localHashes []getproviders.Hash, signedHashes []getproviders.Hash, priorHashes []getproviders.Hash) {
+			// We're going to use this opportunity to track if we have any
+			// "incomplete" installs of providers. An incomplete install is
+			// when we are only going to write the local hashes into our lock
+			// file which means a `ghoten init` command will fail in future
+			// when used on machines of a different architecture.
+			//
+			// We want to print a warning about this.
+
+			if len(signedHashes) > 0 {
+				// If we have any signedHashes hashes then we don't worry - as
+				// we know we retrieved all available hashes for this version
+				// anyway.
+				return
+			}
+
+			// If local hashes and prior hashes are exactly the same then
+			// it means we didn't record any signed hashes previously, and
+			// we know we're not adding any extra in now (because we already
+			// checked the signedHashes), so that's a problem.
+			//
+			// In the actual check here, if we have any priorHashes and those
+			// hashes are not the same as the local hashes then we're going to
+			// accept that this provider has been configured correctly.
+			if len(priorHashes) > 0 && !reflect.DeepEqual(localHashes, priorHashes) {
+				return
+			}
+
+			// Now, either signedHashes is empty, or priorHashes is exactly the
+			// same as our localHashes which means we never retrieved the
+			// signedHashes previously.
+			//
+			// Either way, this is bad. Let's complain/warn.
+			incompleteProviders = append(incompleteProviders, provider.ForDisplay())
+		},
+		ProvidersAuthenticated: func(authResults map[addrs.Provider]*getproviders.PackageAuthenticationResult) {
+			thirdPartySigned := false
+			for _, authResult := range authResults {
+				if authResult.Signed() {
+					thirdPartySigned = true
+					break
+				}
+			}
+			if thirdPartySigned {
+				view.ProvidersSignedInfo()
+			}
+		},
+	}
+	// Ensure that events emitted on multiple routines do not trigger race conditions
+	evts = evts.Sync()
+	ctx = evts.OnContext(ctx)
+
+	mode := providercache.InstallNewProvidersOnly
+	if upgrade {
+		if flagLockfile == "readonly" {
+			view.ProviderUpgradeLockfileConflict()
+			return true, true, diags
+		}
+
+		mode = providercache.InstallUpgrades
+	}
+	newLocks, err := inst.EnsureProviderVersions(ctx, previousLocks, reqs, mode)
+	if ctx.Err() == context.Canceled {
+		view.Diagnostics(diags)
+		view.ProviderInstallationInterrupted()
+		return true, true, diags
+	}
+	if err != nil {
+		// The errors captured in "err" should be redundant with what we
+		// received via the InstallerEvents callbacks above, so we'll
+		// just return those as long as we have some.
+		if !diags.HasErrors() {
+			diags = diags.Append(err)
+		}
+
+		return true, true, diags
+	}
+
+	// If the provider dependencies have changed since the last run then we'll
+	// say a little about that in case the reader wasn't expecting a change.
+	// (When we later integrate module dependencies into the lock file we'll
+	// probably want to refactor this so that we produce one lock-file related
+	// message for all changes together, but this is here for now just because
+	// it's the smallest change relative to what came before it, which was
+	// a hidden JSON file specifically for tracking providers.)
+	if !newLocks.Equal(previousLocks) {
+		// if readonly mode
+		if flagLockfile == "readonly" {
+			// check if required provider dependencies change
+			if !newLocks.EqualProviderAddress(previousLocks) {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					`Provider dependency changes detected`,
+					`Changes to the required provider dependencies were detected, but the lock file is read-only. To use and record these requirements, run "ghoten init" without the "-lockfile=readonly" flag.`,
+				))
+				return true, true, diags
+			}
+
+			// suppress updating the file to record any new information it learned,
+			// such as a hash using a new scheme.
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				`Provider lock file not updated`,
+				`Changes to the provider selections were detected, but not saved in the .terraform.lock.hcl file. To record these selections, run "ghoten init" without the "-lockfile=readonly" flag.`,
+			))
+			return true, false, diags
+		}
+
+		// Jump in here and add a warning if any of the providers are incomplete.
+		if len(incompleteProviders) > 0 {
+			// We don't really care about the order here, we just want the
+			// output to be deterministic.
+			sort.Slice(incompleteProviders, func(i, j int) bool {
+				return incompleteProviders[i] < incompleteProviders[j]
+			})
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Warning,
+				incompleteLockFileInformationHeader,
+				fmt.Sprintf(
+					incompleteLockFileInformationBody,
+					strings.Join(incompleteProviders, "\n  - "),
+					getproviders.CurrentPlatform.String())))
+		}
+
+		if previousLocks.Empty() {
+			// A change from empty to non-empty is special because it suggests
+			// we're running "ghoten init" for the first time against a
+			// new configuration. In that case we'll take the opportunity to
+			// say a little about what the dependency lock file is, for new
+			// users or those who are upgrading from a previous Terraform
+			// version that didn't have dependency lock files.
+			view.LockFileCreated()
+		} else {
+			view.LockFileChanged()
+		}
+
+		moreDiags = c.replaceLockedDependencies(ctx, newLocks)
+		diags = diags.Append(moreDiags)
+	}
+
+	return true, false, diags
+}
+
+// warnOnFailedImplicitProvReference returns a warn diagnostic when the downloader fails to fetch a provider that is implicitly referenced.
+// In other words, if the failed to download provider is having no required_providers entry, this function is trying to give to the user
+// more information on the source of the issue and gives also instructions on how to fix it.
+func warnOnFailedImplicitProvReference(provider addrs.Provider, qualifs *getproviders.ProvidersQualification) tfdiags.Diagnostics {
+	if _, ok := qualifs.Explicit[provider]; ok {
+		return nil
+	}
+	refs, ok := qualifs.Implicit[provider]
+	if !ok || len(refs) == 0 {
+		// If there is no implicit reference for that provider, do not write the warn, let just the error to be returned.
+		return nil
+	}
+
+	// NOTE: if needed, in the future we can use the rest of the "refs" to print all the culprits or at least to give
+	// a hint on how many resources are causing this
+	ref := refs[0]
+	if ref.ProviderAttribute {
+		return nil
+	}
+	details := fmt.Sprintf(
+		implicitProviderReferenceBody,
+		ref.CfgRes.String(),
+		provider.Type,
+		provider.ForDisplay(),
+		provider.Type,
+		ref.CfgRes.Resource.Type,
+		provider.Type,
+	)
+	return tfdiags.Diagnostics{}.Append(
+		&hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Subject:  ref.Ref.ToHCL().Ptr(),
+			Summary:  implicitProviderReferenceHead,
+			Detail:   details,
+		})
+}
+
+// backendConfigOverrideBody interprets the raw values of -backend-config
+// arguments into a hcl Body that should override the backend settings given
+// in the configuration.
+//
+// If the result is nil then no override needs to be provided.
+//
+// If the returned diagnostics contains errors then the returned body may be
+// incomplete or invalid.
+func (c *InitCommand) backendConfigOverrideBody(flags flags.RawFlags, schema *configschema.Block) (hcl.Body, tfdiags.Diagnostics) {
+	items := flags.AllItems()
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	var ret hcl.Body
+	var diags tfdiags.Diagnostics
+	synthVals := make(map[string]cty.Value)
+
+	mergeBody := func(newBody hcl.Body) {
+		if ret == nil {
+			ret = newBody
+		} else {
+			ret = configs.MergeBodies(ret, newBody)
+		}
+	}
+	flushVals := func() {
+		if len(synthVals) == 0 {
+			return
+		}
+		newBody := configs.SynthBody("-backend-config=...", synthVals)
+		mergeBody(newBody)
+		synthVals = make(map[string]cty.Value)
+	}
+
+	if len(items) == 1 && items[0].Value == "" {
+		// Explicitly remove all -backend-config options.
+		// We do this by setting an empty but non-nil ConfigOverrides.
+		return configs.SynthBody("-backend-config=''", synthVals), diags
+	}
+
+	for _, item := range items {
+		eq := strings.Index(item.Value, "=")
+
+		if eq == -1 {
+			// The value is interpreted as a filename.
+			newBody, fileDiags := c.loadHCLFile(item.Value)
+			diags = diags.Append(fileDiags)
+			if fileDiags.HasErrors() {
+				continue
+			}
+			// Generate an HCL body schema for the backend block.
+			var bodySchema hcl.BodySchema
+			for name := range schema.Attributes {
+				// We intentionally ignore the `Required` attribute here
+				// because backend config override files can be partial. The
+				// goal is to make sure we're not loading a file with
+				// extraneous attributes or blocks.
+				bodySchema.Attributes = append(bodySchema.Attributes, hcl.AttributeSchema{
+					Name: name,
+				})
+			}
+			for name, block := range schema.BlockTypes {
+				var labelNames []string
+				if block.Nesting == configschema.NestingMap {
+					labelNames = append(labelNames, "key")
+				}
+				bodySchema.Blocks = append(bodySchema.Blocks, hcl.BlockHeaderSchema{
+					Type:       name,
+					LabelNames: labelNames,
+				})
+			}
+			// Verify that the file body matches the expected backend schema.
+			_, schemaDiags := newBody.Content(&bodySchema)
+			diags = diags.Append(schemaDiags)
+			if schemaDiags.HasErrors() {
+				continue
+			}
+			flushVals() // deal with any accumulated individual values first
+			mergeBody(newBody)
+		} else {
+			name := item.Value[:eq]
+			rawValue := item.Value[eq+1:]
+			attrS := schema.Attributes[name]
+			if attrS == nil {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Invalid backend configuration argument",
+					fmt.Sprintf("The backend configuration argument %q given on the command line is not expected for the selected backend type.", name),
+				))
+				continue
+			}
+			value, valueDiags := configValueFromCLI(item.String(), rawValue, attrS.Type)
+			diags = diags.Append(valueDiags)
+			if valueDiags.HasErrors() {
+				continue
+			}
+			synthVals[name] = value
+		}
+	}
+
+	flushVals()
+
+	return ret, diags
+}
+
+func (c *InitCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictDirs("")
+}
+
+// TODO meta-refactor: move this to arguments once all commands are using the same shim logic
+func (c *InitCommand) GatherVariables(args *arguments.Vars) {
+	// FIXME the arguments package currently trivially gathers variable related
+	// arguments in a heterogeneous slice, in order to minimize the number of
+	// code paths gathering variables during the transition to this structure.
+	// Once all commands that gather variables have been converted to this
+	// structure, we could move the variable gathering code to the arguments
+	// package directly, removing this shim layer.
+
+	varArgs := args.All()
+	items := make([]flags.RawFlag, len(varArgs))
+	for i := range varArgs {
+		items[i].Name = varArgs[i].Name
+		items[i].Value = varArgs[i].Value
+	}
+	c.Meta.variableArgs = flags.RawFlags{Items: &items}
+}
+
+// configureBackendFlags is a temporary shim until we move the backend migration logic away from the Meta fields.
+//
+// TODO meta-refactor: remove this when the Meta fields configured here will be removed and replaced
+// with proper arguments for the backend.
+func (c *InitCommand) configureBackendFlags(args *arguments.Backend) {
+	c.forceInitCopy = args.ForceInitCopy
+	c.reconfigure = args.Reconfigure
+	c.migrateState = args.MigrateState
+	c.Meta.ignoreRemoteVersion = args.IgnoreRemoteVersion
+	// TODO meta-refactor: unify these 2 args attributes with the state flags in arguments.extendedFlagSet
+	//  https://github.com/vmvarela/ghoten/blob/db8c872defd8666618649ef7e29fa2b809adfd5e/internal/command/arguments/extended.go#L320-L321
+	c.Meta.stateLock = args.StateLock
+	c.Meta.stateLockTimeout = args.StateLockTimeout
+}
+
+func (c *InitCommand) AutocompleteFlags() complete.Flags {
+	return complete.Flags{
+		"-backend":        completePredictBoolean,
+		"-cloud":          completePredictBoolean,
+		"-backend-config": complete.PredictFiles("*.tfvars"), // can also be key=value, but we can't "predict" that
+		"-force-copy":     complete.PredictNothing,
+		"-from-module":    completePredictModuleSource,
+		"-get":            completePredictBoolean,
+		"-input":          completePredictBoolean,
+		"-lock":           completePredictBoolean,
+		"-lock-timeout":   complete.PredictAnything,
+		"-no-color":       complete.PredictNothing,
+		"-plugin-dir":     complete.PredictDirs(""),
+		"-reconfigure":    complete.PredictNothing,
+		"-migrate-state":  complete.PredictNothing,
+		"-upgrade":        completePredictBoolean,
+	}
+}
+
+func (c *InitCommand) Help() string {
+	helpText := `
+Usage: ghoten [global options] init [options]
+
+  Initialize a new or existing Ghoten working directory by creating
+  initial files, loading any remote state, downloading modules, etc.
+
+  This is the first command that should be run for any new or existing
+  Ghoten configuration per machine. This sets up all the local data
+  necessary to run Ghoten that is typically not committed to version
+  control.
+
+  This command is always safe to run multiple times. Though subsequent runs
+  may give errors, this command will never delete your configuration or
+  state. Even so, if you have important information, please back it up prior
+  to running this command, just in case.
+
+Options:
+
+  -backend=false          Disable backend or cloud backend initialization
+                          for this configuration and use what was previously
+                          initialized instead.
+
+                          aliases: -cloud=false
+
+  -backend-config=path    Configuration to be merged with what is in the
+                          configuration file's 'backend' block. This can be
+                          either a path to an HCL file with key/value
+                          assignments (same format as terraform.tfvars) or a
+                          'key=value' format, and can be specified multiple
+                          times. The backend type must be in the configuration
+                          itself.
+
+  -compact-warnings       If Ghoten produces any warnings that are not
+                          accompanied by errors, show them in a more compact
+                          form that includes only the summary messages.
+
+  -consolidate-warnings   If Ghoten produces any warnings, no consolidation
+                          will be performed. All locations, for all warnings
+                          will be listed. Enabled by default.
+
+  -consolidate-errors     If Ghoten produces any errors, no consolidation
+                          will be performed. All locations, for all errors
+                          will be listed. Disabled by default
+
+  -force-copy             Suppress prompts about copying state data when
+                          initializing a new state backend. This is
+                          equivalent to providing a "yes" to all confirmation
+                          prompts.
+
+  -from-module=SOURCE     Copy the contents of the given module into the target
+                          directory before initialization.
+
+  -get=false              Disable downloading modules for this configuration.
+
+  -input=false            Disable interactive prompts. Note that some actions may
+                          require interactive prompts and will error if input is
+                          disabled.
+
+  -lock=false             Don't hold a state lock during backend migration.
+                          This is dangerous if others might concurrently run
+                          commands against the same workspace.
+
+  -lock-timeout=0s        Duration to retry a state lock.
+
+  -no-color               If specified, output won't contain any color.
+
+  -plugin-dir             Directory containing plugin binaries. This overrides all
+                          default search paths for plugins, and prevents the
+                          automatic installation of plugins. This flag can be used
+                          multiple times.
+
+  -reconfigure            Reconfigure a backend, ignoring any saved
+                          configuration.
+
+  -migrate-state          Reconfigure a backend, and attempt to migrate any
+                          existing state.
+
+  -upgrade                Install the latest module and provider versions
+                          allowed within configured constraints, overriding the
+                          default behavior of selecting exactly the version
+                          recorded in the dependency lockfile.
+
+  -lockfile=MODE          Set a dependency lockfile mode.
+                          Currently only "readonly" is valid.
+
+  -ignore-remote-version  A rare option used for cloud backend and the remote backend
+                          only. Set this to ignore checking that the local and remote
+                          Ghoten versions use compatible state representations, making
+                          an operation proceed even when there is a potential mismatch.
+                          See the documentation on configuring Ghoten with
+                          cloud backend for more information.
+
+  -test-directory=path    Set the Ghoten test directory, defaults to "tests". When set, the
+                          test command will search for test files in the current directory and
+                          in the one specified by the flag.
+
+  -json                   Produce output in a machine-readable JSON format, 
+                          suitable for use in text editor integrations and other 
+                          automated systems. Always disables color.
+
+  -json-into=out.json     Produce the same output as -json, but sent directly
+                          to the given file. This allows automation to preserve
+                          the original human-readable output streams, while
+                          capturing more detailed logs for machine analysis.
+
+  -var 'foo=bar'          Set a value for one of the input variables in the root
+                          module of the configuration. Use this option more than
+                          once to set more than one variable.
+
+  -var-file=filename      Load variable values from the given file, in addition
+                          to the default files terraform.tfvars and *.auto.tfvars.
+                          Use this option more than once to include more than one
+                          variables file.
+
+`
+	return strings.TrimSpace(helpText)
+}
+
+func (c *InitCommand) Synopsis() string {
+	return "Prepare your working directory for other commands"
+}
+
+const errInitCopyNotEmpty = `
+The working directory already contains files. The -from-module option requires
+an empty directory into which a copy of the referenced module will be placed.
+
+To initialize the configuration already in this working directory, omit the
+-from-module option.
+`
+
+// providerProtocolTooOld is a message sent to the CLI UI if the provider's
+// supported protocol versions are too old for the user's version of tofu,
+// but a newer version of the provider is compatible.
+const providerProtocolTooOld = `Provider %q v%s is not compatible with Ghoten %s.
+Provider version %s is the latest compatible version. Select it with the following version constraint:
+	version = %q
+
+Ghoten checked all of the plugin versions matching the given constraint:
+	%s
+
+Consult the documentation for this provider for more information on compatibility between provider and Ghoten versions.
+`
+
+// providerProtocolTooNew is a message sent to the CLI UI if the provider's
+// supported protocol versions are too new for the user's version of tofu,
+// and the user could either upgrade tofu or choose an older version of the
+// provider.
+const providerProtocolTooNew = `Provider %q v%s is not compatible with Ghoten %s.
+You need to downgrade to v%s or earlier. Select it with the following constraint:
+	version = %q
+
+Ghoten checked all of the plugin versions matching the given constraint:
+	%s
+
+Consult the documentation for this provider for more information on compatibility between provider and Ghoten versions.
+Alternatively, upgrade to the latest version of Ghoten for compatibility with newer provider releases.
+`
+
+// No version of the provider is compatible.
+const errProviderVersionIncompatible = `No compatible versions of provider %s were found.`
+
+// incompleteLockFileInformationHeader is the summary displayed to users when
+// the lock file has only recorded local hashes.
+const incompleteLockFileInformationHeader = `Incomplete lock file information for providers`
+
+// incompleteLockFileInformationBody is the body of text displayed to users when
+// the lock file has only recorded local hashes.
+const incompleteLockFileInformationBody = `Due to your customized provider installation methods, Ghoten was forced to calculate lock file checksums locally for the following providers:
+  - %s
+
+The current .terraform.lock.hcl file only includes checksums for %s, so Ghoten running on another platform will fail to install these providers.
+
+To calculate additional checksums for another platform, run:
+  ghoten providers lock -platform=linux_amd64
+(where linux_amd64 is the platform to generate)`
+
+const implicitProviderReferenceHead = `Automatically-inferred provider dependency`
+
+const implicitProviderReferenceBody = `Due to the prefix of the resource type name Ghoten guessed that you intended to associate %s with a provider whose local name is "%s", but that name is not declared in this module's required_providers block. Ghoten therefore guessed that you intended to use %s, but that provider does not exist.
+
+Make at least one of the following changes to tell Ghoten which provider to use:
+
+- Add a declaration for local name "%s" to this module's required_providers block, specifying the full source address for the provider you intended to use.
+- Verify that "%s" is the correct resource type name to use. Did you omit a prefix which would imply the correct provider?
+- Use a "provider" argument within this resource block to override Ghoten's automatic selection of the local name "%s".
+`

@@ -1,0 +1,110 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package ghoten
+
+import (
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/configs/configschema"
+
+	"github.com/vmvarela/ghoten/internal/dag"
+)
+
+// ConcreteProviderNodeFunc is a callback type used to convert an
+// abstract provider to a concrete one of some type.
+type ConcreteProviderNodeFunc func(*NodeAbstractProvider) dag.Vertex
+
+// NodeAbstractProvider represents a provider that has no associated operations.
+// It registers all the common interfaces across operations for providers, except
+// for GraphNodeProvider as that depends on additional implementation details.
+// It does however implement what methods it can from GraphNodeProvider to reduce
+// duplication between concrete implementations.
+type NodeAbstractProvider struct {
+	Addr addrs.AbsProviderConfig
+
+	// The fields below will be automatically set using the Attach
+	// interfaces if you're running those transforms, but also be explicitly
+	// set if you already have that information.
+
+	Config *configs.Provider
+	Schema *configschema.Block
+}
+
+var (
+	_ GraphNodeModulePath                 = (*NodeAbstractProvider)(nil)
+	_ GraphNodeReferencer                 = (*NodeAbstractProvider)(nil)
+	_ GraphNodeAttachProvider             = (*NodeAbstractProvider)(nil)
+	_ GraphNodeAttachProviderConfigSchema = (*NodeAbstractProvider)(nil)
+	_ dag.GraphNodeDotter                 = (*NodeAbstractProvider)(nil)
+)
+
+func (n *NodeAbstractProvider) Name() string {
+	return n.Addr.String()
+}
+
+// GraphNodeModuleInstance
+func (n *NodeAbstractProvider) Path() addrs.ModuleInstance {
+	// Providers cannot be contained inside an expanded module, so this shim
+	// converts our module path to the correct ModuleInstance.
+	return n.Addr.Module.UnkeyedInstanceShim()
+}
+
+// GraphNodeModulePath
+func (n *NodeAbstractProvider) ModulePath() addrs.Module {
+	return n.Addr.Module
+}
+
+// GraphNodeReferencer
+func (n *NodeAbstractProvider) References() []*addrs.Reference {
+	if n.Config == nil || n.Schema == nil {
+		return nil
+	}
+
+	return ReferencesFromConfig(n.Config.Config, n.Schema)
+}
+
+// GraphNodeProvider (Partial Implementation)
+func (n *NodeAbstractProvider) ProviderAddr() addrs.AbsProviderConfig {
+	return n.Addr
+}
+
+// GraphNodeProvider (Partial Implementation)
+func (n *NodeAbstractProvider) ProviderConfig() *configs.Provider {
+	if n.Config == nil {
+		return nil
+	}
+
+	return n.Config
+}
+
+// GraphNodeAttachProvider
+func (n *NodeAbstractProvider) AttachProvider(c *configs.Provider) {
+	n.Config = c
+}
+
+// GraphNodeAttachProviderConfigSchema impl.
+func (n *NodeAbstractProvider) AttachProviderConfigSchema(schema *configschema.Block) {
+	n.Schema = schema
+}
+
+// GraphNodeProvider (Partial Implementation)
+func (n *NodeAbstractProvider) MocksAndOverrides() (IsMocked bool, MockResources []*configs.MockResource, OverrideResources []*configs.OverrideResource) {
+	if n.Config == nil {
+		return false, nil, nil
+	}
+	return n.Config.IsMocked, n.Config.MockResources, n.Config.OverrideResources
+}
+
+// GraphNodeDotter impl.
+func (n *NodeAbstractProvider) DotNode(name string, opts *dag.DotOpts) *dag.DotNode {
+	return &dag.DotNode{
+		Name: name,
+		Attrs: map[string]string{
+			"label": n.Name(),
+			"shape": "diamond",
+		},
+	}
+}

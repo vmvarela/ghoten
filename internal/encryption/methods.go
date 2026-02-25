@@ -1,0 +1,159 @@
+// Copyright (c) The OpenTofu Authors
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2023 HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
+package encryption
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/encryption/config"
+	"github.com/vmvarela/ghoten/internal/encryption/method"
+	"github.com/vmvarela/ghoten/internal/encryption/registry"
+	"github.com/zclconf/go-cty/cty"
+)
+
+// setupMethod sets up a single method for encryption. It returns a list of diagnostics if the method is invalid.
+func setupMethod(ctx context.Context, enc *config.EncryptionConfig, cfg config.MethodConfig, meta keyProviderMetadata, reg registry.Registry, staticEval *configs.StaticEvaluator) (method.Method, hcl.Diagnostics) {
+	// Lookup the definition of the encryption method from the registry
+	encryptionMethod, err := reg.GetMethodDescriptor(method.ID(cfg.Type))
+	if err != nil {
+
+		// Handle if the method was not found
+		var notFoundError *registry.MethodNotFoundError
+		if errors.Is(err, notFoundError) {
+			return nil, hcl.Diagnostics{{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown encryption method type",
+				Detail:   fmt.Sprintf("Can not find %q", cfg.Type),
+			}}
+		}
+
+		// Or, we don't know the error type, so we'll just return it as a generic error
+		return nil, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("Error fetching encryption method %q", cfg.Type),
+			Detail:   err.Error(),
+		}}
+	}
+
+	var methodCtx method.EvalContext
+	methodCtx = method.EvalContext{ValueForExpression: func(expr hcl.Expression) (cty.Value, hcl.Diagnostics) {
+		var diags hcl.Diagnostics
+
+		deps := expr.Variables()
+
+		kpConfigs, refs, kpDiags := filterKeyProviderReferences(enc, deps)
+		diags = diags.Extend(kpDiags)
+		if diags.HasErrors() {
+			return cty.NilVal, diags
+		}
+
+		hclCtx, kpDiags := setupKeyProviders(ctx, enc, kpConfigs, meta, reg, staticEval)
+		diags = diags.Extend(kpDiags)
+		if diags.HasErrors() {
+			return cty.NilVal, diags
+		}
+
+		hclCtx, evalDiags := staticEval.EvalContextWithParent(ctx, hclCtx, configs.StaticIdentifier{
+			Module:    addrs.RootModule,
+			Subject:   fmt.Sprintf("encryption.method.%s.%s", cfg.Type, cfg.Name),
+			DeclRange: enc.DeclRange,
+		}, refs)
+		diags = diags.Extend(evalDiags)
+		if diags.HasErrors() {
+			return cty.NilVal, diags
+		}
+
+		val, valDiags := expr.Value(hclCtx)
+		diags = diags.Extend(valDiags)
+		if diags.HasErrors() {
+			return cty.NilVal, diags
+		}
+
+		if val.Type() == cty.String {
+			// Try to be clever to see if it's a kp string that is actually a reference
+			// We might want a bool to opt-in to this functionality for JSON compat on specific fields
+
+			str := val.AsString()
+			if strings.HasPrefix(str, "key_provider.") {
+				traversal, travDiags := hclsyntax.ParseTraversalAbs([]byte(str), "", hcl.Pos{})
+				if !travDiags.HasErrors() {
+					// Call into the expr resolver again
+					val, valDiags = methodCtx.ValueForExpression(&hclsyntax.ScopeTraversalExpr{Traversal: traversal, SrcRange: expr.Range()})
+					diags = diags.Extend(valDiags)
+				}
+			}
+
+		}
+
+		return val, diags
+	}}
+
+	methodConfig, diags := encryptionMethod.DecodeConfig(methodCtx, cfg.Body)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	m, err := methodConfig.Build()
+	if err != nil {
+		// Convert the error to a diagnostic
+		diags = diags.Append(errorToDiagnostic(err))
+	}
+
+	return m, diags
+}
+
+func errorToDiagnostic(err error) *hcl.Diagnostic {
+	originalErr := err
+
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		switch typedErr := e.(type) {
+		case *method.ErrEncryptionFailed:
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Encryption operation failed during method setup",
+				Detail:   typedErr.Error(),
+			}
+		case *method.ErrDecryptionFailed:
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Decryption operation failed during method setup",
+				Detail:   typedErr.Error(),
+			}
+		case *method.ErrDecryptionKeyUnavailable:
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Required key unavailable for method setup",
+				Detail:   typedErr.Error(),
+			}
+		case *method.ErrCryptoFailure:
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Cryptographic operation failed during method setup",
+				Detail:   typedErr.Error(),
+			}
+		case *method.ErrInvalidConfiguration:
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid method configuration",
+				Detail:   typedErr.Error(),
+			}
+		}
+	}
+
+	// Generic fallback if no specific type was matched in the error chain
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "Encryption method configuration error",
+		Detail:   originalErr.Error(),
+	}
+}
