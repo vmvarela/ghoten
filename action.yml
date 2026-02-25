@@ -1,0 +1,173 @@
+name: 'Ghoten'
+description: 'Run Ghoten (OpenTofu + ORAS) with automatic GHCR auth, PR comments, and Job Summaries'
+author: 'Victor M. Varela'
+
+branding:
+  icon: 'terminal'
+  color: 'purple'
+
+inputs:
+  command:
+    description: 'Command to run: plan, apply, destroy, fmt, validate'
+    required: false
+    default: 'plan'
+  working-directory:
+    description: 'Working directory containing HCL configuration files'
+    required: false
+    default: '.'
+  workspace:
+    description: 'Terraform workspace name'
+    required: false
+    default: 'default'
+  var-file:
+    description: 'Path to a .tfvars variable file'
+    required: false
+    default: ''
+  variables:
+    description: 'Newline-separated key=value variable pairs'
+    required: false
+    default: ''
+  backend-repository:
+    description: 'ORAS backend OCI repository (default: ghcr.io/<owner>/tf-state.<repo>)'
+    required: false
+    default: ''
+  backend-config:
+    description: 'Newline-separated backend-config key=value pairs'
+    required: false
+    default: ''
+  github-token:
+    description: 'GitHub token for GHCR authentication and PR comments'
+    required: false
+    default: ${{ github.token }}
+  comment-on-pr:
+    description: 'Post/update command output as a PR comment'
+    required: false
+    default: 'true'
+  add-summary:
+    description: 'Generate a GitHub Job Summary'
+    required: false
+    default: 'true'
+  args:
+    description: 'Additional CLI arguments appended to the command'
+    required: false
+    default: ''
+  init-args:
+    description: 'Additional arguments for ghoten init'
+    required: false
+    default: ''
+  auto-init:
+    description: 'Automatically run ghoten init before the command'
+    required: false
+    default: 'true'
+  compression:
+    description: 'ORAS backend state compression: none or gzip'
+    required: false
+    default: 'gzip'
+  lock-ttl:
+    description: 'ORAS backend lock TTL in seconds (0 to disable)'
+    required: false
+    default: '300'
+  max-versions:
+    description: 'ORAS backend state versions to retain (0 to disable)'
+    required: false
+    default: '10'
+  fmt-check:
+    description: 'Use -check mode for the fmt command (report only, do not rewrite)'
+    required: false
+    default: 'false'
+  version:
+    description: 'Ghoten version to install (default: matches the action release)'
+    required: false
+    default: ''
+
+outputs:
+  exitcode:
+    description: 'Exit code of the ghoten command'
+    value: ${{ steps.run.outputs.exitcode }}
+  stdout:
+    description: 'Full command output'
+    value: ${{ steps.run.outputs.stdout }}
+  plan-has-changes:
+    description: 'Whether plan detected infrastructure changes (true/false)'
+    value: ${{ steps.run.outputs.plan_has_changes }}
+  plan-file:
+    description: 'Absolute path to the binary plan file (when command=plan and changes exist)'
+    value: ${{ steps.run.outputs.plan_file }}
+  fmt-result:
+    description: 'Whether fmt found formatting differences (true/false)'
+    value: ${{ steps.run.outputs.fmt_result }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ── 1. Install ghoten binary ────────────────────────────────────────────
+    - name: Setup Ghoten
+      id: setup
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/setup.sh"
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+
+    # ── 2. Authenticate to GHCR ─────────────────────────────────────────────
+    - name: Authenticate to GHCR
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/auth.sh"
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    # ── 3. Initialize (skip for fmt — no backend needed) ────────────────────
+    - name: Initialize
+      if: inputs.auto-init == 'true' && inputs.command != 'fmt'
+      id: init
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/init.sh"
+      env:
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_BACKEND_REPOSITORY: ${{ inputs.backend-repository }}
+        INPUT_BACKEND_CONFIG: ${{ inputs.backend-config }}
+        INPUT_INIT_ARGS: ${{ inputs.init-args }}
+        INPUT_COMPRESSION: ${{ inputs.compression }}
+        INPUT_LOCK_TTL: ${{ inputs.lock-ttl }}
+        INPUT_MAX_VERSIONS: ${{ inputs.max-versions }}
+
+    # ── 4. Run the command ───────────────────────────────────────────────────
+    - name: Run ghoten ${{ inputs.command }}
+      id: run
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/run.sh"
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_VAR_FILE: ${{ inputs.var-file }}
+        INPUT_VARIABLES: ${{ inputs.variables }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_FMT_CHECK: ${{ inputs.fmt-check }}
+
+    # ── 5. PR Comment ────────────────────────────────────────────────────────
+    - name: Comment on PR
+      if: always() && inputs.comment-on-pr == 'true' && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/comment.sh"
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        PLAN_HAS_CHANGES: ${{ steps.run.outputs.plan_has_changes }}
+        COMMAND_EXITCODE: ${{ steps.run.outputs.exitcode }}
+        FMT_RESULT: ${{ steps.run.outputs.fmt_result }}
+
+    # ── 6. Job Summary ──────────────────────────────────────────────────────
+    - name: Generate Summary
+      if: always() && inputs.add-summary == 'true'
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/action/summary.sh"
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_BACKEND_REPOSITORY: ${{ inputs.backend-repository }}
+        PLAN_HAS_CHANGES: ${{ steps.run.outputs.plan_has_changes }}
+        COMMAND_EXITCODE: ${{ steps.run.outputs.exitcode }}
+        FMT_RESULT: ${{ steps.run.outputs.fmt_result }}

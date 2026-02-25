@@ -73,6 +73,237 @@ Pre-built binaries for 17 platform combinations (linux, darwin, windows, freebsd
 
 ---
 
+## GitHub Action
+
+Use Ghoten directly in your workflows with zero configuration. The action installs the binary, authenticates to GHCR, initializes the ORAS backend, and runs your command — with **PR comments** and **Job Summaries** out of the box.
+
+### Quick Start
+
+```yaml
+# Plan on pull requests
+on: pull_request
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: vmvarela/ghoten@v1
+```
+
+That's it. Ghoten will:
+- ✅ Install the matching binary
+- 🔐 Authenticate to GHCR
+- 🔧 Initialize with ORAS backend (`ghcr.io/<owner>/tf-state.<repo>`)
+- 📋 Run `ghoten plan`
+- 💬 Post the plan as a PR comment (auto-updated on each push)
+- 📊 Generate a Job Summary
+
+### Plan on PR, Apply on Merge
+
+```yaml
+name: Infrastructure
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: vmvarela/ghoten@v1
+
+  apply:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: vmvarela/ghoten@v1
+        with:
+          command: apply
+```
+
+### Before & After
+
+<details><summary><b>Before</b> — manual setup (~25 lines)</summary>
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/vmvarela/ghoten:1.12.0
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to GHCR
+        run: |
+          DOCKER_CONFIG="${HOME}/.docker"
+          mkdir -p "$DOCKER_CONFIG"
+          AUTH=$(printf '%s:%s' "$GITHUB_ACTOR" "$GITHUB_TOKEN" | base64 -w0 2>/dev/null || printf '%s:%s' "$GITHUB_ACTOR" "$GITHUB_TOKEN" | base64)
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Init & Plan
+        run: |
+          ghoten init
+          ghoten plan -out=tfplan
+        env:
+          TF_BACKEND_ORAS_REPOSITORY: ghcr.io/${{ github.repository_owner }}/tf-state
+          TF_WORKSPACE: my-workspace
+```
+
+</details>
+
+<details><summary><b>After</b> — one step (4 lines)</summary>
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: vmvarela/ghoten@v1
+        with:
+          workspace: my-workspace
+```
+
+</details>
+
+### Action Inputs
+
+| Input | Default | Description |
+|---|---|---|
+| `command` | `plan` | Command: `plan`, `apply`, `destroy`, `fmt`, `validate` |
+| `working-directory` | `.` | Path to HCL configuration files |
+| `workspace` | `default` | Terraform workspace |
+| `var-file` | | Path to a `.tfvars` file |
+| `variables` | | Newline-separated `key=value` variable pairs |
+| `backend-repository` | `ghcr.io/<owner>/tf-state.<repo>` | ORAS backend OCI repository |
+| `backend-config` | | Additional `-backend-config` key=value pairs |
+| `github-token` | `${{ github.token }}` | Token for GHCR auth and PR comments |
+| `comment-on-pr` | `true` | Post command output as PR comment |
+| `add-summary` | `true` | Generate Job Summary |
+| `args` | | Additional CLI arguments |
+| `init-args` | | Additional arguments for `ghoten init` |
+| `auto-init` | `true` | Automatically run `ghoten init` |
+| `compression` | `gzip` | State compression: `none` or `gzip` |
+| `lock-ttl` | `300` | Lock TTL in seconds |
+| `max-versions` | `10` | State versions to retain |
+| `fmt-check` | `false` | Use `-check` mode for fmt |
+| `version` | *(auto)* | Ghoten version to install |
+
+### Action Outputs
+
+| Output | Description |
+|---|---|
+| `exitcode` | Exit code of the command |
+| `stdout` | Full command output |
+| `plan-has-changes` | `true`/`false` — whether plan detected changes |
+| `plan-file` | Path to binary plan file (when `command=plan`) |
+| `fmt-result` | `true`/`false` — whether fmt found differences |
+
+### More Examples
+
+**Format check on PR:**
+```yaml
+- uses: vmvarela/ghoten@v1
+  with:
+    command: fmt
+    fmt-check: true
+```
+
+**Validate then Plan:**
+```yaml
+- uses: vmvarela/ghoten@v1
+  with:
+    command: validate
+
+- uses: vmvarela/ghoten@v1
+  with:
+    command: plan
+```
+
+**Multiple workspaces:**
+```yaml
+- uses: vmvarela/ghoten@v1
+  with:
+    command: plan
+    workspace: production
+    working-directory: infra/
+```
+
+**With variables:**
+```yaml
+- uses: vmvarela/ghoten@v1
+  with:
+    command: plan
+    var-file: prod.tfvars
+    variables: |
+      region=eu-west-1
+      environment=production
+```
+
+**Custom backend repository:**
+```yaml
+- uses: vmvarela/ghoten@v1
+  with:
+    command: plan
+    backend-repository: ghcr.io/myorg/custom-state-repo
+```
+
+**Plan → Apply in same job (auto-detects plan file):**
+```yaml
+- uses: vmvarela/ghoten@v1
+  id: plan
+  with:
+    command: plan
+
+- uses: vmvarela/ghoten@v1
+  if: steps.plan.outputs.plan-has-changes == 'true'
+  with:
+    command: apply
+```
+
+### Permissions
+
+The `GITHUB_TOKEN` requires these permissions:
+
+| Permission | Required for |
+|---|---|
+| `contents: read` | Repository checkout |
+| `packages: write` | ORAS backend (read/write state to GHCR) |
+| `pull-requests: write` | PR comments (optional, only if `comment-on-pr: true`) |
+
+> **Note**: If you enable version retention (`max-versions > 0`), ensure the token also grants `delete:packages` for GHCR version cleanup.
+
+---
+
 ## ORAS Backend
 
 ### Security Considerations
@@ -229,6 +460,15 @@ variable "state_passphrase" {
 > **Tip**: For production, consider using a KMS-backed key provider (AWS KMS, GCP KMS, etc.) instead of PBKDF2 with a passphrase.
 
 ### GitHub Actions CI
+
+The recommended approach is the [Ghoten GitHub Action](#github-action):
+
+```yaml
+- uses: actions/checkout@v6
+- uses: vmvarela/ghoten@v1
+```
+
+Or manually:
 
 ```yaml
 - name: Ghoten Init
