@@ -77,6 +77,12 @@ area/diagnostics:
 
 # ─── Tipo de cambio ──────────────────────────────────────────
 
+github-action:
+  - changed-files:
+      - any-glob-to-any-file:
+          - action.yml
+          - action/**
+
 docs:
   - changed-files:
       - any-glob-to-any-file:

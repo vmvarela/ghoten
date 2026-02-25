@@ -17,6 +17,9 @@ changelog:
     - title: "🐛 Bug Fixes"
       labels:
         - bug
+    - title: "🎬 GitHub Action"
+      labels:
+        - github-action
     - title: "📖 Documentation"
       labels:
         - documentation
