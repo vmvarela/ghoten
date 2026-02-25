@@ -103,18 +103,19 @@ COMMIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
 RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
 # Compose body
-BODY="${MARKER}
-### ${TITLE_PARTS} — ${STATUS}${CHANGE_LINE}
-
-<details><summary>Show Output</summary>
-
-\`\`\`hcl
-${OUTPUT}
-\`\`\`
-${TRUNCATED_NOTE}
-</details>
-
-<sub>Triggered by @${GITHUB_ACTOR} in <a href=\"${COMMIT_URL}\"><code>${SHORT_SHA}</code></a> · <a href=\"${RUN_URL}\">${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}</a></sub>"
+BODY=$(printf '%s\n' \
+  "${MARKER}" \
+  "### ${TITLE_PARTS} — ${STATUS}${CHANGE_LINE}" \
+  "" \
+  "<details><summary>Show Output</summary>" \
+  "" \
+  "\`\`\`hcl" \
+  "${OUTPUT}" \
+  "\`\`\`" \
+  "${TRUNCATED_NOTE}" \
+  "</details>" \
+  "" \
+  "<sub>Triggered by @${GITHUB_ACTOR} in <a href=\"${COMMIT_URL}\"><code>${SHORT_SHA}</code></a> · <a href=\"${RUN_URL}\">${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}</a></sub>")
 
 # ─── Post/update comment ─────────────────────────────────────────────────────
 REPO="${GITHUB_REPOSITORY}"
@@ -122,6 +123,11 @@ API_URL="${GITHUB_API_URL}/repos/${REPO}/issues/${PR_NUMBER}/comments"
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 ACCEPT_HEADER="Accept: application/vnd.github+json"
 API_VERSION="X-GitHub-Api-Version: 2022-11-28"
+
+if [[ -z "$TOKEN" ]]; then
+  echo "::warning title=Ghoten Comment::github-token is empty — skipping PR comment"
+  exit 0
+fi
 
 # Search for existing comment (check up to 10 pages = 1000 comments)
 EXISTING_ID=""

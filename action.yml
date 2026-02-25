@@ -36,9 +36,9 @@ inputs:
     required: false
     default: ''
   github-token:
-    description: 'GitHub token for GHCR authentication and PR comments'
+    description: 'GitHub token for GHCR authentication and PR comments (defaults to github.token when not set)'
     required: false
-    default: ${{ github.token }}
+    default: ''
   comment-on-pr:
     description: 'Post/update command output as a PR comment'
     required: false
@@ -113,7 +113,7 @@ runs:
       shell: bash
       run: bash "${GITHUB_ACTION_PATH}/action/auth.sh"
       env:
-        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
 
     # ── 3. Initialize (skip for fmt — no backend needed) ────────────────────
     - name: Initialize
@@ -153,7 +153,7 @@ runs:
         INPUT_COMMAND: ${{ inputs.command }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_WORKSPACE: ${{ inputs.workspace }}
-        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
         PLAN_HAS_CHANGES: ${{ steps.run.outputs.plan_has_changes }}
         COMMAND_EXITCODE: ${{ steps.run.outputs.exitcode }}
         FMT_RESULT: ${{ steps.run.outputs.fmt_result }}

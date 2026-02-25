@@ -10,6 +10,11 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
+if [[ -z "$ACTOR" ]]; then
+  echo "::error title=Ghoten Auth::GITHUB_ACTOR is not set — cannot authenticate to GHCR"
+  exit 1
+fi
+
 DOCKER_CONFIG="${HOME}/.docker"
 mkdir -p "$DOCKER_CONFIG"
 
@@ -18,17 +23,18 @@ AUTH=$(printf '%s:%s' "$ACTOR" "$TOKEN" | base64 -w0 2>/dev/null || printf '%s:%
 
 # Merge with existing config if present, otherwise create fresh
 if [[ -f "$DOCKER_CONFIG/config.json" ]]; then
-  EXISTING=$(cat "$DOCKER_CONFIG/config.json")
-  echo "$EXISTING" | python3 -c "
-import sys, json
-try:
-    cfg = json.load(sys.stdin)
-except:
-    cfg = {}
-cfg.setdefault('auths', {})['ghcr.io'] = {'auth': '$AUTH'}
-json.dump(cfg, sys.stdout)
-" > "$DOCKER_CONFIG/config.json" 2>/dev/null || \
+  if jq -e . "$DOCKER_CONFIG/config.json" >/dev/null 2>&1; then
+    tmp_cfg="$(mktemp)"
+    jq --arg auth "$AUTH" '
+      .auths |= (. // {}) |
+      .auths["ghcr.io"] |= (. // {}) |
+      .auths["ghcr.io"].auth = $auth
+    ' "$DOCKER_CONFIG/config.json" > "$tmp_cfg"
+    mv "$tmp_cfg" "$DOCKER_CONFIG/config.json"
+  else
+    # Existing config is not valid JSON — start fresh
     printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
+  fi
 else
   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$AUTH" > "$DOCKER_CONFIG/config.json"
 fi

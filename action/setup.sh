@@ -57,14 +57,18 @@ HTTP_CODE=""
 if command -v curl &>/dev/null; then
   HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null) || true
 elif command -v wget &>/dev/null; then
-  wget -q -O "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null && HTTP_CODE="200" || HTTP_CODE="failed"
+  if wget -q -O "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null; then
+    HTTP_CODE="200"
+  else
+    HTTP_CODE="download failed (wget)"
+  fi
 else
   echo "::error title=Ghoten Setup::Neither curl nor wget found"
   exit 1
 fi
 
 if [[ ! -f "${TMPDIR}/${ARCHIVE}" || ! -s "${TMPDIR}/${ARCHIVE}" ]]; then
-  echo "::error title=Ghoten Setup::Download failed (HTTP ${HTTP_CODE}). Check that v${VERSION} exists at https://github.com/vmvarela/ghoten/releases"
+  echo "::error title=Ghoten Setup::Download failed (${HTTP_CODE}). Check that v${VERSION} exists at https://github.com/vmvarela/ghoten/releases"
   exit 1
 fi
 

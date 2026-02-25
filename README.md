@@ -297,10 +297,10 @@ The `GITHUB_TOKEN` requires these permissions:
 | Permission | Required for |
 |---|---|
 | `contents: read` | Repository checkout |
-| `packages: write` | ORAS backend (read/write state to GHCR) |
+| `packages: write` | ORAS backend (read/write state to GHCR, including deleting package versions for retention cleanup) |
 | `pull-requests: write` | PR comments (optional, only if `comment-on-pr: true`) |
 
-> **Note**: If you enable version retention (`max-versions > 0`), ensure the token also grants `delete:packages` for GHCR version cleanup.
+> **Note**: `packages: write` is sufficient for deleting package versions during version retention (`max-versions > 0`). The separate `delete:packages` permission is only required if you also need to delete entire packages from GHCR.
 
 ---
 

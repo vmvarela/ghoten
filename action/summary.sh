@@ -135,7 +135,7 @@ fi
     echo "<details><summary>Full Output${TRUNCATED}</summary>"
     echo ""
     echo '```hcl'
-    echo "$OUTPUT"
+    printf '%s\n' "$OUTPUT"
     echo '```'
     echo ""
     echo "</details>"

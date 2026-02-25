@@ -44,7 +44,8 @@ fi
 # Additional backend-config from user
 if [[ -n "${INPUT_BACKEND_CONFIG:-}" ]]; then
   while IFS= read -r line; do
-    line=$(echo "$line" | xargs)  # trim whitespace
+    # Trim leading/trailing whitespace precisely (preserves internal whitespace in values)
+    line=$(printf '%s\n' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [[ -z "$line" || "$line" == \#* ]] && continue
     CMD+=(-backend-config="$line")
   done <<< "${INPUT_BACKEND_CONFIG}"

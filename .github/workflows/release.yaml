@@ -309,6 +309,9 @@ jobs:
         env:
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
+          # Note: this job only runs for stable releases
+          # (see: needs.validate.outputs.is_prerelease != 'true' in the job condition),
+          # so prerelease tags like v1.12.0-rc1 are excluded and these patterns are safe.
           # Parse semver: v1.12.0 → major=v1, minor=v1.12
           MAJOR=$(echo "$TAG" | grep -oE '^v[0-9]+')
           MINOR=$(echo "$TAG" | grep -oE '^v[0-9]+\.[0-9]+')

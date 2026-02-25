@@ -2,11 +2,18 @@
 # Ghoten Action — Run: execute the requested ghoten command
 set -euo pipefail
 
-cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
+WORKDIR="${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
+if [[ ! -d "$WORKDIR" ]]; then
+  echo "::error title=Invalid working directory::Directory '$WORKDIR' does not exist"
+  exit 1
+fi
+cd "$WORKDIR"
 
 COMMAND="${INPUT_COMMAND}"
 STDOUT_FILE="${RUNNER_TEMP}/ghoten_stdout.txt"
-PLAN_FILE="${RUNNER_TEMP}/ghoten.tfplan"
+# Include workspace and working directory in plan file path for uniqueness across matrix jobs
+PLAN_DIR_HASH=$(printf '%s:%s' "${INPUT_WORKING_DIRECTORY}" "${INPUT_WORKSPACE:-default}" | md5sum 2>/dev/null | cut -c1-8 || printf '%s:%s' "${INPUT_WORKING_DIRECTORY}" "${INPUT_WORKSPACE:-default}" | md5 2>/dev/null | cut -c1-8 || echo "default")
+PLAN_FILE="${RUNNER_TEMP}/ghoten_${PLAN_DIR_HASH}.tfplan"
 START_TIME=$(date +%s)
 
 # ─── Build variable arguments ────────────────────────────────────────────────
@@ -16,7 +23,7 @@ if [[ -n "${INPUT_VAR_FILE:-}" ]]; then
 fi
 if [[ -n "${INPUT_VARIABLES:-}" ]]; then
   while IFS= read -r line; do
-    line=$(echo "$line" | xargs)
+    line=$(printf '%s\n' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [[ -z "$line" || "$line" == \#* ]] && continue
     VAR_ARGS+=(-var "$line")
   done <<< "${INPUT_VARIABLES}"
@@ -25,6 +32,7 @@ fi
 # Parse extra args
 EXTRA_ARGS=()
 if [[ -n "${INPUT_ARGS:-}" ]]; then
+  # Intentional word splitting: INPUT_ARGS may contain multiple space-separated arguments
   # shellcheck disable=SC2086
   read -ra EXTRA_ARGS <<< "${INPUT_ARGS}"
 fi
@@ -48,7 +56,7 @@ case "$COMMAND" in
     # detailed-exitcode: 0=no changes, 1=error, 2=changes
     if [[ $EXIT_CODE -eq 0 ]]; then
       echo "plan_has_changes=false" >> "$GITHUB_OUTPUT"
-      echo "plan_file=" >> "$GITHUB_OUTPUT"
+      echo "plan_file=${PLAN_FILE}" >> "$GITHUB_OUTPUT"
       echo ""
       echo "✅ No changes. Infrastructure is up-to-date."
     elif [[ $EXIT_CODE -eq 2 ]]; then
