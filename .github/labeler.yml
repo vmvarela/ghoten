@@ -124,3 +124,33 @@ dependencies:
       - any-glob-to-any-file:
           - go.mod
           - go.sum
+
+"type:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - docs/**
+          - .github/ISSUE_TEMPLATE/**
+          - .github/PULL_REQUEST_TEMPLATE.md
+          - LICENSE*
+          - CHANGELOG*
+
+"type:chore":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - Makefile
+          - Dockerfile
+          - Dockerfile.minimal
+          - scripts/**
+          - tools/**
+          - go.mod
+          - go.sum
+
+"type:feature":
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/**
+          - internal/**
+          - version/**
+          - action/**
