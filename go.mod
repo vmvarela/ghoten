@@ -48,7 +48,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.17.0
-	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.70
+	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.71
 	github.com/hashicorp/consul/api v1.33.4
 	github.com/hashicorp/consul/sdk v0.17.2
 	github.com/hashicorp/errwrap v1.1.0
@@ -103,7 +103,7 @@ require (
 	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/mod v0.32.0
-	golang.org/x/net v0.49.0
+	golang.org/x/net v0.51.0
 	golang.org/x/oauth2 v0.35.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.41.0
