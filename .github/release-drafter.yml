@@ -30,10 +30,10 @@ version-resolver:
     labels:
       - "breaking"
   minor:
-    labels:
-      - "type:feature"
+    labels: []
   patch:
     labels:
+      - "type:feature"
       - "type:bug"
       - "type:chore"
       - "type:docs"
