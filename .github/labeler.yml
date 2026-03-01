@@ -75,55 +75,7 @@ area/diagnostics:
           - internal/logging/**
           - internal/tracing/**
 
-# ─── Tipo de cambio ──────────────────────────────────────────
-
-github-action:
-  - changed-files:
-      - any-glob-to-any-file:
-          - action.yml
-          - action/**
-
-docs:
-  - changed-files:
-      - any-glob-to-any-file:
-          - docs/**
-          - website/**
-          - "*.md"
-          - rfc/**
-
-ci:
-  - changed-files:
-      - any-glob-to-any-file:
-          - .github/**
-          - codecov.yml
-          - .golangci.yml
-
-tests:
-  - changed-files:
-      - any-glob-to-any-file:
-          - testing/**
-          - internal/e2e/**
-          - internal/moduletest/**
-          - "**/*_test.go"
-
-build:
-  - changed-files:
-      - any-glob-to-any-file:
-          - Makefile
-          - Dockerfile
-          - Dockerfile.minimal
-          - go.mod
-          - go.sum
-          - scripts/**
-          - tools/**
-          - version/**
-          - cmd/**
-
-dependencies:
-  - changed-files:
-      - any-glob-to-any-file:
-          - go.mod
-          - go.sum
+# ─── Tipo de cambio (Scrum) ──────────────────────────────────
 
 "type:docs":
   - changed-files:
@@ -154,3 +106,9 @@ dependencies:
           - internal/**
           - version/**
           - action/**
+
+"type:bug":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*_test.go"
+          - internal/e2e/**

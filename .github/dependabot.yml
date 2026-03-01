@@ -4,11 +4,19 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    labels:
+      - "type:chore"
+      - "priority:low"
+      - "tech-debt"
 
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
+    labels:
+      - "type:chore"
+      - "priority:low"
+      - "tech-debt"
     groups:
       aws:
         patterns:
