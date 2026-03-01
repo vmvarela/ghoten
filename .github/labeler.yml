@@ -75,52 +75,40 @@ area/diagnostics:
           - internal/logging/**
           - internal/tracing/**
 
-# ─── Tipo de cambio ──────────────────────────────────────────
+# ─── Tipo de cambio (Scrum) ──────────────────────────────────
 
-github-action:
+"type:docs":
   - changed-files:
       - any-glob-to-any-file:
-          - action.yml
-          - action/**
-
-docs:
-  - changed-files:
-      - any-glob-to-any-file:
+          - "**/*.md"
           - docs/**
-          - website/**
-          - "*.md"
-          - rfc/**
+          - .github/ISSUE_TEMPLATE/**
+          - .github/PULL_REQUEST_TEMPLATE.md
+          - LICENSE*
+          - CHANGELOG*
 
-ci:
+"type:chore":
   - changed-files:
       - any-glob-to-any-file:
           - .github/**
-          - codecov.yml
-          - .golangci.yml
-
-tests:
-  - changed-files:
-      - any-glob-to-any-file:
-          - testing/**
-          - internal/e2e/**
-          - internal/moduletest/**
-          - "**/*_test.go"
-
-build:
-  - changed-files:
-      - any-glob-to-any-file:
           - Makefile
           - Dockerfile
           - Dockerfile.minimal
-          - go.mod
-          - go.sum
           - scripts/**
           - tools/**
-          - version/**
-          - cmd/**
-
-dependencies:
-  - changed-files:
-      - any-glob-to-any-file:
           - go.mod
           - go.sum
+
+"type:feature":
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/**
+          - internal/**
+          - version/**
+          - action/**
+
+"type:bug":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*_test.go"
+          - internal/e2e/**

@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    branches: [main, master]
   release:
     types: [published]
   workflow_dispatch:
@@ -17,8 +19,20 @@ permissions:
 # Validate
 # ---------------------------------------------------------------------------
 jobs:
+  release-drafter:
+    name: Update Release Draft
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   validate:
     name: Validate
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
