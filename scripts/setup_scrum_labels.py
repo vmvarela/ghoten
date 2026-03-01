@@ -8,6 +8,7 @@ LABELS = [
     ("type:chore", "0E8A16", "Maintenance, refactoring, tooling"),
     ("type:spike", "D4C5F9", "Research or investigation (timeboxed)"),
     ("type:docs", "0075CA", "Documentation only"),
+    ("type:breaking", "B60205", "Breaking change requires major version bump"),
     ("priority:critical", "B60205", "Must fix immediately blocks everything"),
     ("priority:high", "D93F0B", "Must be in the next sprint"),
     ("priority:medium", "FBCA04", "Should be done soon"),
