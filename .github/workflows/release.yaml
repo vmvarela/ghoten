@@ -171,7 +171,7 @@ jobs:
           ref: ${{ needs.validate.outputs.tag || github.sha }}
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: build-*
           path: dist/
@@ -230,7 +230,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download Linux build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: build-linux-*
           path: builds/
