@@ -41,6 +41,7 @@ Use integration tests only when touching backend-specific runtime behavior.
 | `make test-pg` | PostgreSQL remote-state backend behavior | Docker + local port `5432` |
 | `make test-consul` | Consul remote-state backend behavior | Docker |
 | `make test-kubernetes` | Kubernetes backend behavior | Docker + kind prerequisites |
+| `make test-zot` | ORAS backend against Zot OCI registry | Docker |
 
 List all integration helpers with:
 

@@ -127,6 +127,23 @@ test-pg: ## Runs tests with local Postgres instance as the backend.
 test-pg-clean: ## Cleans environment after `test-pg`.
 	@ docker rm -f ghoten-pg 2> /dev/null
 
+# integration test with Zot (OCI) as backend
+.PHONY: test-zot test-zot-clean
+
+define infoTestZot
+ Test requires:
+ * Docker: https://docs.docker.com/engine/install/
+ * Pulls ghcr.io/project-zot/zot-linux-amd64:v2.1.0
+
+endef
+
+test-zot: ## Runs ORAS backend integration tests against a local Zot OCI registry.
+	@ $(info $(infoTestZot))
+	@ TF_ORAS_ZOT_TEST=1 go test -v -count=1 -timeout 120s ./internal/backend/remote-state/oras/... -run Zot
+
+test-zot-clean: ## Cleans environment after `test-zot`.
+	@ docker ps -a --filter 'name=ghoten-zot-test' -q | xargs -r docker rm -f 2>/dev/null || true
+
 # integration test with Azure as backend
 .PHONY: test-azure
 

@@ -61,7 +61,7 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
 
 ## Limitations
 
-- Most production validation so far is on GHCR; other OCI registries are expected to work but are less battle-tested.
+- Validated against GHCR and [Zot](https://zotregistry.dev/); other OCI registries are expected to work but have not been tested yet. See the [compatibility matrix](docs/oras-backend.md#verified-oci-registries).
 - If you need advanced backend workflows (multi-region replication policies, custom APIs), dedicated backend platforms may be a better fit.
 
 ## License
