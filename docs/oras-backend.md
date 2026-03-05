@@ -93,3 +93,34 @@ If auth fails, run `docker login <registry>` first; it fixes most cases faster t
 | Lock appears stuck | Set `lock_ttl = 300` to auto-clear stale locks on next acquisition |
 | Deleting versions fails on GHCR | Ghoten falls back to GitHub Packages API; ensure package delete permission is granted |
 | Need deep diagnostics | Run with `TF_LOG=DEBUG ./ghoten plan` |
+
+## Verified OCI registries
+
+The ORAS backend is primarily developed against GHCR, but has been validated against additional registries to give adopters a clearer compatibility baseline.
+
+| Registry | Version tested | State | Lock | Retention | Notes |
+|---|---|---|---|---|---|
+| **GHCR** (ghcr.io) | — | OK | OK | OK (via GitHub Packages API fallback) | Primary development target |
+| **Zot** | v2.1.0 | OK | OK | OK (native manifest delete) | OCI Distribution Spec 1.1.0 compliant; tested with anonymous HTTP access |
+
+### Running the Zot validation yourself
+
+The integration suite spins up a local Zot container via Docker and exercises state, locking, retention, multi-workspace, and compression scenarios:
+
+```bash
+make test-zot
+```
+
+Or directly:
+
+```bash
+TF_ORAS_ZOT_TEST=1 go test -v -timeout 120s ./internal/backend/remote-state/oras/... -run Zot
+```
+
+Requires Docker. The test uses `ghcr.io/project-zot/zot-linux-amd64:v2.1.0` and binds a random free port on localhost.
+
+### Known limitations / workarounds
+
+- **Auth**: Zot supports HTTP Basic auth and Bearer tokens. The integration tests run with anonymous access for simplicity. For authenticated setups, `docker login <zot-host>` works the same as with GHCR.
+- **Tag deletion**: Unlike GHCR (which returns 405 for manifest DELETE and needs a GitHub API fallback), Zot supports the standard OCI manifest delete endpoint natively. No workaround needed.
+- **TLS**: Not tested in the automated suite. For TLS endpoints, set `ca_file` in the backend config or `insecure = true` for self-signed certificates.
