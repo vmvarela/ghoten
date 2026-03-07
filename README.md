@@ -1,6 +1,6 @@
 # Ghoten
 
-> **Name origin:** *Ghoten* blends **G**it**H**ub and Open**T**o**f**u, with a nod to [Goten](https://dragonball.fandom.com/wiki/Goten) from *Dragon Ball Z*.
+> **Name origin:** *Ghoten* blends **G**it**H**ub and **O**pen**T**ofu, with a nod to [Goten](https://dragonball.fandom.com/wiki/Goten) from *Dragon Ball Z*.
 
 [![Test](https://github.com/vmvarela/ghoten/actions/workflows/test.yaml/badge.svg)](https://github.com/vmvarela/ghoten/actions/workflows/test.yaml)
 [![Release](https://img.shields.io/github/v/release/vmvarela/ghoten?logo=github)](https://github.com/vmvarela/ghoten/releases/latest)
