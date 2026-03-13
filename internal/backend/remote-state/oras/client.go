@@ -45,6 +45,11 @@ const (
 	annotationLockGen      = "org.terraform.lock.generation"
 )
 
+// defaultMaxStateSize is the default upper bound on state data read from the
+// registry. It guards against OOM caused by a maliciously large or corrupted
+// OCI layer (256 MiB).
+const defaultMaxStateSize int64 = 256 * 1024 * 1024
+
 // Tag naming scheme:
 //   - State is stored at "state-<workspaceTag>".
 //   - Lock is stored at "locked-<workspaceTag>".
@@ -206,6 +211,7 @@ type RemoteClient struct {
 	unlockedTag      string
 	retryConfig      RetryConfig
 	stateCompression string
+	stateMaxSize     int64 // max bytes to read from a state layer; 0 means use defaultMaxStateSize
 	lockTTL          time.Duration
 	now              func() time.Time
 
@@ -343,9 +349,19 @@ func (c *RemoteClient) get(ctx context.Context) (*remote.Payload, error) {
 		return nil, fmt.Errorf("unsupported state layer media type %q", layer.MediaType)
 	}
 
-	data, err := io.ReadAll(r)
+	limit := c.stateMaxSize
+	if limit <= 0 {
+		limit = defaultMaxStateSize
+	}
+	// Read at most limit+1 bytes so we can distinguish "exactly at limit" from
+	// "exceeded limit" without allocating the full oversized buffer.
+	lr := io.LimitReader(r, limit+1)
+	data, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("state size exceeds maximum allowed size of %d bytes; use the max_state_size backend attribute to increase the limit", limit)
 	}
 
 	// MD5 is required by remote.Payload for ETag-like change detection, not for security.
