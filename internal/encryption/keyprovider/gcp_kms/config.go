@@ -105,7 +105,7 @@ func (c Config) Build() (keyprovider.KeyProvider, keyprovider.KeyMeta, error) {
 			return nil, nil, &keyprovider.ErrInvalidConfiguration{Message: "the string provided in credentials is neither valid json nor a valid file path"}
 		}
 
-		credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents)))
+		credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents))) //nolint:staticcheck // JSON is validated above via json.Valid before use
 	}
 
 	// Service Account Impersonation

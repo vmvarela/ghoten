@@ -458,7 +458,7 @@ func testGetClientOptions(t *testing.T) ([]option.ClientOption, error) {
 	if !json.Valid([]byte(contents)) {
 		return nil, fmt.Errorf("the string provided in credentials is neither valid json nor a valid file path")
 	}
-	credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents)))
+	credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents))) //nolint:staticcheck // JSON is validated above via json.Valid before use
 	opts = append(opts, credOptions...)
 	opts = append(opts, option.WithUserAgent(httpclient.GhotenUserAgent(version.Version)))
 
