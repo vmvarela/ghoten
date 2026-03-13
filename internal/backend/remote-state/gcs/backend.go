@@ -178,7 +178,7 @@ func (b *Backend) configure(ctx context.Context) error {
 			return fmt.Errorf("the string provided in credentials is neither valid json nor a valid file path")
 		}
 
-		credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents)))
+		credOptions = append(credOptions, option.WithCredentialsJSON([]byte(contents))) //nolint:staticcheck // JSON is validated above via json.Valid before use
 	}
 
 	// Service Account Impersonation
