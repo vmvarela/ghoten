@@ -1320,6 +1320,101 @@ func TestWaitForRetentionIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemoteClient_Get_RejectsOversizedState(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		limit     int64 // stateMaxSize on the client; 0 means use default
+		stateSize int   // bytes to store
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:      "within custom limit",
+			limit:     100,
+			stateSize: 50,
+			wantErr:   false,
+		},
+		{
+			name:      "exactly at custom limit",
+			limit:     100,
+			stateSize: 100,
+			wantErr:   false,
+		},
+		{
+			name:      "exceeds custom limit by one byte",
+			limit:     100,
+			stateSize: 101,
+			wantErr:   true,
+			errSubstr: "state size exceeds maximum",
+		},
+		{
+			name:      "far exceeds custom limit",
+			limit:     10,
+			stateSize: 1000,
+			wantErr:   true,
+			errSubstr: "max_state_size",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeORASRepo()
+			repo := &orasRepositoryClient{inner: fake}
+
+			// Writer uses no limit — we want to store the oversized blob.
+			writer := newRemoteClient(repo, "default")
+			if err := writer.Put(ctx, bytes.Repeat([]byte("x"), tc.stateSize)); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+
+			// Reader enforces the configured limit.
+			reader := newRemoteClient(repo, "default")
+			reader.stateMaxSize = tc.limit
+
+			_, err := reader.Get(ctx)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.errSubstr != "" && !strings.Contains(err.Error(), tc.errSubstr) {
+					t.Fatalf("expected error containing %q, got: %v", tc.errSubstr, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestRemoteClient_Get_RejectsOversizedGzipState(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+	repo := &orasRepositoryClient{inner: fake}
+
+	// Store a gzip-compressed state that decompresses to 200 bytes.
+	writer := newRemoteClient(repo, "default")
+	writer.stateCompression = "gzip"
+	if err := writer.Put(ctx, bytes.Repeat([]byte("z"), 200)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// Reader allows only 100 bytes (after decompression).
+	reader := newRemoteClient(repo, "default")
+	reader.stateMaxSize = 100
+
+	_, err := reader.Get(ctx)
+	if err == nil {
+		t.Fatal("expected error for oversized gzip state, got nil")
+	}
+	if !strings.Contains(err.Error(), "state size exceeds maximum") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // ─── Test helpers ────────────────────────────────────────────────────────────
 
 // slowDeleteRepo wraps an inner repository and introduces a configurable delay

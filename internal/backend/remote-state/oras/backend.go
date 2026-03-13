@@ -44,6 +44,7 @@ const (
 	envVarLockTTL      = "TF_BACKEND_ORAS_LOCK_TTL"
 	envVarRateLimit    = "TF_BACKEND_ORAS_RATE_LIMIT"
 	envVarRateBurst    = "TF_BACKEND_ORAS_RATE_LIMIT_BURST"
+	envVarMaxStateSize = "TF_BACKEND_ORAS_MAX_STATE_SIZE"
 )
 
 // Backend implements the Openghoten backend interface for OCI registries
@@ -53,14 +54,15 @@ type Backend struct {
 	*schema.Backend
 	encryption encryption.StateEncryption
 
-	repository  string
-	insecure    bool
-	caFile      string
-	compression string
-	lockTTL     time.Duration
-	rateLimit   int
-	rateBurst   int
-	retryCfg    RetryConfig
+	repository   string
+	insecure     bool
+	caFile       string
+	compression  string
+	lockTTL      time.Duration
+	rateLimit    int
+	rateBurst    int
+	retryCfg     RetryConfig
+	stateMaxSize int64
 
 	versioningMaxVersions int
 
@@ -136,6 +138,12 @@ func New(enc encryption.StateEncryption) backend.Backend {
 				Optional:    true,
 				Default:     0,
 				Description: "Maximum number of historical state versions to retain. 0 disables versioning, >0 enables versioning with that retention limit.",
+			},
+			"max_state_size": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc(envVarMaxStateSize, 0),
+				Description: "Maximum state size in bytes that may be read from the registry. Defaults to 268435456 (256 MiB). Set to 0 to use the default. Can also be set via TF_BACKEND_ORAS_MAX_STATE_SIZE env var.",
 			},
 		},
 	}
@@ -220,6 +228,13 @@ func (b *Backend) configure(ctx context.Context) error {
 		b.versioningMaxVersions = 0
 	}
 
+	// State read size limit: 0 means use the built-in default (256 MiB).
+	maxStateSize := data.Get("max_state_size").(int)
+	if maxStateSize < 0 {
+		return fmt.Errorf("max_state_size must be non-negative")
+	}
+	b.stateMaxSize = int64(maxStateSize)
+
 	cfg, diags := cliconfig.LoadConfig(ctx)
 	if diags.HasErrors() {
 		return diags.Err()
@@ -250,6 +265,7 @@ func (b *Backend) StateMgr(ctx context.Context, workspace string) (statemgr.Full
 	client.retryConfig = b.retryCfg
 	client.versioningMaxVersions = b.versioningMaxVersions
 	client.stateCompression = b.compression
+	client.stateMaxSize = b.stateMaxSize
 	client.lockTTL = b.lockTTL
 
 	// NOTE: Background lock cleaner is intentionally not started here to avoid
