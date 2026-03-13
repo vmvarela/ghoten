@@ -43,3 +43,7 @@ dist/
 # Development temp folder
 tmp
 .act/
+
+.agents/
+skills-lock.json
+

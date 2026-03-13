@@ -217,6 +217,27 @@ type RemoteClient struct {
 	// retentionSem limits concurrent async retention goroutines.
 	// If nil, defaultRetentionSem is used.
 	retentionSem chan struct{}
+
+	// retentionWg tracks all in-flight async retention goroutines.
+	// Invariant: counter == N(g : g launched by put() and not yet returned : true)
+	// WaitForRetention blocks until the counter reaches zero, guaranteeing
+	// all version-pruning work completes before the caller proceeds.
+	retentionWg sync.WaitGroup
+}
+
+// WaitForRetention blocks until all in-flight async retention goroutines
+// launched by put() have completed.
+//
+// Pre:  true
+// Post: ∀ goroutine G previously launched by put(): G has returned
+//
+//	∧ N(v : v ∈ versionTags(repo, workspaceName) : true) ≤ versioningMaxVersions
+//
+// Call this before process exit when versioningMaxVersions > 0 to guarantee
+// that old version tags are pruned even when the CLI exits shortly after a
+// state write (fixes the race described in GitHub issue #58).
+func (c *RemoteClient) WaitForRetention() {
+	c.retentionWg.Wait()
 }
 
 type digestGroup struct {
@@ -393,7 +414,12 @@ func (c *RemoteClient) put(ctx context.Context, state []byte) error {
 	}
 	select {
 	case sem <- struct{}{}:
+		// Add(1) happens on the calling goroutine, before launch, so that any
+		// concurrent WaitForRetention() cannot observe a zero counter between
+		// the goroutine being scheduled and its first instruction executing.
+		c.retentionWg.Add(1)
 		go func() {
+			defer c.retentionWg.Done()
 			defer func() { <-sem }()
 			asyncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

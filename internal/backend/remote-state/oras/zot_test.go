@@ -31,6 +31,7 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/encryption"
 	"github.com/vmvarela/ghoten/internal/states"
+	"github.com/vmvarela/ghoten/internal/states/remote"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -370,9 +371,14 @@ func TestZotIntegration_Retention(t *testing.T) {
 		}
 	}
 
-	// Allow async retention goroutines to finish.
-	drainRetentionSem()
-	time.Sleep(500 * time.Millisecond)
+	// Wait for all async retention goroutines to complete before counting tags.
+	// This replaces the previous drainRetentionSem() + time.Sleep(500ms) approach
+	// with a deterministic synchronisation guarantee (issue #58 fix).
+	if rs, ok := sm.(*remote.State); ok {
+		if rc, ok := rs.Client.(*RemoteClient); ok {
+			rc.WaitForRetention()
+		}
+	}
 
 	// Count version tags on the live registry.
 	versionTags := countZotVersionTags(t, addr, "ghoten-test/retention", stateTagPrefix+"default"+stateVersionTagSeparator)
