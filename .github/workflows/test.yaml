@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run unit tests
-        run: go test ./...
+        run: go test -race -count=1 -timeout 30m ./...
 
   lint:
     name: Lint

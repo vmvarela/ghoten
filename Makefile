@@ -9,13 +9,13 @@ export PATH := $(abspath bin/):${PATH}
 #   which is useful for tests that run in parallel.
 .PHONY: test-with-coverage
 test-with-coverage:
-	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 # run the unit tests across all packages in the ghoten project
 .PHONY: test
 test:
-	go test -v ./...
+	go test -race -count=1 -v ./...
 
 EXT := $(shell go env GOEXE)
 
@@ -139,7 +139,7 @@ endef
 
 test-zot: ## Runs ORAS backend integration tests against a local Zot OCI registry.
 	@ $(info $(infoTestZot))
-	@ TF_ORAS_ZOT_TEST=1 go test -v -count=1 -timeout 120s ./internal/backend/remote-state/oras/... -run Zot
+	@ TF_ORAS_ZOT_TEST=1 go test -race -v -count=1 -timeout 120s ./internal/backend/remote-state/oras/... -run Zot
 
 test-zot-clean: ## Cleans environment after `test-zot`.
 	@ docker ps -a --filter 'name=ghoten-zot-test' -q | xargs -r docker rm -f 2>/dev/null || true
