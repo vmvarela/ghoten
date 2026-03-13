@@ -164,6 +164,11 @@ jobs:
     name: Aggregate & Upload Assets
     runs-on: ubuntu-latest
     needs: [validate, build]
+    permissions:
+      contents: write
+      id-token: write  # needed for keyless cosign signing
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -178,11 +183,34 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
+        id: hashes
         working-directory: dist
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           shasum -a 256 ghoten_${VERSION}_*.tar.gz ghoten_${VERSION}_*.zip \
             > "ghoten_${VERSION}_SHA256SUMS"
+          # Expose base64-encoded hashes for the SLSA provenance generator.
+          echo "hashes=$(cat ghoten_${VERSION}_SHA256SUMS | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: needs.validate.outputs.is_release == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign archives and checksums (keyless)
+        if: needs.validate.outputs.is_release == 'true'
+        working-directory: dist
+        env:
+          COSIGN_YES: "true"
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          # Sign every archive and the checksum file; cosign writes
+          # <file>.sig and <file>.pem (certificate) alongside each artifact.
+          for f in ghoten_${VERSION}_*.tar.gz ghoten_${VERSION}_*.zip ghoten_${VERSION}_SHA256SUMS; do
+            cosign sign-blob \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "${f}"
+          done
 
       - name: Upload assets to release
         if: needs.validate.outputs.is_release == 'true'
@@ -200,7 +228,22 @@ jobs:
           path: dist/
           retention-days: 5
 
-
+  # ---------------------------------------------------------------------------
+  # SLSA provenance — generic SLSA3 provenance for all release artifacts
+  # ---------------------------------------------------------------------------
+  slsa:
+    name: SLSA Provenance
+    needs: [validate, aggregate]
+    if: needs.validate.outputs.is_release == 'true'
+    permissions:
+      actions: read    # To read the workflow path.
+      id-token: write  # To sign the provenance.
+      contents: write  # To add assets to a release.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.aggregate.outputs.hashes }}"
+      upload-assets: true
+      upload-tag-name: "${{ needs.validate.outputs.tag }}"
 
   # ---------------------------------------------------------------------------
   # Docker — multi-arch images (only for real releases)
@@ -210,6 +253,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate, build]
     if: needs.validate.outputs.is_release == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # needed for keyless cosign signing
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -267,6 +314,7 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build & push full images
+        id: docker-full
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -285,6 +333,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.validate.outputs.version }}
 
       - name: Build & push minimal images
+        id: docker-minimal
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -301,6 +350,23 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=MPL-2.0
             org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign full Docker images (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign \
+            "ghcr.io/${{ github.repository }}@${{ steps.docker-full.outputs.digest }}"
+
+      - name: Sign minimal Docker images (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign \
+            "ghcr.io/${{ github.repository }}@${{ steps.docker-minimal.outputs.digest }}"
 
   # ---------------------------------------------------------------------------
   # Floating version tags — enables vmvarela/ghoten@v1 and @v1.12
@@ -342,3 +408,4 @@ jobs:
           git tag -fa "$MINOR" -m "Release ${TAG}" "$TAG"
           git push -f origin "$MINOR"
           echo "✅ Updated ${MINOR} → ${TAG}"
+
