@@ -267,7 +267,7 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build & push full images
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -285,7 +285,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.validate.outputs.version }}
 
       - name: Build & push minimal images
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.minimal
