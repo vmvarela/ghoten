@@ -16,10 +16,10 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/backend/local"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // State implements the State interfaces in the state package to handle
@@ -327,5 +327,24 @@ func (s *State) StateSnapshotMeta() statemgr.SnapshotMeta {
 	return statemgr.SnapshotMeta{
 		Lineage: s.lineage,
 		Serial:  s.serial,
+	}
+}
+
+// WaitForRetention blocks until all in-flight async background work launched
+// by the underlying Client's Put calls has completed. This is a no-op when
+// the client does not implement ClientRetentionWaiter.
+//
+// Pre:  true
+// Post: Client implements ClientRetentionWaiter →
+//
+//	  ∀ goroutine G launched by a prior Put: G has returned
+//	¬(Client implements ClientRetentionWaiter) → skip
+//
+// Call this after the final PersistState/WriteAndPersist of an operation and
+// before the process can exit, to guarantee version-tag pruning completes
+// (fixes the CLI exit race described in GitHub issue #58).
+func (s *State) WaitForRetention() {
+	if c, ok := s.Client.(ClientRetentionWaiter); ok {
+		c.WaitForRetention()
 	}
 }

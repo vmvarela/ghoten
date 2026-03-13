@@ -126,6 +126,14 @@ func (b *Local) opRefresh(
 		return
 	}
 
+	// Wait for any async background work (e.g., ORAS version-tag pruning)
+	// to complete before we return and the process potentially exits.
+	// This is a no-op for state managers that don't support retention waiting.
+	// Fixes the CLI exit race described in GitHub issue #58.
+	if rw, ok := opState.(interface{ WaitForRetention() }); ok {
+		rw.WaitForRetention()
+	}
+
 	// Show any remaining warnings before exiting
 	op.ReportResult(runningOp, diags)
 }
