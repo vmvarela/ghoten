@@ -17,13 +17,13 @@ import (
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/command/views"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // test hook called between plan+apply during opApply
@@ -302,6 +302,14 @@ func (b *Local) opApply(
 		diags = diags.Append(b.backupStateForError(stateFile, err, op.View))
 		op.ReportResult(runningOp, diags)
 		return
+	}
+
+	// Wait for any async background work (e.g., ORAS version-tag pruning)
+	// to complete before we return and the process potentially exits.
+	// This is a no-op for state managers that don't support retention waiting.
+	// Fixes the CLI exit race described in GitHub issue #58.
+	if rw, ok := opState.(interface{ WaitForRetention() }); ok {
+		rw.WaitForRetention()
 	}
 
 	if applyDiags.HasErrors() {

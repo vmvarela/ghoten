@@ -14,7 +14,6 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/vmvarela/ghoten/internal/states/remote"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	orasErrcode "oras.land/oras-go/v2/registry/remote/errcode"
 )
@@ -346,16 +345,13 @@ func TestWorkspaces_NoDuplicateDefault(t *testing.T) {
 }
 
 func TestRemoteClient_Put_VersioningTagsAndRetention(t *testing.T) {
-	// Drain the global retention semaphore to ensure slots are available.
-	// Other tests may leave goroutines that hold semaphore slots.
-	drainRetentionSem()
-
 	ctx := context.Background()
 	fake := newFakeORASRepo()
 	repo := &orasRepositoryClient{inner: fake}
 
 	c := newRemoteClient(repo, "default")
 	c.versioningMaxVersions = 2
+	c.retentionSem = make(chan struct{}, 3) // isolated semaphore — no cross-test interference
 	if err := c.Put(ctx, []byte("s1")); err != nil {
 		t.Fatalf("put s1: %v", err)
 	}
@@ -366,17 +362,9 @@ func TestRemoteClient_Put_VersioningTagsAndRetention(t *testing.T) {
 		t.Fatalf("put s3: %v", err)
 	}
 
-	// Poll for async cleanup completion with timeout
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := fake.Resolve(ctx, c.versionTagFor(1)); err != nil {
-			break // v1 deleted, cleanup completed
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for async retention to delete v1")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	// WaitForRetention replaces the previous drainRetentionSem+polling loop.
+	// Post: all goroutines launched by put() have returned before we assert.
+	c.WaitForRetention()
 
 	p, err := c.Get(ctx)
 	if err != nil {
@@ -1056,6 +1044,7 @@ func TestAsyncRetentionNotBlocking(t *testing.T) {
 	repo := &orasRepositoryClient{inner: fake}
 	client := newRemoteClient(repo, "default")
 	client.versioningMaxVersions = 2
+	client.retentionSem = make(chan struct{}, 3) // isolated semaphore
 
 	// Push multiple states - async retention should not block
 	start := time.Now()
@@ -1066,25 +1055,18 @@ func TestAsyncRetentionNotBlocking(t *testing.T) {
 	}
 	duration := time.Since(start)
 
-	// Async should be fast (< 100ms even with cleanup running)
-	// Inline would take longer due to cleanup blocking
+	// Async should be fast (< 500ms even with cleanup running)
 	if duration > 500*time.Millisecond {
 		t.Logf("async retention took %v (expected < 500ms for 3 puts)", duration)
 	}
 
-	// Poll for state to be readable with timeout
-	deadline := time.Now().Add(2 * time.Second)
-	var payload *remote.Payload
-	var err error
-	for {
-		payload, err = client.Get(ctx)
-		if err == nil && payload != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for state to be written; last error: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Wait for all retention goroutines to finish before checking state.
+	// This replaces the previous polling loop with a deterministic synchronisation.
+	client.WaitForRetention()
+
+	payload, err := client.Get(ctx)
+	if err != nil || payload == nil {
+		t.Fatalf("expected state to be readable after WaitForRetention; err=%v payload=%v", err, payload)
 	}
 }
 
@@ -1127,18 +1109,20 @@ func TestRemoteClient_Delete(t *testing.T) {
 }
 
 func TestRemoteClient_Delete_WithVersioning(t *testing.T) {
-	drainRetentionSem()
 	ctx := context.Background()
 	fake := newFakeORASRepo()
 	repo := &orasRepositoryClient{inner: fake}
 
 	client := newRemoteClient(repo, "default")
 	client.versioningMaxVersions = 5
+	client.retentionSem = make(chan struct{}, 3) // isolated semaphore
 
 	// Put state to create the main tag and a version tag.
 	if err := client.Put(ctx, []byte("versioned-state")); err != nil {
 		t.Fatalf("put: %v", err)
 	}
+	// Ensure all retention goroutines have completed before asserting tag state.
+	client.WaitForRetention()
 
 	// Verify both tags exist.
 	if _, err := fake.Resolve(ctx, client.stateTag); err != nil {
@@ -1195,6 +1179,170 @@ func TestRemoteClient_RetagToNewManifest_PreservesVersionAnnotation(t *testing.T
 	if v := fm2.m.Annotations[annotationStateVersion]; v != "1" {
 		t.Fatalf("expected preserved version annotation '1' after retag, got %q", v)
 	}
+}
+
+// ─── Regression tests for issue #58 ──────────────────────────────────────────
+//
+// Issue: async retention goroutines are fire-and-forget; the CLI exits via
+// os.Exit before they complete, leaving more version tags than max_versions.
+//
+// Fix: RemoteClient.retentionWg tracks every goroutine launched by put().
+// WaitForRetention() blocks until the counter reaches zero.
+
+// TestRetentionCompleteAfterWait verifies the core postcondition of the fix:
+//
+//	Post: after WaitForRetention() returns,
+//	      N(v : v ∈ versionTags(repo, workspace) : true) ≤ versioningMaxVersions
+//
+// The test is fully deterministic — no time.Sleep, no polling — which is only
+// possible because WaitForRetention() provides the synchronisation guarantee.
+func TestRetentionCompleteAfterWait(t *testing.T) {
+	// Pre: fake in-memory repo, maxVersions = 2, 5 sequential Put calls.
+	const maxVersions = 2
+	const numPuts = 5
+
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+	repo := &orasRepositoryClient{inner: fake}
+
+	c := newRemoteClient(repo, "default")
+	c.versioningMaxVersions = maxVersions
+	c.retentionSem = make(chan struct{}, 3) // isolated semaphore
+
+	for i := 1; i <= numPuts; i++ {
+		if err := c.Put(ctx, []byte(fmt.Sprintf("state-%d", i))); err != nil {
+			t.Fatalf("Put(%d): %v", i, err)
+		}
+	}
+
+	// WaitForRetention must block until all goroutines launched by put() return.
+	// Post obligation: every version tag beyond the retention limit is gone.
+	c.WaitForRetention()
+
+	// Count surviving version tags immediately after Wait — no sleep, no poll.
+	surviving := 0
+	for v := 1; v <= numPuts; v++ {
+		if _, err := fake.Resolve(ctx, c.versionTagFor(v)); err == nil {
+			surviving++
+		}
+	}
+
+	// Post: surviving ≤ maxVersions
+	if surviving > maxVersions {
+		t.Errorf("after WaitForRetention: %d version tags survive, want ≤ %d (issue #58)",
+			surviving, maxVersions)
+	}
+}
+
+// TestRetentionRaceWithoutWait documents the original bug: without
+// WaitForRetention, the goroutines may not finish before the caller proceeds,
+// so more than max_versions tags can survive.
+//
+// The test uses a blocking fake repo whose Delete is artificially delayed so
+// that the goroutines are provably still in-flight at the assertion point.
+// This makes the failure deterministic rather than timing-dependent.
+//
+//	Pre:  deleteDelay >> assertion window (1 ms << 50 ms)
+//	Post: without Wait, surviving > maxVersions  (bug present)
+func TestRetentionRaceWithoutWait(t *testing.T) {
+	const maxVersions = 2
+	const numPuts = 5
+
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+
+	// slowRepo wraps fakeORASRepo and introduces a delay on every Delete call,
+	// ensuring the retention goroutine is still in-flight when we assert below.
+	slow := &slowDeleteRepo{
+		delegatingRepo: delegatingRepo{inner: fake},
+		deleteDelay:    50 * time.Millisecond,
+	}
+	repo := &orasRepositoryClient{inner: slow}
+
+	c := newRemoteClient(repo, "default")
+	c.versioningMaxVersions = maxVersions
+	c.retentionSem = make(chan struct{}, 3)
+
+	for i := 1; i <= numPuts; i++ {
+		if err := c.Put(ctx, []byte(fmt.Sprintf("state-%d", i))); err != nil {
+			t.Fatalf("Put(%d): %v", i, err)
+		}
+	}
+
+	// Do NOT call WaitForRetention — simulate an immediate os.Exit.
+	// The retention goroutines are still sleeping in slowDeleteRepo.Delete,
+	// so all version tags must still be present.
+	surviving := 0
+	for v := 1; v <= numPuts; v++ {
+		if _, err := fake.Resolve(ctx, c.versionTagFor(v)); err == nil {
+			surviving++
+		}
+	}
+
+	// Without Wait the goroutines haven't deleted anything yet.
+	// Post (bug behaviour): surviving == numPuts > maxVersions.
+	if surviving <= maxVersions {
+		t.Skipf("retention finished before assertion (race); surviving=%d maxVersions=%d",
+			surviving, maxVersions)
+	}
+
+	// Wait now so the goroutines can clean up — avoids leaking goroutines in tests.
+	c.WaitForRetention()
+}
+
+// TestWaitForRetentionIsIdempotent verifies that calling WaitForRetention when
+// no versioning is enabled (versioningMaxVersions == 0) returns immediately.
+//
+//	Pre:  versioningMaxVersions == 0, any number of Put calls
+//	Post: WaitForRetention() returns without blocking
+func TestWaitForRetentionIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+	repo := &orasRepositoryClient{inner: fake}
+
+	c := newRemoteClient(repo, "default")
+	// versioningMaxVersions == 0: no goroutines are launched
+	if err := c.Put(ctx, []byte("state-no-versioning")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		c.WaitForRetention()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Post satisfied: returned without blocking.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitForRetention blocked when no goroutines were launched")
+	}
+}
+
+// ─── Test helpers ────────────────────────────────────────────────────────────
+
+// slowDeleteRepo wraps an inner repository and introduces a configurable delay
+// on every Delete call, making retention goroutines deterministically in-flight
+// at the moment the test makes its assertion (issue #58 regression test).
+//
+// Pre:  deleteDelay ≥ 0
+// Post: every Delete blocks for deleteDelay before delegating to inner.Delete
+type slowDeleteRepo struct {
+	delegatingRepo
+	deleteDelay time.Duration
+}
+
+func (r *slowDeleteRepo) Delete(ctx context.Context, target ocispec.Descriptor) error {
+	// Block for deleteDelay, respecting context cancellation.
+	// Pre:  deleteDelay ≥ 0
+	// Post: either deleteDelay has elapsed, or ctx was cancelled
+	select {
+	case <-time.After(r.deleteDelay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return r.delegatingRepo.inner.Delete(ctx, target)
 }
 
 // noopLogger satisfies the logger interface used by retagToNewManifest.

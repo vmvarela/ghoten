@@ -43,6 +43,19 @@ type OptionalClientLocker interface {
 	IsLockingEnabled() bool
 }
 
+// ClientRetentionWaiter is an optional interface for remote state clients that
+// perform async background work after Put (e.g., version-tag pruning). When a
+// client implements this interface, callers must invoke WaitForRetention before
+// the process exits to ensure all background work completes.
+//
+// Pre:  true
+// Post: ∀ goroutine G launched by a prior Put call: G has returned
+//
+//	∧ N(v : v ∈ versionTags : true) ≤ maxVersions  (backend-specific)
+type ClientRetentionWaiter interface {
+	WaitForRetention()
+}
+
 // Payload is the return value from the remote state storage.
 type Payload struct {
 	MD5  []byte

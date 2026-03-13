@@ -134,3 +134,51 @@ func (c *mockClientForcePusher) appendLog(method string, content []byte) {
 	}
 	c.log = append(c.log, mockClientRequest{method, contentVal})
 }
+
+// ─── ClientRetentionWaiter tests ──────────────────────────────────────────────
+
+// mockRetentionWaiterClient implements Client and ClientRetentionWaiter.
+// It records whether WaitForRetention was called so tests can assert on it.
+//
+// Pre:  true
+// Post: waited == true iff WaitForRetention() was called at least once
+type mockRetentionWaiterClient struct {
+	nilClient
+	waited bool
+}
+
+func (c *mockRetentionWaiterClient) WaitForRetention() {
+	c.waited = true
+}
+
+// TestState_WaitForRetention_DelegatesToClient verifies that
+// remote.State.WaitForRetention() delegates to the underlying Client when
+// the client implements ClientRetentionWaiter.
+//
+// Pre:  State.Client implements ClientRetentionWaiter
+// Post: Client.WaitForRetention() is called exactly once
+func TestState_WaitForRetention_DelegatesToClient(t *testing.T) {
+	mc := &mockRetentionWaiterClient{}
+	s := &State{Client: mc}
+
+	s.WaitForRetention()
+
+	// Post: delegation occurred
+	if !mc.waited {
+		t.Fatal("WaitForRetention: expected delegation to client, but client.WaitForRetention was not called")
+	}
+}
+
+// TestState_WaitForRetention_NoopWhenClientDoesNotSupport verifies that
+// remote.State.WaitForRetention() is a no-op and does not panic when the
+// client does not implement ClientRetentionWaiter.
+//
+// Pre:  State.Client does NOT implement ClientRetentionWaiter
+// Post: WaitForRetention() returns without error or panic
+func TestState_WaitForRetention_NoopWhenClientDoesNotSupport(t *testing.T) {
+	// nilClient does not implement ClientRetentionWaiter.
+	s := &State{Client: nilClient{}}
+
+	// Must not panic.
+	s.WaitForRetention()
+}
