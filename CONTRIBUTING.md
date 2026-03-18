@@ -31,9 +31,9 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 ### Submitting Code
 
 1. Fork the repository.
-2. Create a feature branch from `master` (`git checkout -b feature/my-change`).
+2. Create a branch from `master` following the convention `issue-{number}/short-description` (e.g. `issue-42/fix-lock-timeout`).
 3. Make your changes with tests.
-4. Submit a pull request targeting `master`.
+4. Submit a pull request targeting `master`. PRs are merged with squash merge; the branch is deleted after merge.
 
 ## Development Setup
 
