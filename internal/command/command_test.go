@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -1135,11 +1136,11 @@ func checkGoldenReference(t *testing.T, output *terminal.TestOutput, fixturePath
 
 	// Verify that the log starts with a version message
 	type versionMessage struct {
-		Level    string `json:"@level"`
-		Message  string `json:"@message"`
-		Type     string `json:"type"`
-		Ghoten string `json:"ghoten"`
-		UI       string `json:"ui"`
+		Level   string `json:"@level"`
+		Message string `json:"@message"`
+		Type    string `json:"type"`
+		Ghoten  string `json:"ghoten"`
+		UI      string `json:"ui"`
 	}
 	var gotVersion versionMessage
 	if err := json.Unmarshal([]byte(gotLines[0]), &gotVersion); err != nil {
@@ -1231,7 +1232,15 @@ func testHangServer(t testing.TB) (server *httptest.Server, reqs <-chan *http.Re
 	// channel reads in the caller.
 	reqsCh := make(chan *http.Request, 8)
 
+	// wg tracks all active handler goroutines so that cleanup can wait
+	// for them to fully exit before closing reqsCh, preventing a data
+	// race between a handler sending to reqsCh and cleanup closing it.
+	var wg sync.WaitGroup
+
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		wg.Add(1)
+		defer wg.Done()
+
 		// We intentionally don't take any action on this request until
 		// the test cleanup function runs, but we will notify our
 		// caller that the request was started.
@@ -1262,9 +1271,10 @@ func testHangServer(t testing.TB) (server *httptest.Server, reqs <-chan *http.Re
 		t.Helper()
 		t.Log("shutting down testHangServer")
 		close(cleanupCh)                // terminate any active handlers
-		close(reqsCh)                   // unblock any test that's awaiting a request notification
 		server.CloseClientConnections() // force any active clients to disconnect
 		server.Close()                  // stop accepting new requests and wait for existing ones to stop
+		wg.Wait()                       // wait for all handlers to fully exit before closing reqsCh
+		close(reqsCh)                   // unblock any test that's awaiting a request notification
 	})
 	return server, reqsCh
 }
