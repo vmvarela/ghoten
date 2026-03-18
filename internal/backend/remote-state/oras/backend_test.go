@@ -432,3 +432,54 @@ func (e *blockingLookupEnv) QueryDockerCredentialHelper(ctx context.Context, hel
 	<-e.gate
 	return e.inner.QueryDockerCredentialHelper(ctx, helperName, serverURL)
 }
+
+// slowLookupEnv blocks until its context is cancelled, simulating a hung
+// credential helper process.
+type slowLookupEnv struct{}
+
+func (e *slowLookupEnv) QueryDockerCredentialHelper(ctx context.Context, helperName string, serverURL string) (ociauthconfig.DockerCredentialHelperGetResult, error) {
+	<-ctx.Done()
+	return ociauthconfig.DockerCredentialHelperGetResult{}, ctx.Err()
+}
+
+func TestCachedDockerCredentialHelperEnv_TimeoutErrorUsesShortTTL(t *testing.T) {
+	// Use a very short TTL so that a simulated timeout expires quickly.
+	const shortCacheTTL = time.Minute
+
+	now := time.Now()
+	clock := now
+
+	env := &cachedDockerCredentialHelperEnv{
+		inner: &slowLookupEnv{},
+		ttl:   shortCacheTTL,
+		now:   func() time.Time { return clock },
+	}
+	env.cache = make(map[dockerCredentialHelperCacheKey]dockerCredentialHelperCacheEntry)
+	env.inflight = make(map[dockerCredentialHelperCacheKey]*singleflightCall)
+
+	// Use a context with a very short timeout to simulate the helper hanging.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := env.QueryDockerCredentialHelper(ctx, "test-helper", "https://example.com")
+	if err == nil {
+		t.Fatal("expected an error from a timed-out credential helper, got nil")
+	}
+
+	// The error must NOT be a CredentialsNotFoundError — it is a context error.
+	if ociauthconfig.IsCredentialsNotFoundError(err) {
+		t.Fatalf("expected a non-not-found error (timeout), got a CredentialsNotFoundError: %v", err)
+	}
+
+	// A timeout error should be cached with errorCacheTTL (10s), not the full TTL.
+	// Advance the clock by errorCacheTTL + 1s and verify the cache entry has expired.
+	clock = now.Add(errorCacheTTL + time.Second)
+
+	inner2 := &countingLookupEnv{err: fmt.Errorf("second call")}
+	env.inner = inner2
+
+	_, _ = env.QueryDockerCredentialHelper(context.Background(), "test-helper", "https://example.com")
+	if got := inner2.Calls(); got != 1 {
+		t.Fatalf("expected cache to have expired after errorCacheTTL, but inner was called %d times (want 1)", got)
+	}
+}

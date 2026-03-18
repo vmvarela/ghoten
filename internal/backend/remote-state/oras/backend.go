@@ -677,13 +677,24 @@ type dockerCredentialHelperEnv struct{}
 
 var _ ociauthconfig.CredentialsLookupEnvironment = dockerCredentialHelperEnv{}
 
+// credentialHelperTimeout is the maximum time allowed for a credential helper
+// process to respond. A hung helper would otherwise block ghoten indefinitely.
+const credentialHelperTimeout = 30 * time.Second
+
 func (dockerCredentialHelperEnv) QueryDockerCredentialHelper(ctx context.Context, helperName string, serverURL string) (ociauthconfig.DockerCredentialHelperGetResult, error) {
 	exe := "docker-credential-" + helperName
 
-	cmd := exec.CommandContext(ctx, exe, "get")
+	tctx, cancel := context.WithTimeout(ctx, credentialHelperTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(tctx, exe, "get")
 	cmd.Stdin = strings.NewReader(serverURL)
 	stdout, err := cmd.Output()
 	if err != nil {
+		if tctx.Err() == context.DeadlineExceeded {
+			logging.HCLogger().Warn("credential helper timed out", "helper", exe, "timeout", credentialHelperTimeout)
+			return ociauthconfig.DockerCredentialHelperGetResult{}, fmt.Errorf("credential helper %q timed out after %s: %w", exe, credentialHelperTimeout, context.DeadlineExceeded)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return ociauthconfig.DockerCredentialHelperGetResult{}, ociauthconfig.NewCredentialsNotFoundError(err)
