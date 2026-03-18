@@ -20,6 +20,88 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+func TestConsole_lockedState(t *testing.T) {
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath("plan"), td)
+	t.Chdir(td)
+
+	unlock, err := testLockState(t, testDataDir, filepath.Join(td, DefaultStateFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	p := planFixtureProvider()
+	ui := cli.NewMockUi()
+	view, done := testView(t)
+	streams, _ := terminal.StreamsForTesting(t)
+	c := &ConsoleCommand{
+		Meta: Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			Ui:               ui,
+			View:             view,
+			Streams:          streams,
+		},
+	}
+
+	defer testStdinPipe(t, strings.NewReader("1+1\n"))()
+	args := []string{}
+	code := c.Run(args)
+	if code == 0 {
+		t.Fatal("expected error due to locked state, but got exit code 0")
+	}
+
+	output := done(t).Stderr()
+	uiErr := ui.ErrorWriter.String()
+	combined := output + uiErr
+	if !strings.Contains(combined, "lock") {
+		t.Fatalf("command output does not look like a lock error.\nstderr: %q\nui error: %q", output, uiErr)
+	}
+}
+
+func TestConsole_lockedStateWithLockFalse(t *testing.T) {
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath("plan"), td)
+	t.Chdir(td)
+
+	unlock, err := testLockState(t, testDataDir, filepath.Join(td, DefaultStateFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	p := planFixtureProvider()
+	ui := cli.NewMockUi()
+	view, _ := testView(t)
+	streams, _ := terminal.StreamsForTesting(t)
+	c := &ConsoleCommand{
+		Meta: Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			Ui:               ui,
+			View:             view,
+			Streams:          streams,
+		},
+	}
+
+	var output bytes.Buffer
+	defer testStdinPipe(t, strings.NewReader("1+1\n"))()
+	outCloser := testStdoutCapture(t, &output)
+
+	args := []string{"-lock=false"}
+	code := c.Run(args)
+	outCloser()
+
+	if code != 0 {
+		t.Fatalf("expected success with -lock=false, got exit code %d\n\n%s", code, ui.ErrorWriter.String())
+	}
+
+	if actual := output.String(); actual != "2\n" {
+		t.Fatalf("unexpected output: %q", actual)
+	}
+}
+
 // ConsoleCommand is tested primarily with tests in the "repl" package.
 // It is not tested here because the Console uses a readline-like library
 // that takes over stdin/stdout. It is difficult to test directly. The
