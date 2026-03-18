@@ -8,11 +8,7 @@ cd "${GITHUB_WORKSPACE}/${INPUT_WORKING_DIRECTORY}"
 echo "TF_IN_AUTOMATION=true" >> "$GITHUB_ENV"
 export TF_IN_AUTOMATION=true
 
-# Workspace
-if [[ -n "${INPUT_WORKSPACE}" && "${INPUT_WORKSPACE}" != "default" ]]; then
-  echo "TF_WORKSPACE=${INPUT_WORKSPACE}" >> "$GITHUB_ENV"
-  export TF_WORKSPACE="${INPUT_WORKSPACE}"
-fi
+# Workspace — resolved after init (see below)
 
 # Backend repository — auto-compute if not set
 BACKEND_REPO="${INPUT_BACKEND_REPOSITORY:-}"
@@ -81,3 +77,17 @@ if [[ $INIT_EXIT -ne 0 ]]; then
 fi
 
 echo "✅ Initialization complete"
+
+# ─── Workspace select / create ────────────────────────────────────────────────
+# Run workspace select BEFORE exporting TF_WORKSPACE; otherwise ghoten itself
+# would fail with "currently selected workspace does not exist" when resolving
+# the backend state for the workspace command.
+if [[ -n "${INPUT_WORKSPACE}" && "${INPUT_WORKSPACE}" != "default" ]]; then
+  echo "::group::🗂️ Selecting workspace '${INPUT_WORKSPACE}'"
+  ghoten workspace select -or-create "${INPUT_WORKSPACE}"
+  echo "::endgroup::"
+
+  # Now safe to export — workspace is guaranteed to exist in the backend
+  echo "TF_WORKSPACE=${INPUT_WORKSPACE}" >> "$GITHUB_ENV"
+  export TF_WORKSPACE="${INPUT_WORKSPACE}"
+fi
