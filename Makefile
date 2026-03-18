@@ -32,6 +32,16 @@ build:
 generate:
 	go generate ./...
 
+# generate-check runs `go generate` and fails if any generated file differs
+# from what is committed. Used in CI to ensure generated files are up-to-date.
+.PHONY: generate-check
+generate-check:
+	go generate ./...
+	@if ! git diff --exit-code; then \
+		echo "ERROR: generated files are out of date. Run 'make generate' and commit the result."; \
+		exit 1; \
+	fi
+
 # We separate the protobuf generation because most development tasks on
 # OpenTofu do not involve changing protobuf files and protoc is not a
 # go-gettable dependency and so getting it installed can be inconvenient.

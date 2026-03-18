@@ -31,9 +31,9 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 ### Submitting Code
 
 1. Fork the repository.
-2. Create a feature branch from `master` (`git checkout -b feature/my-change`).
+2. Create a branch from `master` following the convention `issue-{number}/short-description` (e.g. `issue-42/fix-lock-timeout`).
 3. Make your changes with tests.
-4. Submit a pull request targeting `master`.
+4. Submit a pull request targeting `master`. PRs are merged with squash merge; the branch is deleted after merge.
 
 ## Development Setup
 
@@ -75,9 +75,10 @@ make golangci-lint
 1. Ensure all tests pass (`make test`).
 2. Ensure code passes linting (`make golangci-lint`).
 3. Run `go mod tidy` if you changed dependencies.
-4. Update documentation if you changed user-facing behaviour.
-5. Fill out the pull request template completely.
-6. A maintainer will review your PR. Address any requested changes.
+4. Run `make generate` if you modified files with `//go:generate` directives (enums, stringers, mocks) and commit the updated generated files. CI enforces this with `make generate-check`.
+5. Update documentation if you changed user-facing behaviour.
+6. Fill out the pull request template completely.
+7. A maintainer will review your PR. Address any requested changes.
 
 ### Commit Messages
 
