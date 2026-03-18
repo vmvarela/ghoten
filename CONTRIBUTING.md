@@ -75,9 +75,10 @@ make golangci-lint
 1. Ensure all tests pass (`make test`).
 2. Ensure code passes linting (`make golangci-lint`).
 3. Run `go mod tidy` if you changed dependencies.
-4. Update documentation if you changed user-facing behaviour.
-5. Fill out the pull request template completely.
-6. A maintainer will review your PR. Address any requested changes.
+4. Run `make generate` if you modified files with `//go:generate` directives (enums, stringers, mocks) and commit the updated generated files. CI enforces this with `make generate-check`.
+5. Update documentation if you changed user-facing behaviour.
+6. Fill out the pull request template completely.
+7. A maintainer will review your PR. Address any requested changes.
 
 ### Commit Messages
 
