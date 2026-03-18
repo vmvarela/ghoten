@@ -7,6 +7,7 @@ package ghoten
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,6 +181,7 @@ func getMoveStateArgs() stateTransformArgs {
 		},
 	}
 	return stateTransformArgs{
+		ctx:         context.Background(),
 		currentAddr: mustResourceInstanceAddr("foo2_instance.cur"),
 		prevAddr:    mustResourceInstanceAddr("foo_instance.prev"),
 		provider: &MockProvider{
@@ -279,6 +281,7 @@ func getUpgradeStateArgs() stateTransformArgs {
 		},
 	}
 	args := stateTransformArgs{
+		ctx:         context.Background(),
 		currentAddr: mustResourceInstanceAddr("foo_instance.cur"),
 		prevAddr:    mustResourceInstanceAddr("foo_instance.cur"),
 		provider: &MockProvider{
@@ -403,6 +406,7 @@ func TestTransformResourceState(t *testing.T) {
 		{
 			name: "flatmap state should be removed after transformation",
 			args: stateTransformArgs{
+				ctx:         context.Background(),
 				currentAddr: mustResourceInstanceAddr("test_instance.foo"),
 				provider: &MockProvider{
 					GetProviderSchemaResponse: testProviderSchema("test"),
@@ -432,6 +436,7 @@ func TestTransformResourceState(t *testing.T) {
 		{
 			name: "state must conform to schema",
 			args: stateTransformArgs{
+				ctx:         context.Background(),
 				currentAddr: mustResourceInstanceAddr("test_instance.foo"),
 				provider: &MockProvider{
 					GetProviderSchemaResponse: testProviderSchema("test"),
@@ -456,6 +461,7 @@ func TestTransformResourceState(t *testing.T) {
 		{
 			name: "non-managed resource should not be upgraded",
 			args: stateTransformArgs{
+				ctx:         context.Background(),
 				currentAddr: getDataResourceModeInstance(),
 				objectSrc: &states.ResourceInstanceObjectSrc{
 					AttrsJSON: []byte(`{"foo":"bar"}`),
@@ -475,6 +481,7 @@ func TestTransformResourceState(t *testing.T) {
 		{
 			name: "private state should be updated",
 			args: stateTransformArgs{
+				ctx:         context.Background(),
 				currentAddr: mustResourceInstanceAddr("test_instance.foo"),
 				provider: &MockProvider{
 					GetProviderSchemaResponse: testProviderSchema("test"),
