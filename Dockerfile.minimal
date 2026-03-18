@@ -7,8 +7,12 @@ FROM scratch
 
 ARG TARGETARCH
 
-LABEL maintainer="Ghoten"
+LABEL maintainer="Ghoten" \
+      org.opencontainers.image.licenses="MPL-2.0" \
+      org.opencontainers.image.source="https://github.com/vmvarela/ghoten"
 
 COPY --from=binaries linux/${TARGETARCH}/ghoten /usr/local/bin/ghoten
+
+USER 65534:65534
 
 ENTRYPOINT ["/usr/local/bin/ghoten"]
