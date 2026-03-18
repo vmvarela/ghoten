@@ -178,13 +178,26 @@ echo "$DURATION" > "${RUNNER_TEMP}/ghoten_duration.txt"
 
 echo "exitcode=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
 
-# Store stdout as multiline output
+# Strip noisy refresh/read progress lines from the captured output so that
+# PR comments and Job Summaries stay readable on large states.
+# The raw step log (written via tee above) is always preserved in full.
+# Patterns removed:
+#   "<resource>: Refreshing state... [id=...]"
+#   "<resource>: Still refreshing... [Xs elapsed]"
+#   "<resource>: Reading..."
+#   "<resource>: Still reading... [Xs elapsed]"
+#   "<resource>: Read complete after Xs [id=...]"
 if [[ -f "$STDOUT_FILE" ]]; then
+  FILTERED_FILE="${RUNNER_TEMP}/ghoten_stdout_filtered.txt"
+  grep -vE ': (Refreshing state\.\.\.|Still refreshing\.\.\.|Reading\.\.\.|Still reading\.\.\.|Read complete after )' \
+    "$STDOUT_FILE" > "$FILTERED_FILE" || true
   {
     echo "stdout<<GHOTEN_STDOUT_EOF"
-    cat "$STDOUT_FILE"
+    cat "$FILTERED_FILE"
     echo "GHOTEN_STDOUT_EOF"
   } >> "$GITHUB_OUTPUT"
+  # Replace original so comment.sh and summary.sh also read filtered output
+  mv "$FILTERED_FILE" "$STDOUT_FILE"
 fi
 
 exit "$EXIT_CODE"
