@@ -14,9 +14,9 @@ import (
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/repl"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 
 	"github.com/mitchellh/cli"
 )
@@ -33,6 +33,8 @@ func (c *ConsoleCommand) Run(args []string) int {
 	args = c.Meta.process(args)
 	cmdFlags := c.Meta.extendedFlagSet("console")
 	cmdFlags.StringVar(&c.Meta.statePath, "state", DefaultStateFilename, "path")
+	cmdFlags.BoolVar(&c.Meta.stateLock, "lock", true, "lock")
+	cmdFlags.DurationVar(&c.Meta.stateLockTimeout, "lock-timeout", 0, "lock-timeout")
 	cmdFlags.Usage = func() { c.Ui.Error(c.Help()) }
 	if err := cmdFlags.Parse(args); err != nil {
 		c.Ui.Error(fmt.Sprintf("Error parsing command line flags: %s\n", err.Error()))
@@ -236,6 +238,12 @@ Options:
   -consolidate-errors    If Ghoten produces any errors, no consolidation
                          will be performed. All locations, for all errors
                          will be listed. Disabled by default
+
+  -lock=false            Don't hold a state lock during the operation. This is
+                         dangerous if others might concurrently run commands
+                         against the same workspace.
+
+  -lock-timeout=0s       Duration to retry a state lock.
 
   -state=path            Legacy option for the local backend only. See the local
                          backend's documentation for more information.
