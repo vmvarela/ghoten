@@ -50,6 +50,41 @@ const (
 // OCI layer (256 MiB).
 const defaultMaxStateSize int64 = 256 * 1024 * 1024
 
+// gzipWriterPool pools gzip.Writer values (created with gzip.BestSpeed) to
+// reduce per-Put allocations when state compression is enabled.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		gz, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return gz
+	},
+}
+
+// gzipBufPool pools bytes.Buffer values used as the destination during gzip
+// compression, avoiding a heap allocation per compressed write.
+var gzipBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// gzipReaderPool pools gzip.Reader values to reduce per-Get allocations when
+// state compression is enabled.  Callers must call Reset before use.
+var gzipReaderPool = sync.Pool{
+	New: func() any {
+		// gzip.NewReader requires a valid header up-front; initialise with a
+		// minimal valid gzip stream so the constructor never returns an error.
+		gz, _ := gzip.NewReader(bytes.NewReader(minimalGzipStream))
+		return gz
+	},
+}
+
+// minimalGzipStream is the smallest valid gzip stream (empty body) used only
+// to pre-warm gzipReaderPool entries without a real source reader.
+var minimalGzipStream = func() []byte {
+	var buf bytes.Buffer
+	gz, _ := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	_ = gz.Close()
+	return buf.Bytes()
+}()
+
 // Tag naming scheme:
 //   - State is stored at "state-<workspaceTag>".
 //   - Lock is stored at "locked-<workspaceTag>".
@@ -339,11 +374,15 @@ func (c *RemoteClient) get(ctx context.Context) (*remote.Payload, error) {
 	case mediaTypeStateLayer:
 		// no-op
 	case mediaTypeStateLayerGzip:
-		gz, err := gzip.NewReader(rc)
-		if err != nil {
+		gz := gzipReaderPool.Get().(*gzip.Reader)
+		if err := gz.Reset(rc); err != nil {
+			gzipReaderPool.Put(gz)
 			return nil, err
 		}
-		defer gz.Close()
+		defer func() {
+			gz.Close() //nolint:errcheck
+			gzipReaderPool.Put(gz)
+		}()
 		r = gz
 	default:
 		return nil, fmt.Errorf("unsupported state layer media type %q", layer.MediaType)
@@ -1115,19 +1154,25 @@ func workspaceNameFromTag(ctx context.Context, repo *orasRepositoryClient, state
 }
 
 func compressGzip(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	gz, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
+	buf := gzipBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer gzipBufPool.Put(buf)
+
+	gz := gzipWriterPool.Get().(*gzip.Writer)
+	gz.Reset(buf)
+	defer gzipWriterPool.Put(gz)
+
 	if _, err := gz.Write(data); err != nil {
-		gz.Close()
+		gz.Close() //nolint:errcheck
 		return nil, err
 	}
 	if err := gz.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	// Copy result out of the pooled buffer before returning it to the pool.
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result, nil
 }
 
 // Error helpers

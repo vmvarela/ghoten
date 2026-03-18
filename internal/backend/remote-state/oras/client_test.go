@@ -2,6 +2,7 @@ package oras
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1416,6 +1417,74 @@ func TestRemoteClient_Get_RejectsOversizedGzipState(t *testing.T) {
 }
 
 // ─── Test helpers ────────────────────────────────────────────────────────────
+
+// Benchmark helpers ─────────────────────────────────────────────────────────
+
+// makePayload returns a deterministic pseudo-random byte slice of size n.
+// The content is a repeating pattern so gzip always has something to compress.
+func makePayload(n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i & 0xFF)
+	}
+	return b
+}
+
+var benchSizes = []struct {
+	name string
+	size int
+}{
+	{"1KB", 1 * 1024},
+	{"100KB", 100 * 1024},
+	{"10MB", 10 * 1024 * 1024},
+}
+
+func BenchmarkCompressGzip(b *testing.B) {
+	for _, tc := range benchSizes {
+		payload := makePayload(tc.size)
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(tc.size))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				out, err := compressGzip(payload)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = out
+			}
+		})
+	}
+}
+
+func BenchmarkDecompressGzip(b *testing.B) {
+	for _, tc := range benchSizes {
+		payload := makePayload(tc.size)
+		compressed, err := compressGzip(payload)
+		if err != nil {
+			b.Fatalf("compress: %v", err)
+		}
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(tc.size))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				gz := gzipReaderPool.Get().(*gzip.Reader)
+				if err := gz.Reset(bytes.NewReader(compressed)); err != nil {
+					gzipReaderPool.Put(gz)
+					b.Fatal(err)
+				}
+				out, err := io.ReadAll(gz)
+				gz.Close() //nolint:errcheck
+				gzipReaderPool.Put(gz)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = out
+			}
+		})
+	}
+}
 
 // slowDeleteRepo wraps an inner repository and introduces a configurable delay
 // on every Delete call, making retention goroutines deterministically in-flight
