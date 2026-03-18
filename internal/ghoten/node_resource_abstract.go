@@ -607,6 +607,7 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceState(ctx context.Con
 	// prevAddr will match the newAddr if the resource wasn't moved (prevRunAddr checks move results)
 	prevAddr := n.prevRunAddr(evalCtx)
 	transformArgs := stateTransformArgs{
+		ctx:                  ctx,
 		currentAddr:          addr,
 		prevAddr:             prevAddr,
 		provider:             provider,
@@ -666,6 +667,7 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceStateDeposed(ctx cont
 	// prevAddr will match the newAddr if the resource wasn't moved (prevRunAddr checks move results)
 	prevAddr := n.prevRunAddr(evalCtx)
 	transformArgs := stateTransformArgs{
+		ctx:                  ctx,
 		currentAddr:          addr,
 		prevAddr:             prevAddr,
 		provider:             provider,
