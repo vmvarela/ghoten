@@ -98,6 +98,13 @@ func (c *BuiltinEvalContext) Stopped() <-chan struct{} {
 	return c.StopContext.Done()
 }
 
+func (c *BuiltinEvalContext) Context() context.Context {
+	if c.StopContext == nil {
+		return context.Background()
+	}
+	return c.StopContext
+}
+
 func (c *BuiltinEvalContext) Hook(fn func(Hook) (HookAction, error)) error {
 	for _, h := range c.Hooks {
 		action, err := fn(h)

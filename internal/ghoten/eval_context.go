@@ -30,6 +30,10 @@ type EvalContext interface {
 	// via ghoten.Context.Stop()
 	Stopped() <-chan struct{}
 
+	// Context returns the context.Context for the current operation.
+	// It is cancelled when the operation is stopped via ghoten.Context.Stop().
+	Context() context.Context
+
 	// Path is the current module path.
 	Path() addrs.ModuleInstance
 

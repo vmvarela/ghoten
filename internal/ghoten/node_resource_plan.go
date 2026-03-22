@@ -178,7 +178,7 @@ func (n *nodeExpandPlannableResource) DynamicExpand(evalCtx EvalContext) (*Graph
 		// If we have import from import block and PreDestroyRefresh is true, we know we are running as part of a refresh plan, immediately before a destroy
 		// plan. In the destroy plan mode, import blocks are not relevant, that's why we skip resolving imports
 		if importTarget.IsFromImportBlock() && !n.preDestroyRefresh {
-			err := importResolver.ExpandAndResolveImport(context.TODO(), importTarget, evalCtx)
+			err := importResolver.ExpandAndResolveImport(evalCtx.Context(), importTarget, evalCtx)
 			diags = diags.Append(err)
 		}
 	}
@@ -193,7 +193,7 @@ func (n *nodeExpandPlannableResource) DynamicExpand(evalCtx EvalContext) (*Graph
 	instAddrs := addrs.MakeSet[addrs.Checkable]()
 	for _, module := range moduleInstances {
 		resAddr := n.Addr.Resource.Absolute(module)
-		err := n.expandResourceInstances(context.TODO(), evalCtx, resAddr, &g, instAddrs)
+		err := n.expandResourceInstances(evalCtx.Context(), evalCtx, resAddr, &g, instAddrs)
 		diags = diags.Append(err)
 	}
 	if diags.HasErrors() {
