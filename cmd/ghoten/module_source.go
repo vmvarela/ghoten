@@ -13,10 +13,7 @@ import (
 )
 
 func remoteModulePackageFetcher(ctx context.Context, getOCICredsPolicy ociCredsPolicyBuilder) *getmodules.PackageFetcher {
-	// NOTE: The getmodules.PackageFetcherEnvironment interface currently only
-	// requires OCIRepositoryStore, which this implementation satisfies via
-	// modulePackageFetcherEnvironment. Credential resolution is deferred to
-	// the first OCI module fetch via the ociCredsPolicyBuilder callback, so
+	// Credential resolution is deferred to the first OCI module fetch so that
 	// commands that don't use the "oci" source type pay no initialization cost.
 	return getmodules.NewPackageFetcher(ctx, &modulePackageFetcherEnvironment{
 		getOCICredsPolicy: getOCICredsPolicy,
