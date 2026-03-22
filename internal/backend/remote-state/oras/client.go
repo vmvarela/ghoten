@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/vmvarela/ghoten/internal/logging"
@@ -478,9 +479,10 @@ func (c *RemoteClient) put(ctx context.Context, state []byte) error {
 			defer func() { <-sem }()
 			asyncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			retentionLog := logging.HCLogger().Named("backend.oras")
 			existing, listErr := c.listExistingVersions(asyncCtx)
 			if listErr != nil {
-				logging.HCLogger().Trace("async retention: failed to list versions", "error", listErr.Error())
+				retentionLog.Trace("async retention: failed to list versions", "error", listErr)
 				return
 			}
 			// Ensure the version we just created is included even if the
@@ -496,12 +498,12 @@ func (c *RemoteClient) put(ctx context.Context, state []byte) error {
 				existing = append(existing, nextVersion)
 			}
 			if err := c.enforceVersionRetention(asyncCtx, manifestDesc, existing); err != nil {
-				logging.HCLogger().Trace("async retention cleanup failed", "error", err.Error())
+				retentionLog.Trace("async retention cleanup failed", "error", err)
 			}
 		}()
 	default:
 		// Semaphore full, skip this cleanup (will happen on next Put)
-		logging.HCLogger().Trace("async retention skipped: too many pending cleanups")
+		logging.HCLogger().Named("backend.oras").Trace("async retention skipped: too many pending cleanups")
 	}
 
 	return nil
@@ -639,7 +641,7 @@ func classifyTags(tags []string, deleteSet, keepSet map[string]struct{}) (toDele
 	return
 }
 
-func (c *RemoteClient) retagToNewManifest(ctx context.Context, tags []string, logger interface{ Debug(string, ...interface{}) }) error {
+func (c *RemoteClient) retagToNewManifest(ctx context.Context, tags []string, logger hclog.Logger) error {
 	if len(tags) == 0 {
 		return nil
 	}

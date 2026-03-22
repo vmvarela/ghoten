@@ -457,7 +457,7 @@ func newORASHTTPClient(insecure bool, caFile string, rateLimit int, rateBurst in
 		}
 		t.TLSClientConfig.InsecureSkipVerify = insecure
 		if insecure {
-			logging.HCLogger().Warn("ORAS backend: TLS certificate verification is disabled (insecure=true)")
+			logging.HCLogger().Named("backend.oras").Warn("TLS certificate verification is disabled", "insecure", true)
 		}
 		if caFile != "" {
 			pem, err := os.ReadFile(caFile)

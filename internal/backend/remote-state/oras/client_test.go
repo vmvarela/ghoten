@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
@@ -1167,8 +1168,7 @@ func TestRemoteClient_RetagToNewManifest_PreservesVersionAnnotation(t *testing.T
 	}
 
 	// Simulate retagToNewManifest (as done during retention).
-	logger := &noopLogger{}
-	if err := client.retagToNewManifest(ctx, []string{client.versionTagFor(1)}, logger); err != nil {
+	if err := client.retagToNewManifest(ctx, []string{client.versionTagFor(1)}, hclog.NewNullLogger()); err != nil {
 		t.Fatalf("retagToNewManifest: %v", err)
 	}
 
@@ -1508,8 +1508,3 @@ func (r *slowDeleteRepo) Delete(ctx context.Context, target ocispec.Descriptor) 
 	}
 	return r.delegatingRepo.inner.Delete(ctx, target)
 }
-
-// noopLogger satisfies the logger interface used by retagToNewManifest.
-type noopLogger struct{}
-
-func (noopLogger) Debug(string, ...interface{}) {}
