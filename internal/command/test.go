@@ -28,13 +28,13 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/moduletest"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 const (
@@ -789,6 +789,12 @@ func (runner *TestFileRunner) destroy(ctx context.Context, config *configs.Confi
 	diags = diags.Append(planDiags)
 
 	if diags.HasErrors() {
+		return state, diags
+	}
+
+	if !plan.CanApply() {
+		// The destroy plan is incomplete (e.g. errored during planning).
+		// Attempting to apply it would panic; return the current state as-is.
 		return state, diags
 	}
 
