@@ -12,10 +12,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/dag"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // GraphCommand is a Command implementation that takes a Ghoten
@@ -181,11 +181,11 @@ func (c *GraphCommand) Run(args []string) int {
 	var graphDiags tfdiags.Diagnostics
 	switch graphTypeStr {
 	case "plan":
-		g, graphDiags = lr.Core.PlanGraphForUI(lr.Config, lr.InputState, plans.NormalMode)
+		g, graphDiags = lr.Core.PlanGraphForUI(ctx, lr.Config, lr.InputState, plans.NormalMode)
 	case "plan-refresh-only":
-		g, graphDiags = lr.Core.PlanGraphForUI(lr.Config, lr.InputState, plans.RefreshOnlyMode)
+		g, graphDiags = lr.Core.PlanGraphForUI(ctx, lr.Config, lr.InputState, plans.RefreshOnlyMode)
 	case "plan-destroy":
-		g, graphDiags = lr.Core.PlanGraphForUI(lr.Config, lr.InputState, plans.DestroyMode)
+		g, graphDiags = lr.Core.PlanGraphForUI(ctx, lr.Config, lr.InputState, plans.DestroyMode)
 	case "apply":
 		plan := lr.Plan
 
@@ -201,7 +201,7 @@ func (c *GraphCommand) Run(args []string) int {
 			}
 		}
 
-		g, graphDiags = lr.Core.ApplyGraphForUI(plan, lr.Config)
+		g, graphDiags = lr.Core.ApplyGraphForUI(ctx, plan, lr.Config)
 	case "eval", "validate":
 		// Terraform v0.12 through v1.0 supported both of these, but the
 		// graph variants for "eval" and "validate" are purely implementation
