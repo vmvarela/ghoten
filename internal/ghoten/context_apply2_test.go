@@ -6951,3 +6951,97 @@ func TestContext2Apply_ephemeralInModuleWithExpansion(t *testing.T) {
 
 	}
 }
+
+// TestContext2Apply_ephemeralInZeroInstanceModule verifies that ephemeral
+// resources declared inside a module are not opened, renewed, or closed
+// when the module is called with count = 0 or for_each = {} (zero instances).
+func TestContext2Apply_ephemeralInZeroInstanceModule(t *testing.T) {
+	cases := map[string]map[string]string{
+		"count = 0 on module call": {
+			`mod/main.tf`: `
+				ephemeral "test_ephemeral_resource" "secret" {
+					input = "from_module"
+				}
+				output "exit" {
+				  ephemeral = true
+				  value = ephemeral.test_ephemeral_resource.secret.secret
+				}
+			`,
+			`main.tf`: `
+				module "child" {
+				    count  = 0
+				    source = "./mod"
+				}
+			`,
+		},
+		"for_each = {} on module call": {
+			`mod/main.tf`: `
+				ephemeral "test_ephemeral_resource" "secret" {
+					input = "from_module"
+				}
+				output "exit" {
+				  ephemeral = true
+				  value = ephemeral.test_ephemeral_resource.secret.secret
+				}
+			`,
+			`main.tf`: `
+				module "child" {
+				    for_each = {}
+				    source   = "./mod"
+				}
+			`,
+		},
+	}
+
+	for name, cfg := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := testModuleInline(t, cfg)
+
+			provider := testProvider("test")
+			provider.OpenEphemeralResourceResponse = &providers.OpenEphemeralResourceResponse{
+				Result: cty.ObjectVal(map[string]cty.Value{
+					"id":     cty.StringVal("id val"),
+					"secret": cty.StringVal("secret val"),
+					"input":  cty.StringVal("from_module"),
+				}),
+			}
+
+			ps := map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(provider),
+			}
+
+			h := &testHook{}
+			ctx := testContext2(t, &ContextOpts{
+				Plugins: plugins.NewLibrary(ps, nil),
+				Hooks:   []Hook{h},
+			})
+
+			plan, diags := ctx.Plan(context.Background(), m, states.NewState(), &PlanOpts{
+				Mode: plans.NormalMode,
+			})
+			if diags.HasErrors() {
+				t.Fatal(diags.Err())
+			}
+
+			_, diags = ctx.Apply(context.Background(), plan, m, nil)
+			if diags.HasErrors() {
+				t.Fatal(diags.Err())
+			}
+
+			// The ephemeral resource inside the zero-instance module must
+			// never be opened or closed.
+			if provider.OpenEphemeralResourceCalled {
+				t.Error("OpenEphemeralResource was called but should not have been for a zero-instance module")
+			}
+			if provider.CloseEphemeralResourceCalled {
+				t.Error("CloseEphemeralResource was called but should not have been for a zero-instance module")
+			}
+			for _, call := range h.Calls {
+				if call.Action == "PreOpen" || call.Action == "PostOpen" ||
+					call.Action == "PreClose" || call.Action == "PostClose" {
+					t.Errorf("unexpected hook call %q for zero-instance module", call.Action)
+				}
+			}
+		})
+	}
+}
