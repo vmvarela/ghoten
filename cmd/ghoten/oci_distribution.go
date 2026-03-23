@@ -41,6 +41,17 @@ type ociCredsPolicyBuilder func(context.Context) (ociauthconfig.CredentialsConfi
 var ociReposMu sync.Mutex
 var ociRepos map[ociRepoKey]ociRepositoryStore
 
+// ociCredLookupEnv is the shared, process-scoped cached credential lookup
+// environment used by all OCI registry interactions in cmd/ghoten.
+// Wrapping with a TTL cache ensures that docker-style credential helpers
+// (which may invoke subprocesses such as cloud-provider CLIs) are called
+// at most once per registry per cache window, even when multiple providers
+// or modules are installed in the same invocation.
+var ociCredLookupEnv = ociauthconfig.NewCachedCredentialsLookupEnv(
+	ociCredentialsLookupEnv{},
+	ociauthconfig.DefaultCredentialHelperCacheTTL,
+)
+
 type ociRepoKey struct {
 	registryDomain, repositoryName string
 }
@@ -150,7 +161,7 @@ func getOCIRepositoryORASClient(ctx context.Context, registryDomain, repositoryN
 			if credSource == nil {
 				return orasAuth.EmptyCredential, nil
 			}
-			creds, err := credSource.Credentials(ctx, ociCredentialsLookupEnv{})
+			creds, err := credSource.Credentials(ctx, ociCredLookupEnv)
 			if ociauthconfig.IsCredentialsNotFoundError(err) {
 				return orasAuth.EmptyCredential, nil
 			}

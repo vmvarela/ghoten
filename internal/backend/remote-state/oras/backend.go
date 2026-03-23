@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
@@ -535,113 +534,10 @@ func (rt *rateLimitedRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 // Credentials
 
 const (
-	defaultDockerCredentialHelperCacheTTL = 5 * time.Minute
-	// errorCacheTTL is a short TTL for caching unexpected credential helper errors.
-	// Only "not found" errors use the full TTL; transient failures expire quickly
-	// so retries happen sooner.
-	errorCacheTTL = 10 * time.Second
+	// defaultDockerCredentialHelperCacheTTL is an alias for the shared constant,
+	// kept for readability in this package.
+	defaultDockerCredentialHelperCacheTTL = ociauthconfig.DefaultCredentialHelperCacheTTL
 )
-
-type dockerCredentialHelperCacheKey struct {
-	helperName string
-	serverURL  string
-}
-
-type dockerCredentialHelperCacheEntry struct {
-	result   ociauthconfig.DockerCredentialHelperGetResult
-	err      error
-	expires  time.Time
-	hasValue bool
-}
-
-type cachedDockerCredentialHelperEnv struct {
-	inner ociauthconfig.CredentialsLookupEnvironment
-	ttl   time.Duration
-	now   func() time.Time
-
-	mu       sync.Mutex
-	cache    map[dockerCredentialHelperCacheKey]dockerCredentialHelperCacheEntry
-	inflight map[dockerCredentialHelperCacheKey]*singleflightCall
-}
-
-// singleflightCall deduplicates concurrent credential helper invocations
-// for the same key so expensive helpers (e.g., STS AssumeRole) aren't
-// called N times in parallel.
-type singleflightCall struct {
-	wg     sync.WaitGroup
-	result ociauthconfig.DockerCredentialHelperGetResult
-	err    error
-}
-
-var _ ociauthconfig.CredentialsLookupEnvironment = (*cachedDockerCredentialHelperEnv)(nil)
-
-func newCachedDockerCredentialHelperEnv(inner ociauthconfig.CredentialsLookupEnvironment, ttl time.Duration) *cachedDockerCredentialHelperEnv {
-	return &cachedDockerCredentialHelperEnv{
-		inner:    inner,
-		ttl:      ttl,
-		now:      time.Now,
-		cache:    make(map[dockerCredentialHelperCacheKey]dockerCredentialHelperCacheEntry),
-		inflight: make(map[dockerCredentialHelperCacheKey]*singleflightCall),
-	}
-}
-
-func (e *cachedDockerCredentialHelperEnv) QueryDockerCredentialHelper(ctx context.Context, helperName string, serverURL string) (ociauthconfig.DockerCredentialHelperGetResult, error) {
-	if err := ctx.Err(); err != nil {
-		return ociauthconfig.DockerCredentialHelperGetResult{}, err
-	}
-	if e.inner == nil {
-		return ociauthconfig.DockerCredentialHelperGetResult{}, fmt.Errorf("no credential helper lookup environment")
-	}
-	if e.ttl <= 0 {
-		return e.inner.QueryDockerCredentialHelper(ctx, helperName, serverURL)
-	}
-
-	key := dockerCredentialHelperCacheKey{helperName: helperName, serverURL: serverURL}
-	now := e.now()
-
-	// Fast path: return cached entry if still valid.
-	e.mu.Lock()
-	if entry, ok := e.cache[key]; ok && entry.hasValue && now.Before(entry.expires) {
-		e.mu.Unlock()
-		return entry.result, entry.err
-	}
-
-	// Deduplicate concurrent calls for the same key (singleflight).
-	if call, ok := e.inflight[key]; ok {
-		e.mu.Unlock()
-		call.wg.Wait()
-		return call.result, call.err
-	}
-	call := &singleflightCall{}
-	call.wg.Add(1)
-	e.inflight[key] = call
-	e.mu.Unlock()
-
-	result, err := e.inner.QueryDockerCredentialHelper(ctx, helperName, serverURL)
-
-	call.result = result
-	call.err = err
-	call.wg.Done()
-
-	// Determine cache TTL: full TTL for success and "not found" errors,
-	// short TTL for unexpected errors so transient failures recover quickly.
-	cacheTTL := e.ttl
-	if err != nil && !ociauthconfig.IsCredentialsNotFoundError(err) {
-		cacheTTL = errorCacheTTL
-	}
-
-	e.mu.Lock()
-	e.cache[key] = dockerCredentialHelperCacheEntry{
-		result:   result,
-		err:      err,
-		expires:  now.Add(cacheTTL),
-		hasValue: true,
-	}
-	delete(e.inflight, key)
-	e.mu.Unlock()
-
-	return result, err
-}
 
 type realORASCredentialsPolicy struct {
 	policy ociauthconfig.CredentialsConfigs
@@ -655,7 +551,7 @@ func (p realORASCredentialsPolicy) CredentialFunc(ctx context.Context, repositor
 	registryDomain := repo.Reference.Registry
 	repositoryPath := repo.Reference.Repository
 
-	lookupEnv := newCachedDockerCredentialHelperEnv(dockerCredentialHelperEnv{}, defaultDockerCredentialHelperCacheTTL)
+	lookupEnv := ociauthconfig.NewCachedCredentialsLookupEnv(dockerCredentialHelperEnv{}, defaultDockerCredentialHelperCacheTTL)
 
 	return func(ctx context.Context, _ string) (orasAuth.Credential, error) {
 		source, err := p.policy.CredentialsSourceForRepository(ctx, registryDomain, repositoryPath)
