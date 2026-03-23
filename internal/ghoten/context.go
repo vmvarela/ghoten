@@ -291,8 +291,17 @@ func (c *Context) watchStop(walker *ContextGraphWalker) (chan struct{}, <-chan s
 		// We ignore the error for now since there isn't any reasonable
 		// action to take if there is an error here, since the stop is still
 		// advisory: Ghoten will exit once the graph node completes.
-		// The providers.Interface API contract requires that the
-		// context passed to Stop is never canceled and has no deadline.
+		//
+		// NOTE: context.WithoutCancel(context.TODO()) is intentional here.
+		// The [providers.Interface.Stop] API contract (see internal/providers/provider.go)
+		// requires that the context passed to Stop is guaranteed not to be cancelled
+		// and to have no deadline. We use context.TODO() as the base — rather than
+		// propagating the walk context — because at this point the walk context is
+		// already cancelled (that's what triggered this stop path). Wrapping a
+		// cancelled context with context.WithoutCancel would silence the cancellation
+		// but any values attached to the original context would still be propagated,
+		// which is acceptable. The current form makes the intent explicit: this is a
+		// deliberate choice, not a deferred task.
 		_ = walker.Context.plugins.providers.StopAll(context.WithoutCancel(context.TODO()))
 		// We ignore the error for now since there isn't any reasonable
 		// action to take if there is an error here, since the stop is still
