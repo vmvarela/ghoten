@@ -53,9 +53,9 @@ trap 'rm -rf "$TMPDIR"' EXIT
 echo "::group::📦 Installing ghoten v${VERSION} (${OS}/${ARCH})"
 echo "Downloading ${URL}"
 
-HTTP_CODE=""
+HTTP_CODE="unknown"
 if command -v curl &>/dev/null; then
-  HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null) || true
+  HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null) || HTTP_CODE="curl error ($?)"
 elif command -v wget &>/dev/null; then
   if wget -q -O "${TMPDIR}/${ARCHIVE}" "$URL" 2>/dev/null; then
     HTTP_CODE="200"
