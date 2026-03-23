@@ -480,11 +480,25 @@ func changeFromTfplan(rawChange *planproto.Change) (*plans.ChangeSrc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode after sensitive paths: %w", err)
 	}
-	if len(beforeValMarks) > 0 {
-		ret.BeforeValMarks = beforeValMarks
+
+	ephemeral := cty.NewValueMarks(marks.Ephemeral)
+	beforeEphemeralMarks, err := pathValueMarksFromTfplan(rawChange.BeforeEphemeralPaths, ephemeral)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode before ephemeral paths: %w", err)
 	}
-	if len(afterValMarks) > 0 {
-		ret.AfterValMarks = afterValMarks
+	afterEphemeralMarks, err := pathValueMarksFromTfplan(rawChange.AfterEphemeralPaths, ephemeral)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode after ephemeral paths: %w", err)
+	}
+
+	allBeforeValMarks := append(beforeValMarks, beforeEphemeralMarks...)
+	allAfterValMarks := append(afterValMarks, afterEphemeralMarks...)
+
+	if len(allBeforeValMarks) > 0 {
+		ret.BeforeValMarks = allBeforeValMarks
+	}
+	if len(allAfterValMarks) > 0 {
+		ret.AfterValMarks = allAfterValMarks
 	}
 
 	return ret, nil
@@ -818,16 +832,18 @@ func changeToTfplan(change *plans.ChangeSrc) (*planproto.Change, error) {
 	before := valueToTfplan(change.Before)
 	after := valueToTfplan(change.After)
 
-	beforeSensitivePaths, err := pathValueMarksToTfplan(change.BeforeValMarks)
+	beforeSensitivePaths, beforeEphemeralPaths, err := pathValueMarksSplitToTfplan(change.BeforeValMarks)
 	if err != nil {
 		return nil, err
 	}
-	afterSensitivePaths, err := pathValueMarksToTfplan(change.AfterValMarks)
+	afterSensitivePaths, afterEphemeralPaths, err := pathValueMarksSplitToTfplan(change.AfterValMarks)
 	if err != nil {
 		return nil, err
 	}
 	ret.BeforeSensitivePaths = beforeSensitivePaths
 	ret.AfterSensitivePaths = afterSensitivePaths
+	ret.BeforeEphemeralPaths = beforeEphemeralPaths
+	ret.AfterEphemeralPaths = afterEphemeralPaths
 
 	if change.Importing != nil {
 		ret.Importing = &planproto.Importing{
@@ -904,16 +920,24 @@ func pathValueMarksFromTfplan(paths []*planproto.Path, marks cty.ValueMarks) ([]
 	return ret, nil
 }
 
-func pathValueMarksToTfplan(pvm []cty.PathValueMarks) ([]*planproto.Path, error) {
-	ret := make([]*planproto.Path, 0, len(pvm))
+// pathValueMarksSplitToTfplan splits a slice of PathValueMarks into separate
+// sensitive and ephemeral path lists for serialization. Marks that are neither
+// sensitive nor ephemeral are treated as sensitive for backward compatibility.
+func pathValueMarksSplitToTfplan(pvm []cty.PathValueMarks) (sensitivePaths, ephemeralPaths []*planproto.Path, err error) {
 	for _, p := range pvm {
-		path, err := pathToTfplan(p.Path)
-		if err != nil {
-			return nil, err
+		path, pathErr := pathToTfplan(p.Path)
+		if pathErr != nil {
+			return nil, nil, pathErr
 		}
-		ret = append(ret, path)
+		if _, ok := p.Marks[marks.Ephemeral]; ok {
+			ephemeralPaths = append(ephemeralPaths, path)
+		} else {
+			// Sensitive marks and any unknown marks go into the sensitive bucket
+			// for backward compatibility with older plan file readers.
+			sensitivePaths = append(sensitivePaths, path)
+		}
 	}
-	return ret, nil
+	return sensitivePaths, ephemeralPaths, nil
 }
 
 func pathFromTfplan(path *planproto.Path) (cty.Path, error) {

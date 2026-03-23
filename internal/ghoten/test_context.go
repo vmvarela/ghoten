@@ -148,10 +148,6 @@ func (tc *TestContext) evaluate(state *states.SyncState, changes *plans.ChangesS
 			continue
 		}
 
-		// The condition result may be marked if the expression refers to a
-		// sensitive value.
-		runVal, _ = runVal.Unmark()
-
 		if runVal.IsNull() {
 			run.Status = run.Status.Merge(moduletest.Error)
 			run.Diagnostics = run.Diagnostics.Append(&hcl.Diagnostic{
@@ -191,6 +187,12 @@ func (tc *TestContext) evaluate(state *states.SyncState, changes *plans.ChangesS
 			})
 			continue
 		}
+
+		// The condition result may be marked if the expression refers to a
+		// sensitive value. Unmark after conversion so that marks introduced
+		// by convert.Convert (e.g. from function calls on marked values) are
+		// also removed before calling False(), which panics on marked values.
+		runVal, _ = runVal.Unmark()
 
 		if runVal.False() {
 			run.Status = run.Status.Merge(moduletest.Fail)

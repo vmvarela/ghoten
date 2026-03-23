@@ -32,6 +32,7 @@ import (
 type MockEvalContext struct {
 	StoppedCalled bool
 	StoppedValue  <-chan struct{}
+	ContextValue  context.Context
 
 	HookCalled bool
 	HookHook   Hook
@@ -136,6 +137,13 @@ var _ EvalContext = (*MockEvalContext)(nil)
 func (c *MockEvalContext) Stopped() <-chan struct{} {
 	c.StoppedCalled = true
 	return c.StoppedValue
+}
+
+func (c *MockEvalContext) Context() context.Context {
+	if c.ContextValue != nil {
+		return c.ContextValue
+	}
+	return context.Background()
 }
 
 func (c *MockEvalContext) Hook(fn func(Hook) (HookAction, error)) error {

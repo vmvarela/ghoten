@@ -10,9 +10,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
@@ -1167,8 +1169,7 @@ func TestRemoteClient_RetagToNewManifest_PreservesVersionAnnotation(t *testing.T
 	}
 
 	// Simulate retagToNewManifest (as done during retention).
-	logger := &noopLogger{}
-	if err := client.retagToNewManifest(ctx, []string{client.versionTagFor(1)}, logger); err != nil {
+	if err := client.retagToNewManifest(ctx, []string{client.versionTagFor(1)}, hclog.NewNullLogger()); err != nil {
 		t.Fatalf("retagToNewManifest: %v", err)
 	}
 
@@ -1509,7 +1510,165 @@ func (r *slowDeleteRepo) Delete(ctx context.Context, target ocispec.Descriptor) 
 	return r.delegatingRepo.inner.Delete(ctx, target)
 }
 
-// noopLogger satisfies the logger interface used by retagToNewManifest.
-type noopLogger struct{}
+// ---------------------------------------------------------------------------
+// Edge case tests: Put with nil/empty state, workspaceNameFromTag with corrupt
+// manifest, and context cancellation during parallel workspace resolution.
+// ---------------------------------------------------------------------------
 
-func (noopLogger) Debug(string, ...interface{}) {}
+// TestPut_nilAndEmptyState verifies that Put() accepts nil and empty state
+// without panicking or returning an error. Both represent "no state" and must
+// be stored as a valid (empty) layer so that subsequent Get() calls do not fail.
+func TestPut_nilAndEmptyState(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name  string
+		state []byte
+	}{
+		{"nil state", nil},
+		{"empty slice", []byte{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeORASRepo()
+			repo := &orasRepositoryClient{inner: fake}
+			c := newRemoteClient(repo, "default")
+
+			if err := c.Put(ctx, tc.state); err != nil {
+				t.Fatalf("Put(%v) returned unexpected error: %v", tc.name, err)
+			}
+			// A subsequent Get must succeed and return the empty state payload.
+			got, err := c.Get(ctx)
+			if err != nil {
+				t.Fatalf("Get after Put(%v) returned error: %v", tc.name, err)
+			}
+			if got == nil {
+				t.Fatalf("Get after Put(%v) returned nil payload", tc.name)
+			}
+		})
+	}
+}
+
+// TestWorkspaceNameFromTag_corruptManifest verifies that workspaceNameFromTag
+// returns a descriptive error when the OCI manifest stored under a hashed
+// workspace tag contains invalid JSON.
+func TestWorkspaceNameFromTag_corruptManifest(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+
+	// A hashed workspace tag has the form tf-state-ws-XXXX. workspaceNameFromTag
+	// will try to Resolve+Fetch the manifest to read the annotation.
+	const tag = stateTagPrefix + "ws-abc123"
+
+	// Push a blob with corrupt (non-JSON) content and tag it.
+	corruptData := []byte("this is not valid JSON {{{")
+	dgst := digest.FromBytes(corruptData)
+	desc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    dgst,
+		Size:      int64(len(corruptData)),
+	}
+	if err := fake.Push(ctx, desc, bytes.NewReader(corruptData)); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if err := fake.Tag(ctx, desc, tag); err != nil {
+		t.Fatalf("Tag: %v", err)
+	}
+
+	repo := &orasRepositoryClient{inner: fake}
+	_, err := workspaceNameFromTag(ctx, repo, tag)
+	if err == nil {
+		t.Fatal("expected error for corrupt manifest, got nil")
+	}
+	if !strings.Contains(err.Error(), "decoding manifest") {
+		t.Errorf("expected 'decoding manifest' in error, got: %v", err)
+	}
+}
+
+// blockingRepo wraps fakeORASRepo and makes Resolve block until its context is
+// cancelled. Used by TestListWorkspacesFromTags_contextCancellation to simulate
+// a registry that hangs on manifest resolution.
+type blockingRepo struct {
+	delegatingRepo
+	// ready is closed by the test once all goroutines are guaranteed to be
+	// blocked inside Resolve, allowing the test to cancel the context at the
+	// right moment without a sleep.
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (r *blockingRepo) Resolve(ctx context.Context, _ string) (ocispec.Descriptor, error) {
+	// Signal that at least one goroutine has reached the blocking point.
+	r.once.Do(func() { close(r.ready) })
+	// Block until the context is cancelled.
+	<-ctx.Done()
+	return ocispec.Descriptor{}, ctx.Err()
+}
+
+// TestListWorkspacesFromTags_contextCancellation verifies that
+// listWorkspacesFromTags propagates context cancellation correctly when the
+// parallel manifest-resolution goroutines are blocked.
+//
+// The test is deterministic: it cancels the context only after at least one
+// goroutine has entered the blocking Resolve call, so there are no sleeps.
+func TestListWorkspacesFromTags_contextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fake := newFakeORASRepo()
+
+	// Populate several hashed workspace tags so that listWorkspacesFromTags
+	// spawns multiple parallel goroutines that will all hit blockingRepo.Resolve.
+	for i := range 5 {
+		tag := fmt.Sprintf("%sws-%04d", stateTagPrefix, i)
+		// The content and descriptor don't matter — the fake repo just needs a
+		// tag entry so that Tags() returns it.
+		data := []byte(fmt.Sprintf("manifest-%d", i))
+		dgst := digest.FromBytes(data)
+		desc := ocispec.Descriptor{Digest: dgst, Size: int64(len(data))}
+		if err := fake.Push(ctx, desc, bytes.NewReader(data)); err != nil {
+			t.Fatalf("Push tag %s: %v", tag, err)
+		}
+		if err := fake.Tag(ctx, desc, tag); err != nil {
+			t.Fatalf("Tag %s: %v", tag, err)
+		}
+	}
+
+	ready := make(chan struct{})
+	blocking := &blockingRepo{
+		delegatingRepo: delegatingRepo{inner: fake},
+		ready:          ready,
+	}
+	repo := &orasRepositoryClient{inner: blocking}
+
+	// Run listWorkspacesFromTags in a goroutine; collect the result.
+	type result struct {
+		workspaces []string
+		err        error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		ws, err := listWorkspacesFromTags(ctx, repo)
+		ch <- result{ws, err}
+	}()
+
+	// Wait until at least one goroutine is blocked in Resolve, then cancel.
+	select {
+	case <-ready:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for goroutines to reach blocking Resolve")
+	}
+
+	// Collect the result with a generous deadline.
+	select {
+	case res := <-ch:
+		if res.err == nil {
+			t.Fatal("expected context cancellation error, got nil")
+		}
+		if !errors.Is(res.err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got: %v", res.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("listWorkspacesFromTags did not return after context cancellation")
+	}
+}

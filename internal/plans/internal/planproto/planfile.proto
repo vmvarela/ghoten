@@ -176,6 +176,16 @@ message Change {
     // output. This set is always empty for delete.
     repeated Path after_sensitive_paths = 4;
 
+    // An unordered set of paths into the old value which are marked as
+    // ephemeral. Values at these paths must not be persisted in any
+    // human-readable or stored output. This set is always empty for create.
+    repeated Path before_ephemeral_paths = 7;
+
+    // An unordered set of paths into the new value which are marked as
+    // ephemeral. Values at these paths must not be persisted in any
+    // human-readable or stored output. This set is always empty for delete.
+    repeated Path after_ephemeral_paths = 8;
+
     // Importing, if true, specifies that the resource is being imported as part
     // of the change.
     Importing importing = 5;

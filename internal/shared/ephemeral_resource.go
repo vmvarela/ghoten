@@ -157,9 +157,9 @@ func OpenEphemeralResourceInstance(
 		func() {
 			for {
 				// Select on nil chan will block until other case close or done
-				var renewAtTimer chan time.Time
+				var renewAtTimer <-chan time.Time
 				if renewAt != nil {
-					time.After(time.Until(*renewAt))
+					renewAtTimer = time.After(time.Until(*renewAt))
 				}
 
 				select {

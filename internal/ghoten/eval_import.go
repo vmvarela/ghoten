@@ -46,7 +46,7 @@ func evaluateImportIdExpressionInner(expr hcl.Expression, evalCtx EvalContext, k
 	}
 
 	// evaluate the import ID and take into consideration the for_each key (if exists)
-	importIdVal, evalDiags := evaluateExprWithRepetitionData(context.TODO(), evalCtx, expr, cty.String, keyData)
+	importIdVal, evalDiags := evaluateExprWithRepetitionData(evalCtx.Context(), evalCtx, expr, cty.String, keyData)
 	diags = diags.Append(evalDiags)
 
 	if diags.HasErrors() {
@@ -175,7 +175,7 @@ func parseImportIndexKeyExpr(evalCtx EvalContext, expr hcl.Expression, keyData i
 	}
 
 	// evaluate and take into consideration the for_each key (if exists)
-	val, diags := evaluateExprWithRepetitionData(context.TODO(), evalCtx, expr, cty.DynamicPseudoType, keyData)
+	val, diags := evaluateExprWithRepetitionData(evalCtx.Context(), evalCtx, expr, cty.DynamicPseudoType, keyData)
 	if diags.HasErrors() {
 		return idx, diags
 	}
