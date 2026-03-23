@@ -585,7 +585,10 @@ func (c *RemoteClient) enforceVersionRetention(ctx context.Context, current ocis
 		keepTagSet[c.versionTagFor(v)] = struct{}{}
 	}
 
-	groups := c.groupVersionsByDigest(ctx, versions, current.Digest)
+	groups, err := c.groupVersionsByDigest(ctx, versions, current.Digest)
+	if err != nil {
+		return err
+	}
 	if len(groups) == 0 {
 		return nil
 	}
@@ -612,22 +615,37 @@ func (c *RemoteClient) enforceVersionRetention(ctx context.Context, current ocis
 	return nil
 }
 
-func (c *RemoteClient) groupVersionsByDigest(ctx context.Context, versions []int, currentDigest digest.Digest) map[string]*digestGroup {
+func (c *RemoteClient) groupVersionsByDigest(ctx context.Context, versions []int, currentDigest digest.Digest) (map[string]*digestGroup, error) {
+	var mu sync.Mutex
 	groups := make(map[string]*digestGroup)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10) // Limit concurrency to avoid registry rate limits
+
 	for _, v := range versions {
 		tag := c.versionTagFor(v)
-		desc, err := c.repo.inner.Resolve(ctx, tag)
-		if err != nil || desc.Digest == currentDigest {
-			continue
-		}
-		key := desc.Digest.String()
-		if g, ok := groups[key]; ok {
-			g.tags = append(g.tags, tag)
-		} else {
-			groups[key] = &digestGroup{desc: desc, tags: []string{tag}}
-		}
+		g.Go(func() error {
+			desc, err := c.repo.inner.Resolve(ctx, tag)
+			if err != nil || desc.Digest == currentDigest {
+				// Skip tags that cannot be resolved or point to the current state.
+				return nil //nolint:nilerr
+			}
+			key := desc.Digest.String()
+			mu.Lock()
+			if grp, ok := groups[key]; ok {
+				grp.tags = append(grp.tags, tag)
+			} else {
+				groups[key] = &digestGroup{desc: desc, tags: []string{tag}}
+			}
+			mu.Unlock()
+			return nil
+		})
 	}
-	return groups
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return groups, nil
 }
 
 func classifyTags(tags []string, deleteSet, keepSet map[string]struct{}) (toDelete, toKeep []string) {
