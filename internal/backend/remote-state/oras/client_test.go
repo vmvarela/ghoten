@@ -1672,3 +1672,141 @@ func TestListWorkspacesFromTags_contextCancellation(t *testing.T) {
 		t.Fatal("listWorkspacesFromTags did not return after context cancellation")
 	}
 }
+
+// concurrencyTrackingRepo wraps a fakeORASRepo and records the peak number of
+// concurrent Resolve calls. Used to verify that groupVersionsByDigest issues
+// calls in parallel rather than sequentially.
+type concurrencyTrackingRepo struct {
+	delegatingRepo
+	mu         sync.Mutex
+	active     int
+	peakActive int
+}
+
+func (r *concurrencyTrackingRepo) Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error) {
+	r.mu.Lock()
+	r.active++
+	if r.active > r.peakActive {
+		r.peakActive = r.active
+	}
+	r.mu.Unlock()
+
+	desc, err := r.delegatingRepo.Resolve(ctx, reference)
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+
+	return desc, err
+}
+
+// TestGroupVersionsByDigest_parallelResolution verifies that groupVersionsByDigest:
+//  1. Correctly groups N versions by their distinct digest values.
+//  2. Issues Resolve calls concurrently (peak concurrent calls > 1) when there
+//     are multiple versions to resolve.
+func TestGroupVersionsByDigest_parallelResolution(t *testing.T) {
+	const numVersions = 15 // More than the concurrency limit (10) to exercise the semaphore.
+
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+	tracker := &concurrencyTrackingRepo{delegatingRepo: delegatingRepo{inner: fake}}
+	repo := &orasRepositoryClient{inner: tracker}
+	client := newRemoteClient(repo, "default")
+
+	// Populate numVersions version tags, each with a unique digest (different
+	// content). Keep track of digest → versions mapping for assertions.
+	expectedGroups := make(map[string][]int) // digest string → version numbers
+	versions := make([]int, numVersions)
+	for i := range numVersions {
+		v := i + 1
+		versions[i] = v
+		data := []byte(fmt.Sprintf("state-v%d", v))
+		dgst := digest.FromBytes(data)
+		desc := ocispec.Descriptor{Digest: dgst, Size: int64(len(data))}
+		if err := fake.Push(ctx, desc, bytes.NewReader(data)); err != nil {
+			t.Fatalf("Push v%d: %v", v, err)
+		}
+		tag := client.versionTagFor(v)
+		if err := fake.Tag(ctx, desc, tag); err != nil {
+			t.Fatalf("Tag v%d: %v", v, err)
+		}
+		key := dgst.String()
+		expectedGroups[key] = append(expectedGroups[key], v)
+	}
+
+	// Use a placeholder "current" digest that does not match any version.
+	currentDigest := digest.FromBytes([]byte("current-not-in-versions"))
+
+	groups, err := client.groupVersionsByDigest(ctx, versions, currentDigest)
+	if err != nil {
+		t.Fatalf("groupVersionsByDigest returned error: %v", err)
+	}
+
+	// Each version has a unique digest, so we expect numVersions distinct groups.
+	if len(groups) != numVersions {
+		t.Errorf("expected %d digest groups, got %d", numVersions, len(groups))
+	}
+
+	// Verify every expected digest is present.
+	for dgstStr := range expectedGroups {
+		if _, ok := groups[dgstStr]; !ok {
+			t.Errorf("digest %s missing from result", dgstStr)
+		}
+	}
+
+	// Verify that Resolve was called concurrently (peak > 1).
+	// With numVersions=15 and limit=10, peak must reach at least 2.
+	tracker.mu.Lock()
+	peak := tracker.peakActive
+	tracker.mu.Unlock()
+	if peak <= 1 {
+		t.Errorf("expected concurrent Resolve calls (peak > 1), got peak=%d", peak)
+	}
+}
+
+// TestGroupVersionsByDigest_skipsCurrentDigest verifies that versions whose
+// resolved digest equals the current state digest are excluded from the result.
+func TestGroupVersionsByDigest_skipsCurrentDigest(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeORASRepo()
+	repo := &orasRepositoryClient{inner: fake}
+	client := newRemoteClient(repo, "default")
+
+	// Two versions share the "current" digest; one version has a different digest.
+	data := []byte("current-state")
+	currentDigest := digest.FromBytes(data)
+	currentDesc := ocispec.Descriptor{Digest: currentDigest, Size: int64(len(data))}
+	if err := fake.Push(ctx, currentDesc, bytes.NewReader(data)); err != nil {
+		t.Fatalf("Push current: %v", err)
+	}
+
+	otherData := []byte("other-state")
+	otherDigest := digest.FromBytes(otherData)
+	otherDesc := ocispec.Descriptor{Digest: otherDigest, Size: int64(len(otherData))}
+	if err := fake.Push(ctx, otherDesc, bytes.NewReader(otherData)); err != nil {
+		t.Fatalf("Push other: %v", err)
+	}
+
+	for _, v := range []int{1, 2} {
+		if err := fake.Tag(ctx, currentDesc, client.versionTagFor(v)); err != nil {
+			t.Fatalf("Tag v%d: %v", v, err)
+		}
+	}
+	if err := fake.Tag(ctx, otherDesc, client.versionTagFor(3)); err != nil {
+		t.Fatalf("Tag v3: %v", err)
+	}
+
+	groups, err := client.groupVersionsByDigest(ctx, []int{1, 2, 3}, currentDigest)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(groups) != 1 {
+		t.Errorf("expected 1 group (only v3), got %d", len(groups))
+	}
+	if g, ok := groups[otherDigest.String()]; !ok {
+		t.Error("expected group for otherDigest")
+	} else if len(g.tags) != 1 || g.tags[0] != client.versionTagFor(3) {
+		t.Errorf("expected group to contain v3 tag only, got %v", g.tags)
+	}
+}

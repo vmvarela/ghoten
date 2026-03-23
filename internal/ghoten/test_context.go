@@ -59,17 +59,17 @@ func (c *Context) TestContext(config *configs.Config, state *states.State, plan 
 // this function.
 func (ctx *TestContext) EvaluateAgainstState(run *moduletest.Run) {
 	defer ctx.acquireRun("evaluate")()
-	ctx.evaluate(ctx.State.SyncWrapper(), plans.NewChanges().SyncWrapper(), run, walkApply)
+	ctx.evaluate(context.Background(), ctx.State.SyncWrapper(), plans.NewChanges().SyncWrapper(), run, walkApply)
 }
 
 // EvaluateAgainstPlan processes the assertions inside the provided
 // configs.TestRun against the embedded plan and state.
 func (ctx *TestContext) EvaluateAgainstPlan(run *moduletest.Run) {
 	defer ctx.acquireRun("evaluate")()
-	ctx.evaluate(ctx.State.SyncWrapper(), ctx.Plan.Changes.SyncWrapper(), run, walkPlan)
+	ctx.evaluate(context.Background(), ctx.State.SyncWrapper(), ctx.Plan.Changes.SyncWrapper(), run, walkPlan)
 }
 
-func (tc *TestContext) evaluate(state *states.SyncState, changes *plans.ChangesSync, run *moduletest.Run, operation walkOperation) {
+func (tc *TestContext) evaluate(ctx context.Context, state *states.SyncState, changes *plans.ChangesSync, run *moduletest.Run, operation walkOperation) {
 	// The state does not include the module that has no resources, making its outputs unusable.
 	// synchronizeStates function synchronizes the state with the planned state, ensuring inclusion of all modules.
 	if tc.Plan != nil && tc.Plan.PlannedState != nil &&
@@ -130,7 +130,7 @@ func (tc *TestContext) evaluate(state *states.SyncState, changes *plans.ChangesS
 		diags = diags.Append(moreDiags)
 		refs = append(refs, moreRefs...)
 
-		hclCtx, moreDiags := scope.EvalContext(context.TODO(), refs)
+		hclCtx, moreDiags := scope.EvalContext(ctx, refs)
 		diags = diags.Append(moreDiags)
 
 		errorMessage, moreDiags := evalCheckErrorMessage(rule.ErrorMessage, hclCtx)

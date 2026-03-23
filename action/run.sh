@@ -12,7 +12,10 @@ cd "$WORKDIR"
 COMMAND="${INPUT_COMMAND}"
 STDOUT_FILE="${RUNNER_TEMP}/ghoten_stdout.txt"
 # Include workspace and working directory in plan file path for uniqueness across matrix jobs
-PLAN_DIR_HASH=$(printf '%s:%s' "${INPUT_WORKING_DIRECTORY}" "${INPUT_WORKSPACE:-default}" | md5sum 2>/dev/null | cut -c1-8 || printf '%s:%s' "${INPUT_WORKING_DIRECTORY}" "${INPUT_WORKSPACE:-default}" | md5 2>/dev/null | cut -c1-8 || echo "default")
+_HASH_INPUT=$(printf '%s:%s' "${INPUT_WORKING_DIRECTORY}" "${INPUT_WORKSPACE:-default}")
+PLAN_DIR_HASH=$(printf '%s' "$_HASH_INPUT" | md5sum 2>/dev/null | cut -c1-8 \
+  || printf '%s' "$_HASH_INPUT" | md5 2>/dev/null | cut -c1-8 \
+  || printf '%s' "$_HASH_INPUT" | cksum | cut -d' ' -f1)
 PLAN_FILE="${RUNNER_TEMP}/ghoten_${PLAN_DIR_HASH}.tfplan"
 START_TIME=$(date +%s)
 
