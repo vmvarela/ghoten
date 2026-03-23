@@ -82,3 +82,15 @@ jobs:
 
       - name: Verify go generate is up to date
         run: make generate-check
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run ShellCheck on action scripts
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./action
