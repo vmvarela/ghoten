@@ -2,9 +2,14 @@ package oras
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -482,4 +487,104 @@ func TestCachedDockerCredentialHelperEnv_TimeoutErrorUsesShortTTL(t *testing.T) 
 	if got := inner2.Calls(); got != 1 {
 		t.Fatalf("expected cache to have expired after errorCacheTTL, but inner was called %d times (want 1)", got)
 	}
+}
+
+// writeTempFile writes data to a new file in t.TempDir() and returns the path.
+func writeTempFile(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("writing temp file %s: %v", path, err)
+	}
+	return path
+}
+
+// TestNewORASHTTPClient covers the TLS configuration paths of newORASHTTPClient.
+// The insecure and CA-file subtests use a real httptest.TLSServer to verify
+// behaviour end-to-end rather than inspecting the (unstable) transport chain.
+func TestNewORASHTTPClient(t *testing.T) {
+	t.Run("default — no TLS options", func(t *testing.T) {
+		client, err := newORASHTTPClient(false, "", 0, 0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if client == nil {
+			t.Fatal("expected non-nil client")
+		}
+	})
+
+	t.Run("insecure=true succeeds against self-signed TLS server", func(t *testing.T) {
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		client, err := newORASHTTPClient(true, "", 0, 0)
+		if err != nil {
+			t.Fatalf("unexpected error building client: %v", err)
+		}
+
+		resp, err := client.Get(srv.URL) //nolint:noctx
+		if err != nil {
+			t.Fatalf("GET to TLS server with insecure=true failed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("unexpected status %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("valid CA file trusted against matching TLS server", func(t *testing.T) {
+		// httptest.NewTLSServer uses its own self-signed cert. We use the
+		// server's TLS config to extract the CA cert PEM and write it as
+		// our ca_file. This proves that the loaded pool is actually used.
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+
+		// Extract the server's CA cert as PEM.
+		serverCert := srv.TLS.Certificates[0]
+		parsedCert, err := x509.ParseCertificate(serverCert.Certificate[0])
+		if err != nil {
+			t.Fatalf("parsing server cert: %v", err)
+		}
+		caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: parsedCert.Raw})
+		caPath := writeTempFile(t, "ca.pem", caPEM)
+
+		client, err := newORASHTTPClient(false, caPath, 0, 0)
+		if err != nil {
+			t.Fatalf("unexpected error building client: %v", err)
+		}
+
+		resp, err := client.Get(srv.URL) //nolint:noctx
+		if err != nil {
+			t.Fatalf("GET with custom CA file failed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("unexpected status %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("non-existent CA file returns error", func(t *testing.T) {
+		_, err := newORASHTTPClient(false, "/no/such/file.pem", 0, 0)
+		if err == nil {
+			t.Fatal("expected error for missing CA file, got nil")
+		}
+		if !strings.Contains(err.Error(), "reading ca_file") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("CA file with invalid PEM returns error", func(t *testing.T) {
+		badPath := writeTempFile(t, "bad.pem", []byte("not-valid-pem"))
+		_, err := newORASHTTPClient(false, badPath, 0, 0)
+		if err == nil {
+			t.Fatal("expected error for invalid PEM content, got nil")
+		}
+		if !strings.Contains(err.Error(), "no valid certificates") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
 }
