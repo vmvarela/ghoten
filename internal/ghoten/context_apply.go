@@ -260,13 +260,13 @@ func (c *Context) applyGraph(ctx context.Context, plan *plans.Plan, config *conf
 // graph, and so may change in future in order to make the result more useful
 // in that context, even if drifts away from the physical graph that Ghoten
 // Core currently uses as an implementation detail of planning.
-func (c *Context) ApplyGraphForUI(plan *plans.Plan, config *configs.Config) (*Graph, tfdiags.Diagnostics) {
+func (c *Context) ApplyGraphForUI(ctx context.Context, plan *plans.Plan, config *configs.Config) (*Graph, tfdiags.Diagnostics) {
 	// For now though, this really is just the internal graph, confusing
 	// implementation details and all.
 
 	var diags tfdiags.Diagnostics
 
-	graph, _, moreDiags := c.applyGraph(context.TODO(), plan, config, make(ProviderFunctionMapping), nil)
+	graph, _, moreDiags := c.applyGraph(ctx, plan, config, make(ProviderFunctionMapping), nil)
 	diags = diags.Append(moreDiags)
 	return graph, diags
 }

@@ -1082,7 +1082,7 @@ func (c *Context) driftedResources(ctx context.Context, config *configs.Config, 
 // graph, and so may change in future in order to make the result more useful
 // in that context, even if drifts away from the physical graph that Ghoten
 // Core currently uses as an implementation detail of planning.
-func (c *Context) PlanGraphForUI(config *configs.Config, prevRunState *states.State, mode plans.Mode) (*Graph, tfdiags.Diagnostics) {
+func (c *Context) PlanGraphForUI(ctx context.Context, config *configs.Config, prevRunState *states.State, mode plans.Mode) (*Graph, tfdiags.Diagnostics) {
 	// For now though, this really is just the internal graph, confusing
 	// implementation details and all.
 
@@ -1090,7 +1090,7 @@ func (c *Context) PlanGraphForUI(config *configs.Config, prevRunState *states.St
 
 	opts := &PlanOpts{Mode: mode}
 
-	graph, _, moreDiags := c.planGraph(context.TODO(), config, prevRunState, opts, make(ProviderFunctionMapping))
+	graph, _, moreDiags := c.planGraph(ctx, config, prevRunState, opts, make(ProviderFunctionMapping))
 	diags = diags.Append(moreDiags)
 	return graph, diags
 }
