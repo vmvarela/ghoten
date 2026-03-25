@@ -192,7 +192,7 @@ func (v *OperationHuman) Plan(plan *plans.Plan, schemas *ghoten.Schemas) {
 	renderer.RenderHumanPlan(jplan, plan.UIMode, opts...)
 
 	// Emit the smart refresh summary line, if applicable.
-	if plan.RefreshMode == plans.RefreshSmart {
+	if plan.RefreshMode == plans.RefreshSmart && (plan.ResourcesRefreshed > 0 || plan.ResourcesSkipped > 0) {
 		v.view.streams.Printf(
 			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed, %d skipped (smart mode).\n"),
 			plan.ResourcesRefreshed,

@@ -177,18 +177,9 @@ func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
 		}
 
 		// Resource exists in both config and state.
-		// Check if the config has changed by comparing the config body's
-		// references against the stored dependencies.
-		if t.configReferencesChanged(v) {
-			changed.Add(v)
-			log.Printf("[DEBUG] SmartRefreshTransformer: %q has changed references", dag.VertexName(v))
-			continue
-		}
-
-		// Check if the resource config block content has been modified.
-		// We do this by checking if the resource config's source range
-		// or attribute count differs. This is a heuristic — the real
-		// diff happens during plan, but we need a fast pre-check.
+		// Check if the resource config block structure has been modified
+		// by comparing the configExprHash fingerprint (covers count,
+		// for_each, and depends_on) against the stored hash in state.
 		if t.configBodyChanged(v) {
 			changed.Add(v)
 			log.Printf("[DEBUG] SmartRefreshTransformer: %q has changed config body", dag.VertexName(v))
@@ -196,57 +187,6 @@ func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
 	}
 
 	return changed
-}
-
-// configReferencesChanged returns true if the references from the resource's
-// config differ from the dependencies stored in the prior state.
-func (t *SmartRefreshTransformer) configReferencesChanged(v dag.Vertex) bool {
-	rn, ok := v.(GraphNodeReferencer)
-	if !ok {
-		return false
-	}
-
-	configResource, ok := v.(GraphNodeConfigResource)
-	if !ok {
-		return false
-	}
-
-	// Get the current config references.
-	configRefs := rn.References()
-	configRefStrs := make(map[string]struct{}, len(configRefs))
-	for _, ref := range configRefs {
-		configRefStrs[ref.Subject.String()] = struct{}{}
-	}
-
-	// Get the stored dependencies from state.
-	addr := configResource.ResourceAddr()
-	for _, rs := range t.State.Resources(addr) {
-		for _, is := range rs.Instances {
-			if is.Current == nil {
-				continue
-			}
-			stateDeps := make(map[string]struct{}, len(is.Current.Dependencies))
-			for _, dep := range is.Current.Dependencies {
-				stateDeps[dep.String()] = struct{}{}
-			}
-
-			// If reference counts differ, config has changed.
-			if len(configRefStrs) != len(stateDeps) {
-				return true
-			}
-			// If any reference is missing from state deps, config changed.
-			for ref := range configRefStrs {
-				if _, found := stateDeps[ref]; !found {
-					return true
-				}
-			}
-			// Check only the first instance — dependencies are per-resource,
-			// not per-instance.
-			return false
-		}
-	}
-
-	return false
 }
 
 // configBodyChanged returns true if the resource's structural meta-arguments

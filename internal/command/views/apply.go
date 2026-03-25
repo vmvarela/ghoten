@@ -166,7 +166,7 @@ func (v *ApplyHuman) ResourceCount(stateOutPath string) {
 			v.countHook.Removed,
 		)
 	}
-	if v.refreshMode == plans.RefreshSmart {
+	if v.refreshMode == plans.RefreshSmart && (v.countHook.Refreshed > 0 || v.countHook.RefreshSkipped > 0) {
 		v.view.streams.Printf(
 			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed, %d skipped (smart mode).\n"),
 			v.countHook.Refreshed,
