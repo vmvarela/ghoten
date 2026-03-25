@@ -124,20 +124,24 @@ func (t *SmartRefreshTransformer) Transform(_ context.Context, g *Graph) error {
 	// Build the refresh set: changed nodes + ancestors + descendants.
 	refreshSet := t.buildRefreshSet(g, changedNodes)
 
-	// Apply: nodes NOT in refreshSet get skipRefresh=true.
+	t.applyRefreshSet(g, refreshSet)
+
+	return nil
+}
+
+func (t *SmartRefreshTransformer) applyRefreshSet(g *Graph, refreshSet dag.Set) {
 	for _, v := range g.Vertices() {
-		if _, ok := v.(GraphNodeSkipRefresh); !ok {
+		sr, ok := v.(GraphNodeSkipRefresh)
+		if !ok || isDataSource(v) {
 			continue
 		}
 		if refreshSet.Include(v) {
 			log.Printf("[DEBUG] SmartRefreshTransformer: will refresh %q", dag.VertexName(v))
 		} else {
 			log.Printf("[DEBUG] SmartRefreshTransformer: skipping refresh for %q", dag.VertexName(v))
-			v.(GraphNodeSkipRefresh).SetSkipRefresh(true)
+			sr.SetSkipRefresh(true)
 		}
 	}
-
-	return nil
 }
 
 // identifyChangedNodes returns the set of graph vertices that represent
@@ -309,7 +313,7 @@ func (t *SmartRefreshTransformer) buildRefreshSet(g *Graph, changedNodes dag.Set
 // skipAllRefresh sets skipRefresh=true on all refreshable nodes.
 func (t *SmartRefreshTransformer) skipAllRefresh(g *Graph) {
 	for _, v := range g.Vertices() {
-		if sr, ok := v.(GraphNodeSkipRefresh); ok {
+		if sr, ok := v.(GraphNodeSkipRefresh); ok && !isDataSource(v) {
 			sr.SetSkipRefresh(true)
 		}
 	}

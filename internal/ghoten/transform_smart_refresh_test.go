@@ -149,10 +149,12 @@ func TestSmartRefreshTransformer_skipAllRefresh(t *testing.T) {
 	g := &Graph{Path: addrs.RootModuleInstance}
 	n1 := &mockRefreshNode{name: "n1"}
 	n2 := &mockRefreshNode{name: "n2"}
+	dataSource := &mockDataSourceNode{name: "data_source"}
 	// A non-refresh node should be unaffected.
 	n3 := &mockNonRefreshNode{name: "n3"}
 	g.Add(n1)
 	g.Add(n2)
+	g.Add(dataSource)
 	g.Add(n3)
 
 	tf := &SmartRefreshTransformer{}
@@ -163,6 +165,36 @@ func TestSmartRefreshTransformer_skipAllRefresh(t *testing.T) {
 	}
 	if !n2.skipRefresh {
 		t.Errorf("n2.skipRefresh should be true after skipAllRefresh")
+	}
+	if dataSource.skipRefresh {
+		t.Errorf("data sources should not receive skipRefresh=true in skipAllRefresh")
+	}
+}
+
+func TestSmartRefreshTransformer_applyRefreshSet_SkipsManagedOnly(t *testing.T) {
+	g := &Graph{Path: addrs.RootModuleInstance}
+	managedInSet := &mockRefreshNode{name: "managed_in_set"}
+	managedOutOfSet := &mockRefreshNode{name: "managed_out_of_set"}
+	dataSource := &mockDataSourceNode{name: "data_source"}
+
+	g.Add(managedInSet)
+	g.Add(managedOutOfSet)
+	g.Add(dataSource)
+
+	refreshSet := make(dag.Set)
+	refreshSet.Add(managedInSet)
+
+	tf := &SmartRefreshTransformer{}
+	tf.applyRefreshSet(g, refreshSet)
+
+	if managedInSet.skipRefresh {
+		t.Errorf("managed resource in refresh set should keep skipRefresh=false")
+	}
+	if !managedOutOfSet.skipRefresh {
+		t.Errorf("managed resource outside refresh set should get skipRefresh=true")
+	}
+	if dataSource.skipRefresh {
+		t.Errorf("data sources should not receive skipRefresh=true in applyRefreshSet")
 	}
 }
 
