@@ -322,8 +322,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 h1:HWRh5R2+9EifMyIHV7ZV+MIZqgz
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0/go.mod h1:JfhWUomR1baixubs02l85lZYYOm7LV6om4ceouMv45c=
 github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.71 h1:3qrWTgbR0uMacRVnE6//G1B20hUJexxqqmQ2OTs1+0s=
 github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.71/go.mod h1:YV27+mh2SLUqeP36G1a9MiqL5eBkFnZQJjNTR9Q9NcY=
-github.com/hashicorp/consul/api v1.33.5 h1:Nn6q87zudRU1rLBTJEgaWxz9STCNadilLCD7B8OA5aI=
-github.com/hashicorp/consul/api v1.33.5/go.mod h1:pa6fJOSHKLOzNHpUVeqLDtxA5+J1D7NNzLasuk8eRXA=
+github.com/hashicorp/consul/api v1.33.7 h1:apLZVzX7O7BLgHyh4pvczcsBzPmYSVXGKZQbOaA1ae0=
+github.com/hashicorp/consul/api v1.33.7/go.mod h1:SjR3cjwCUSLLDfVw5dFg76rnnKjOySxr8W8lC5s01C8=
 github.com/hashicorp/consul/sdk v0.17.3 h1:oZMMxzQGSsiT+ToOH50y3Qcs0nc9Ud+7L5lRx+EmMU0=
 github.com/hashicorp/consul/sdk v0.17.3/go.mod h1:jnOmYjiNfVRpBaujQ1DFFVs0N6g3S1y6wygSjLTzYfc=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
@@ -363,8 +363,8 @@ github.com/hashicorp/go-sockaddr v1.0.0/go.mod h1:7Xibr9yA9JjQq1JpNB2Vw7kxv8xerX
 github.com/hashicorp/go-sockaddr v1.0.7 h1:G+pTkSO01HpR5qCxg7lxfsFEZaG+C0VssTy/9dbT+Fw=
 github.com/hashicorp/go-sockaddr v1.0.7/go.mod h1:FZQbEYa1pxkQ7WLpyXJ6cbjpT8q0YgQaK/JakXqGyWw=
 github.com/hashicorp/go-syslog v1.0.0/go.mod h1:qPfqrKkXGihmCqbJM2mZgkZGvKG1dFdvsLplgctolz4=
-github.com/hashicorp/go-tfe v1.101.0 h1:Nq9CTfxiFyXqWSnfh2tC81ZU2pGcW6QUMKU43RmibrU=
-github.com/hashicorp/go-tfe v1.101.0/go.mod h1:JIqznMwZd8flUhPif5d2sprKcFkD4sWJSIQ6E8iAuIA=
+github.com/hashicorp/go-tfe v1.102.0 h1:6tU1nEGliMCqKmyO75DqhxbHzEc7+noCoGiOVyxXN28=
+github.com/hashicorp/go-tfe v1.102.0/go.mod h1:h9zoGyk0+5YCxuahXVppZ5kUNxqHhdZ21jrnLPDPNS4=
 github.com/hashicorp/go-uuid v1.0.0/go.mod h1:6SBZvOh/SIDV7/2o3Jml5SYk/TvGqwFJ/bN7x4byOro=
 github.com/hashicorp/go-uuid v1.0.1/go.mod h1:6SBZvOh/SIDV7/2o3Jml5SYk/TvGqwFJ/bN7x4byOro=
 github.com/hashicorp/go-uuid v1.0.3 h1:2gKiV6YVmrJ1i2CKKa9obLvRieoRGviZFL26PcT/Co8=

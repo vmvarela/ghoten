@@ -46,7 +46,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.18.0
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.71
-	github.com/hashicorp/consul/api v1.33.5
+	github.com/hashicorp/consul/api v1.33.7
 	github.com/hashicorp/consul/sdk v0.17.3
 	github.com/hashicorp/errwrap v1.1.0
 	github.com/hashicorp/go-cleanhttp v0.5.2
@@ -55,7 +55,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
-	github.com/hashicorp/go-tfe v1.101.0
+	github.com/hashicorp/go-tfe v1.102.0
 	github.com/hashicorp/go-uuid v1.0.3
 	github.com/hashicorp/go-version v1.8.0
 	github.com/hashicorp/hcl v1.0.1-vault-7
