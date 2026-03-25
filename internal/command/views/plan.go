@@ -9,8 +9,8 @@ import (
 	"fmt"
 
 	"github.com/vmvarela/ghoten/internal/command/arguments"
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 // The Plan view is used for the plan command.
@@ -34,6 +34,7 @@ func NewPlan(args arguments.ViewOptions, view *View) Plan {
 		plan = &PlanHuman{
 			view:         view,
 			inAutomation: view.RunningInAutomation(),
+			countHook:    &countHook{},
 		}
 	default:
 		panic(fmt.Sprintf("unknown view type %v", args.ViewType))
@@ -84,6 +85,7 @@ type PlanHuman struct {
 	view *View
 
 	inAutomation bool
+	countHook    *countHook
 }
 
 var _ Plan = (*PlanHuman)(nil)
@@ -93,7 +95,7 @@ func (v *PlanHuman) Operation() Operation {
 }
 
 func (v *PlanHuman) Hooks() []ghoten.Hook {
-	return []ghoten.Hook{NewUIOptionalHook(v.view)}
+	return []ghoten.Hook{v.countHook, NewUIOptionalHook(v.view)}
 }
 
 func (v *PlanHuman) Diagnostics(diags tfdiags.Diagnostics) {

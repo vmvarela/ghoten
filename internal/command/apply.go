@@ -58,7 +58,7 @@ func (c *ApplyCommand) Run(rawArgs []string) int {
 
 	// Instantiate the view, even if there are flag errors, so that we render
 	// diagnostics according to the desired view
-	view := views.NewApply(args.ViewOptions, c.Destroy, c.View)
+	view := views.NewApply(args.ViewOptions, c.Destroy, c.View, args.Operation.RefreshMode)
 
 	if diags.HasErrors() {
 		view.Diagnostics(diags)
@@ -277,6 +277,7 @@ func (c *ApplyCommand) OperationRequest(
 	opReq.Hooks = view.Hooks()
 	opReq.PlanFile = planFile
 	opReq.PlanRefresh = applyArgs.Operation.Refresh
+	opReq.RefreshMode = applyArgs.Operation.RefreshMode
 	opReq.Targets = applyArgs.Operation.Targets
 	opReq.Excludes = applyArgs.Operation.Excludes
 	opReq.ForceReplace = applyArgs.Operation.ForceReplace

@@ -35,6 +35,39 @@ const (
 	RefreshOnlyMode Mode = 'R'
 )
 
+// RefreshMode represents the various options for refreshing resource state
+// during a plan operation.
+type RefreshMode int
+
+const (
+	// RefreshAll refreshes all managed resources by calling ReadResource on
+	// each one. This is the traditional "-refresh=true" behavior.
+	RefreshAll RefreshMode = iota
+
+	// RefreshNone skips all refresh operations, trusting the prior state.
+	// This corresponds to "-refresh=false".
+	RefreshNone
+
+	// RefreshSmart selectively refreshes only resources whose configuration
+	// has changed and their dependency subgraph. This is "-refresh=smart"
+	// and the new default behavior.
+	RefreshSmart
+)
+
+// UIName returns a human-readable name for the refresh mode.
+func (rm RefreshMode) UIName() string {
+	switch rm {
+	case RefreshAll:
+		return "all"
+	case RefreshNone:
+		return "none"
+	case RefreshSmart:
+		return "smart"
+	default:
+		return "unknown"
+	}
+}
+
 // UIName returns a name suitable for describing the mode in the UI.
 func (m Mode) UIName() string {
 	switch m {

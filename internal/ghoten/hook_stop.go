@@ -134,6 +134,10 @@ func (h *stopHook) PostStateUpdate(func(*states.SyncState)) (HookAction, error) 
 	return h.hook()
 }
 
+func (h *stopHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {
+	return h.hook()
+}
+
 func (h *stopHook) hook() (HookAction, error) {
 	if h.Stopped() {
 		return HookActionHalt, errors.New("execution halted")

@@ -66,6 +66,7 @@ var (
 	_ GraphNodeExecutable                    = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProviderConsumer              = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProvisionerConsumer           = (*NodePlanDeposedResourceInstanceObject)(nil)
+	_ GraphNodeSkipRefresh                   = (*NodePlanDeposedResourceInstanceObject)(nil)
 )
 
 func (n *NodePlanDeposedResourceInstanceObject) Name() string {
@@ -74,6 +75,11 @@ func (n *NodePlanDeposedResourceInstanceObject) Name() string {
 
 func (n *NodePlanDeposedResourceInstanceObject) DeposedInstanceObjectKey() states.DeposedKey {
 	return n.DeposedKey
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlanDeposedResourceInstanceObject) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeReferenceable implementation, overriding the one from NodeAbstractResourceInstance
@@ -158,6 +164,13 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx context.Context, eva
 		// If we refreshed then our subsequent planning should be in terms of
 		// the new object, not the original object.
 		state = refreshedState
+	} else if n.skipRefresh {
+		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+			return h.PostSkipRefresh(n.Addr, n.DeposedKey)
+		}))
+		if diags.HasErrors() {
+			return diags
+		}
 	}
 
 	if !n.skipPlanChanges {

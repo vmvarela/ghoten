@@ -78,6 +78,11 @@ func (n *nodeExpandPlannableResource) Name() string {
 func (n *nodeExpandPlannableResource) retainDuringUnusedPruning() {
 }
 
+// GraphNodeSkipRefresh
+func (n *nodeExpandPlannableResource) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
+}
+
 // GraphNodeAttachDependencies
 func (n *nodeExpandPlannableResource) AttachDependencies(deps []addrs.ConfigResource) {
 	n.dependencies = deps

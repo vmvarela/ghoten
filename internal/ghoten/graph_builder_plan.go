@@ -59,6 +59,12 @@ type PlanGraphBuilder struct {
 	// skipRefresh indicates that we should skip refreshing managed resources
 	skipRefresh bool
 
+	// smartRefresh indicates that we should selectively refresh only resources
+	// whose configuration has changed, plus their dependency subgraph.
+	// When true, skipRefresh is treated as false and per-node skipRefresh
+	// decisions are made by the SmartRefreshTransformer.
+	smartRefresh bool
+
 	// preDestroyRefresh indicates that we are executing the refresh which
 	// happens immediately before a destroy plan, which happens to use the
 	// normal planing mode so skipPlanChanges cannot be set.
@@ -241,6 +247,16 @@ func (b *PlanGraphBuilder) Steps() []GraphTransformer {
 
 		&ReferenceTransformer{},
 
+		// If smart refresh is enabled, selectively mark resources for refresh
+		// based on configuration changes and the dependency graph.
+		// This must come after ReferenceTransformer (needs edges) and before
+		// TargetingTransformer (targeting further narrows the graph).
+		&SmartRefreshTransformer{
+			Config: b.Config,
+			State:  b.State,
+			Active: b.smartRefresh && !b.skipRefresh,
+		},
+
 		&AttachDependenciesTransformer{},
 
 		// Make sure data sources and ephemeral resources are aware of any
@@ -296,7 +312,7 @@ func (b *PlanGraphBuilder) initPlan() {
 	b.ConcreteResource = func(a *NodeAbstractResource) dag.Vertex {
 		return &nodeExpandPlannableResource{
 			NodeAbstractResource: a,
-			skipRefresh:          b.skipRefresh,
+			skipRefresh:          b.skipRefresh && !b.smartRefresh,
 			skipPlanChanges:      b.skipPlanChanges,
 			preDestroyRefresh:    b.preDestroyRefresh,
 			forceReplace:         b.ForceReplace,
@@ -306,7 +322,7 @@ func (b *PlanGraphBuilder) initPlan() {
 	b.ConcreteResourceOrphan = func(a *NodeAbstractResourceInstance) dag.Vertex {
 		return &NodePlannableResourceInstanceOrphan{
 			NodeAbstractResourceInstance: a,
-			skipRefresh:                  b.skipRefresh,
+			skipRefresh:                  b.skipRefresh && !b.smartRefresh,
 			skipPlanChanges:              b.skipPlanChanges,
 			RemoveStatements:             b.RemoveStatements,
 		}
@@ -317,7 +333,7 @@ func (b *PlanGraphBuilder) initPlan() {
 			NodeAbstractResourceInstance: a,
 			DeposedKey:                   key,
 
-			skipRefresh:      b.skipRefresh,
+			skipRefresh:      b.skipRefresh && !b.smartRefresh,
 			skipPlanChanges:  b.skipPlanChanges,
 			RemoveStatements: b.RemoveStatements,
 		}
@@ -330,7 +346,7 @@ func (b *PlanGraphBuilder) initDestroy() {
 	b.ConcreteResourceInstance = func(a *NodeAbstractResourceInstance) dag.Vertex {
 		return &NodePlanDestroyableResourceInstance{
 			NodeAbstractResourceInstance: a,
-			skipRefresh:                  b.skipRefresh,
+			skipRefresh:                  b.skipRefresh && !b.smartRefresh,
 		}
 	}
 }

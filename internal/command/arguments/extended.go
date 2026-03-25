@@ -67,7 +67,12 @@ type Operation struct {
 
 	// Refresh controls whether or not the operation should refresh existing
 	// state before proceeding. Default is true.
+	// Deprecated: Use RefreshMode instead. This field is kept for backward compatibility.
 	Refresh bool
+
+	// RefreshMode controls how resource state is refreshed during planning.
+	// Defaults to RefreshSmart.
+	RefreshMode plans.RefreshMode
 
 	// Targets allow limiting an operation to a set of resource addresses and
 	// their dependencies.
@@ -99,6 +104,7 @@ type Operation struct {
 	forceReplaceRaw  []string
 	destroyRaw       bool
 	refreshOnlyRaw   bool
+	refreshModeRaw   string // raw flag value for -refresh, used to parse RefreshMode
 }
 
 // parseDirectTargetables gets a list of strings passed from directly from the CLI
@@ -256,8 +262,27 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		o.ForceReplace = append(o.ForceReplace, addr)
 	}
 
-	// If you add a new possible value for o.PlanMode here, consider also
-	// adding a specialized error message for it in ParseApplyDestroy.
+	// Parse -refresh flag: supports "true", "false", and "smart".
+	switch o.refreshModeRaw {
+	case "true":
+		o.RefreshMode = plans.RefreshAll
+		o.Refresh = true
+	case "false":
+		o.RefreshMode = plans.RefreshNone
+		o.Refresh = false
+	case "smart", "":
+		o.RefreshMode = plans.RefreshSmart
+		o.Refresh = true
+	default:
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Invalid -refresh flag value",
+			fmt.Sprintf("The -refresh flag accepts \"true\", \"false\", or \"smart\". Got %q.", o.refreshModeRaw),
+		))
+		o.RefreshMode = plans.RefreshSmart
+		o.Refresh = true
+	}
+
 	switch {
 	case o.destroyRaw && o.refreshOnlyRaw:
 		diags = diags.Append(tfdiags.Sourceless(
@@ -269,7 +294,7 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		o.PlanMode = plans.DestroyMode
 	case o.refreshOnlyRaw:
 		o.PlanMode = plans.RefreshOnlyMode
-		if !o.Refresh {
+		if o.RefreshMode == plans.RefreshNone {
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Error,
 				"Incompatible refresh options",
@@ -327,7 +352,8 @@ func extendedFlagSet(name string, state *State, operation *Operation, vars *Vars
 
 	if operation != nil {
 		f.IntVar(&operation.Parallelism, "parallelism", DefaultParallelism, "parallelism")
-		f.BoolVar(&operation.Refresh, "refresh", true, "refresh")
+		// Use a string value for refresh to support true/false/smart values
+		f.StringVar(&operation.refreshModeRaw, "refresh", "smart", "refresh")
 		f.BoolVar(&operation.destroyRaw, "destroy", false, "destroy")
 		f.BoolVar(&operation.refreshOnlyRaw, "refresh-only", false, "refresh-only")
 		f.Var((*flags.FlagStringSlice)(&operation.targetsRaw), "target", "target")

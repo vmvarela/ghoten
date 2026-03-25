@@ -6,6 +6,7 @@
 package ghoten
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -84,7 +85,13 @@ var (
 	_ GraphNodeAttachResourceConfig = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeExecutable           = (*NodePlannableResourceInstance)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstance)(nil)
 )
+
+// GraphNodeSkipRefresh
+func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
+}
 
 // GraphNodeEvalable
 func (n *NodePlannableResourceInstance) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {
@@ -338,7 +345,25 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			instanceRefreshState.SkipDestroy = skipDestroy
 
 			if n.skipRefresh {
-				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy {
+				// Notify hooks that this resource's refresh was intentionally skipped
+				// (e.g. smart refresh mode determined no config change).
+				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+					return h.PostSkipRefresh(n.Addr, states.CurrentGen)
+				}))
+				if diags.HasErrors() {
+					return diags
+				}
+				// Persist the structural fingerprint so future plans can detect
+				// config changes even for resources that were not refreshed.
+				hashChanged := false
+				if n.Config != nil && instanceRefreshState != nil {
+					newHash := configExprHash(n.Config)
+					if !bytes.Equal(instanceRefreshState.ConfigExprHash, newHash) {
+						instanceRefreshState.ConfigExprHash = newHash
+						hashChanged = true
+					}
+				}
+				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy || hashChanged {
 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
 					if diags.HasErrors() {
 						return diags
@@ -366,6 +391,11 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			// results in no changes, we will re-write these dependencies
 			// below.
 			instanceRefreshState.Dependencies = mergeDeps(n.Dependencies, instanceRefreshState.Dependencies)
+			// Persist the structural fingerprint so future plans can detect
+			// config changes even for resources that were not skipped.
+			if n.Config != nil {
+				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
+			}
 		}
 
 		diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))

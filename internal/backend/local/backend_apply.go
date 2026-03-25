@@ -144,6 +144,21 @@ func (b *Local) opApply(
 		trivialPlan := !plan.CanApply()
 		hasUI := op.UIOut != nil && op.UIIn != nil
 		mustConfirm := hasUI && !op.AutoApprove && !trivialPlan
+
+		// Annotate the plan with the refresh mode so the view can display
+		// smart-refresh telemetry. (Mirrors what backend_plan.go does.)
+		plan.RefreshMode = op.RefreshMode
+		if op.RefreshMode == plans.RefreshSmart {
+			for _, h := range op.Hooks {
+				if ch, ok := h.(interface{ GetRefreshed() int }); ok {
+					plan.ResourcesRefreshed += ch.GetRefreshed()
+				}
+				if ch, ok := h.(interface{ GetRefreshSkipped() int }); ok {
+					plan.ResourcesSkipped += ch.GetRefreshSkipped()
+				}
+			}
+		}
+
 		op.View.Plan(plan, schemas)
 
 		if testHookStopPlanApply != nil {

@@ -359,6 +359,9 @@ func TestRefresh_outPath(t *testing.T) {
 
 	newState = testStateRead(t, outPath)
 	actual := newState.RootModule().Resources["test_instance.foo"].Instances[addrs.NoKey].Current
+	// ConfigExprHash is populated by backfillConfigExprHashes during apply;
+	// clear it so this test focuses on attrs/status/deps, not the hash.
+	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
 		AttrsJSON:    []byte(`{"ami":null,"id":"yes"}`),
@@ -617,6 +620,8 @@ func TestRefresh_backup(t *testing.T) {
 
 	newState = testStateRead(t, outPath)
 	actual := newState.RootModule().Resources["test_instance.foo"].Instances[addrs.NoKey].Current
+	// ConfigExprHash is populated by backfillConfigExprHashes; clear it here.
+	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
 		AttrsJSON:    []byte(`{"ami":null,"id":"changed"}`),
@@ -690,6 +695,8 @@ func TestRefresh_disableBackup(t *testing.T) {
 
 	newState = testStateRead(t, outPath)
 	actual := newState.RootModule().Resources["test_instance.foo"].Instances[addrs.NoKey].Current
+	// ConfigExprHash is populated by backfillConfigExprHashes; clear it here.
+	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
 		AttrsJSON:    []byte(`{"ami":null,"id":"yes"}`),

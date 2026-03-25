@@ -27,12 +27,12 @@ import (
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestApply(t *testing.T) {
@@ -1029,6 +1029,7 @@ func TestApply_refresh(t *testing.T) {
 	args := []string{
 		"-state", statePath,
 		"-auto-approve",
+		"-refresh=true",
 	}
 	code := c.Run(args)
 	output := done(t)
