@@ -166,23 +166,51 @@ func TestSmartRefreshTransformer_skipAllRefresh(t *testing.T) {
 	}
 }
 
+// mockDataSourceNode is a graph node that implements both GraphNodeSkipRefresh
+// and GraphNodeConfigResource with DataResourceMode — used to verify that data
+// sources are excluded from the refresh set.
+type mockDataSourceNode struct {
+	name        string
+	skipRefresh bool
+}
+
+func (n *mockDataSourceNode) Name() string          { return n.name }
+func (n *mockDataSourceNode) SetSkipRefresh(v bool) { n.skipRefresh = v }
+func (n *mockDataSourceNode) ResourceAddr() addrs.ConfigResource {
+	return addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.DataResourceMode,
+			Type: "github_organization",
+			Name: n.name,
+		},
+	}
+}
+
+// Verify interface satisfaction at compile time.
+var _ GraphNodeSkipRefresh = (*mockDataSourceNode)(nil)
+var _ GraphNodeConfigResource = (*mockDataSourceNode)(nil)
+
 func TestSmartRefreshTransformer_buildRefreshSet(t *testing.T) {
 	// buildRefreshSet should include the changed node, its ancestors, and its
-	// descendants.
+	// descendants — but NOT data sources.
 	g := &Graph{Path: addrs.RootModuleInstance}
 	ancestor := &mockRefreshNode{name: "ancestor"}
 	changed := &mockRefreshNode{name: "changed"}
 	descendant := &mockRefreshNode{name: "descendant"}
 	unrelated := &mockRefreshNode{name: "unrelated"}
+	dataSource := &mockDataSourceNode{name: "data_ancestor"}
 
 	g.Add(ancestor)
 	g.Add(changed)
 	g.Add(descendant)
 	g.Add(unrelated)
+	g.Add(dataSource)
 
-	// ancestor → changed → descendant
-	g.Connect(dag.BasicEdge(ancestor, changed))   // ancestor is a dependency of changed
-	g.Connect(dag.BasicEdge(changed, descendant)) // descendant depends on changed
+	// dataSource → ancestor → changed → descendant
+	g.Connect(dag.BasicEdge(dataSource, ancestor)) // data source is a dependency of ancestor
+	g.Connect(dag.BasicEdge(ancestor, changed))    // ancestor is a dependency of changed
+	g.Connect(dag.BasicEdge(changed, descendant))  // descendant depends on changed
 
 	tf := &SmartRefreshTransformer{}
 
@@ -200,6 +228,42 @@ func TestSmartRefreshTransformer_buildRefreshSet(t *testing.T) {
 
 	if refreshSet.Include(unrelated) {
 		t.Errorf("unrelated node should NOT be in the refresh set")
+	}
+
+	// Data sources must be excluded even if they are ancestors of a changed node.
+	if refreshSet.Include(dataSource) {
+		t.Errorf("data source %q should NOT be in the refresh set (data sources are re-read during plan)", dataSource.name)
+	}
+}
+
+func TestSmartRefreshTransformer_buildRefreshSet_DataSourceChangedNode(t *testing.T) {
+	// When a data source itself is in changedNodes (e.g. it has no stored state),
+	// it must NOT be added to the refresh set — data sources don't need refresh.
+	g := &Graph{Path: addrs.RootModuleInstance}
+	managed := &mockRefreshNode{name: "managed"}
+	dataSource := &mockDataSourceNode{name: "data_source"}
+
+	g.Add(managed)
+	g.Add(dataSource)
+
+	// data source is a dependency of managed
+	g.Connect(dag.BasicEdge(dataSource, managed))
+
+	tf := &SmartRefreshTransformer{}
+
+	// Suppose the data source itself is in changedNodes.
+	changedSet := make(dag.Set)
+	changedSet.Add(dataSource)
+
+	refreshSet := tf.buildRefreshSet(g, changedSet)
+
+	if refreshSet.Include(dataSource) {
+		t.Errorf("data source should NOT be in the refresh set even when it is a changed node")
+	}
+
+	// Its descendant (managed) should still be included since the data source changed.
+	if !refreshSet.Include(managed) {
+		t.Errorf("managed resource %q should be in the refresh set as a descendant of the changed data source", managed.name)
 	}
 }
 

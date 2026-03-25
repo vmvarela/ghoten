@@ -258,26 +258,48 @@ func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
 	return true
 }
 
+// isDataSource returns true if the given graph vertex represents a data source
+// (DataResourceMode). Data sources are always re-read during the plan phase, so
+// they never need an explicit refresh call and can be safely excluded from the
+// refresh set.
+func isDataSource(v dag.Vertex) bool {
+	rn, ok := v.(GraphNodeConfigResource)
+	if !ok {
+		return false
+	}
+	return rn.ResourceAddr().Resource.Mode == addrs.DataResourceMode
+}
+
 // buildRefreshSet constructs the complete set of nodes that need refresh:
 // the changed nodes, all their ancestors (upstream dependencies), and all
 // their descendants (downstream dependents).
+//
+// Data sources are excluded from the refresh set: they are always re-read
+// during the plan phase and do not have remote state that can drift, so
+// including them in the refresh set is wasteful.
 func (t *SmartRefreshTransformer) buildRefreshSet(g *Graph, changedNodes dag.Set) dag.Set {
 	refreshSet := make(dag.Set)
 
 	for _, v := range changedNodes {
-		refreshSet.Add(v)
+		if !isDataSource(v) {
+			refreshSet.Add(v)
+		}
 
-		// Add all ancestors (dependencies).
+		// Add all ancestors (dependencies), excluding data sources.
 		ancestors, _ := g.Ancestors(v)
 		for _, a := range ancestors {
-			refreshSet.Add(a)
+			if !isDataSource(a) {
+				refreshSet.Add(a)
+			}
 		}
 
 		// Add all descendants (dependents) — conservative approach:
-		// refresh everything downstream.
+		// refresh everything downstream, excluding data sources.
 		descendants, _ := g.Descendents(v)
 		for _, d := range descendants {
-			refreshSet.Add(d)
+			if !isDataSource(d) {
+				refreshSet.Add(d)
+			}
 		}
 	}
 
