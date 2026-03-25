@@ -183,6 +183,7 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 				SchemaVersion:       isV4.SchemaVersion,
 				CreateBeforeDestroy: isV4.CreateBeforeDestroy,
 				SkipDestroy:         isV4.SkipDestroy,
+				ConfigExprHash:      isV4.ConfigExprHash,
 			}
 
 			{
@@ -590,6 +591,7 @@ func appendInstanceObjectStateV4(rs *states.Resource, is *states.ResourceInstanc
 		Dependencies:            deps,
 		CreateBeforeDestroy:     obj.CreateBeforeDestroy,
 		SkipDestroy:             obj.SkipDestroy,
+		ConfigExprHash:          obj.ConfigExprHash,
 	}), diags
 }
 
@@ -808,6 +810,8 @@ type instanceObjectStateV4 struct {
 
 	CreateBeforeDestroy bool `json:"create_before_destroy,omitempty"`
 	SkipDestroy         bool `json:"skip_destroy,omitempty"`
+
+	ConfigExprHash []byte `json:"config_expr_hash,omitempty"`
 }
 
 type checkResultsV4 struct {

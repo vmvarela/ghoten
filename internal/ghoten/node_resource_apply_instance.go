@@ -384,6 +384,12 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 	if state != nil {
 		// dependencies are always updated to match the configuration during apply
 		state.Dependencies = n.Dependencies
+		// Persist the structural fingerprint of the config block so that
+		// subsequent plans can detect whether the meta-arguments (count,
+		// for_each, depends_on) have changed without evaluating expressions.
+		if n.Config != nil {
+			state.ConfigExprHash = configExprHash(n.Config)
+		}
 	}
 	err = n.writeResourceInstanceState(ctx, evalCtx, state, workingState)
 	if err != nil {

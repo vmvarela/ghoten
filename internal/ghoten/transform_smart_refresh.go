@@ -4,14 +4,67 @@
 package ghoten
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"log"
+	"sort"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/dag"
 	"github.com/vmvarela/ghoten/internal/states"
 )
+
+// configExprHash computes a deterministic SHA-256 fingerprint over the
+// structural meta-arguments of a resource configuration block:
+//
+//   - The source ranges of count and for_each expressions (filename + byte
+//     offsets).  If either expression changes its source location the byte
+//     offsets shift and the digest changes.
+//   - The sorted list of depends_on traversal source ranges.
+//
+// Attribute values (e.g. ami = "…") are intentionally excluded: attribute
+// changes are caught by the plan diff, and we only need a cheap pre-signal
+// that the *structural* parts have changed.
+//
+// The returned slice is always 32 bytes (sha256.Size).
+func configExprHash(r *configs.Resource) []byte {
+	h := sha256.New()
+
+	// count expression — include file + byte range so relocating the block
+	// (e.g. adding a resource above it) also changes the digest.
+	if r.Count != nil {
+		rng := r.Count.StartRange()
+		fmt.Fprintf(h, "count:%s:%d-%d\n", rng.Filename, rng.Start.Byte, rng.End.Byte)
+	}
+
+	// for_each expression.
+	if r.ForEach != nil {
+		rng := r.ForEach.StartRange()
+		fmt.Fprintf(h, "for_each:%s:%d-%d\n", rng.Filename, rng.Start.Byte, rng.End.Byte)
+	}
+
+	// depends_on — collect as strings and sort for determinism.
+	deps := make([]string, 0, len(r.DependsOn))
+	for _, traversal := range r.DependsOn {
+		ref, diags := addrs.ParseRef(traversal)
+		if diags.HasErrors() {
+			// Fall back to source-range fingerprint for un-parseable traversals.
+			rng := traversal.SourceRange()
+			deps = append(deps, fmt.Sprintf("raw:%s:%d-%d", rng.Filename, rng.Start.Byte, rng.End.Byte))
+			continue
+		}
+		deps = append(deps, ref.Subject.String())
+	}
+	sort.Strings(deps)
+	for _, d := range deps {
+		fmt.Fprintf(h, "dep:%s\n", d)
+	}
+
+	return h.Sum(nil)
+}
 
 // GraphNodeSkipRefresh is implemented by graph nodes that support selective
 // refresh. The SmartRefreshTransformer uses this interface to mark nodes
@@ -196,15 +249,14 @@ func (t *SmartRefreshTransformer) configReferencesChanged(v dag.Vertex) bool {
 	return false
 }
 
-// configBodyChanged returns true if the resource's configuration body appears
-// to have been modified. This uses a heuristic based on the HCL source
-// content to detect changes without fully decoding the config.
+// configBodyChanged returns true if the resource's structural meta-arguments
+// (count, for_each, depends_on) appear to have changed relative to the
+// fingerprint stored in the prior state.
+//
+// If no fingerprint is stored (older state or first run after the feature
+// was introduced), the method falls back to the conservative answer: assume
+// changed, which forces a full refresh.
 func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
-	configResource, ok := v.(GraphNodeAttachResourceConfig)
-	if !ok {
-		return false
-	}
-
 	rn, ok := v.(GraphNodeConfigResource)
 	if !ok {
 		return false
@@ -238,24 +290,32 @@ func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
 		return true
 	}
 
-	// Compare the config's source range against what we had before.
-	// If the resource has a Config attached, check if it has content
-	// (non-empty body). Any resource with config attached that exists
-	// in state will be further evaluated during plan — we use the
-	// JustAttributes count as a rough signal.
-	_ = configResource // interface satisfied; actual comparison is heuristic
+	currentHash := configExprHash(rc)
 
-	// For now, we use a simple heuristic: if the resource has count/for_each
-	// expressions, mark as potentially changed (conservative).
-	if rc.Count != nil || rc.ForEach != nil {
-		// Can't cheaply determine if count/for_each changed without evaluation.
-		// Mark as changed to be safe.
-		return true
+	// Compare against every instance's stored hash. If any instance has
+	// a nil hash (old state) or a different hash, mark as changed.
+	for _, rs := range t.State.Resources(addr) {
+		for _, is := range rs.Instances {
+			if is.Current == nil {
+				continue
+			}
+			if is.Current.ConfigExprHash == nil {
+				// No fingerprint stored — conservative fallback.
+				log.Printf("[DEBUG] SmartRefreshTransformer: %q has no stored fingerprint, assuming changed", addr)
+				return true
+			}
+			if !bytes.Equal(is.Current.ConfigExprHash, currentHash) {
+				log.Printf("[DEBUG] SmartRefreshTransformer: %q fingerprint mismatch, config body changed", addr)
+				return true
+			}
+			// Only need to check the first instance — structural attrs are
+			// per-resource, not per-instance.
+			return false
+		}
 	}
 
-	// If we can't determine a change, assume unchanged (optimistic for
-	// resources without count/for_each).
-	return false
+	// No instances in state — treat as new/changed.
+	return true
 }
 
 // buildRefreshSet constructs the complete set of nodes that need refresh:

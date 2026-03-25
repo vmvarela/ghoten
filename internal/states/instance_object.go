@@ -52,6 +52,12 @@ type ResourceInstanceObject struct {
 	CreateBeforeDestroy bool
 
 	SkipDestroy bool
+
+	// ConfigExprHash is a SHA-256 fingerprint of the syntactic structure of
+	// the resource's count, for_each, and depends_on expressions. It is
+	// persisted in state and used by the SmartRefreshTransformer to detect
+	// configuration changes between runs.
+	ConfigExprHash []byte
 }
 
 // ObjectStatus represents the status of a RemoteObject.
@@ -151,6 +157,7 @@ func (o *ResourceInstanceObject) Encode(ty cty.Type, schemaVersion uint64) (*Res
 		Dependencies:            dependencies,
 		CreateBeforeDestroy:     o.CreateBeforeDestroy,
 		SkipDestroy:             o.SkipDestroy,
+		ConfigExprHash:          o.ConfigExprHash,
 	}, nil
 }
 

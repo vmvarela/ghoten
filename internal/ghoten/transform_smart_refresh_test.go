@@ -4,7 +4,12 @@
 package ghoten
 
 import (
+	"bytes"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hcltest"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs"
@@ -206,4 +211,107 @@ func TestGraphNodeSkipRefreshInterface(t *testing.T) {
 	var _ GraphNodeSkipRefresh = (*NodePlannableResourceInstanceOrphan)(nil)
 	var _ GraphNodeSkipRefresh = (*NodePlanDestroyableResourceInstance)(nil)
 	var _ GraphNodeSkipRefresh = (*NodePlanDeposedResourceInstanceObject)(nil)
+}
+
+// --- configExprHash tests ---
+
+// makeTestResource builds a minimal configs.Resource suitable for
+// configExprHash tests.
+func makeTestResource(count, forEach hcl.Expression, dependsOn []hcl.Traversal) *configs.Resource {
+	return &configs.Resource{
+		Mode:      addrs.ManagedResourceMode,
+		Type:      "aws_instance",
+		Name:      "web",
+		Config:    configs.SynthBody("", map[string]cty.Value{}),
+		Count:     count,
+		ForEach:   forEach,
+		DependsOn: dependsOn,
+	}
+}
+
+func TestConfigExprHash_Deterministic(t *testing.T) {
+	// The same resource must always produce the same hash.
+	count := hcltest.MockExprLiteral(cty.NumberIntVal(3))
+	r := makeTestResource(count, nil, nil)
+
+	h1 := configExprHash(r)
+	h2 := configExprHash(r)
+	if !bytes.Equal(h1, h2) {
+		t.Errorf("configExprHash is not deterministic: %x != %x", h1, h2)
+	}
+}
+
+func TestConfigExprHash_EmptyResource(t *testing.T) {
+	// A resource with no count, for_each or depends_on must still produce
+	// a non-nil, fixed-length digest.
+	r := makeTestResource(nil, nil, nil)
+	h := configExprHash(r)
+	if len(h) != 32 {
+		t.Errorf("expected 32-byte SHA-256 digest, got %d bytes", len(h))
+	}
+}
+
+func TestConfigExprHash_CountChanges(t *testing.T) {
+	// A resource with count must produce a different hash than one without.
+	withCount := makeTestResource(hcltest.MockExprLiteral(cty.NumberIntVal(2)), nil, nil)
+	withoutCount := makeTestResource(nil, nil, nil)
+
+	hWith := configExprHash(withCount)
+	hWithout := configExprHash(withoutCount)
+
+	if bytes.Equal(hWith, hWithout) {
+		t.Errorf("expected different hashes for resources with/without count, got the same")
+	}
+}
+
+func TestConfigExprHash_ForEachChanges(t *testing.T) {
+	// A resource with for_each must produce a different hash than one without.
+	withForEach := makeTestResource(nil, hcltest.MockExprLiteral(cty.StringVal("a")), nil)
+	withoutForEach := makeTestResource(nil, nil, nil)
+
+	hWith := configExprHash(withForEach)
+	hWithout := configExprHash(withoutForEach)
+
+	if bytes.Equal(hWith, hWithout) {
+		t.Errorf("expected different hashes for resources with/without for_each, got the same")
+	}
+}
+
+func TestConfigExprHash_DependsOnChanges(t *testing.T) {
+	// Adding a depends_on entry must change the hash.
+	dep := hcl.Traversal{
+		hcl.TraverseRoot{Name: "aws_security_group"},
+		hcl.TraverseAttr{Name: "main"},
+	}
+	withDep := makeTestResource(nil, nil, []hcl.Traversal{dep})
+	withoutDep := makeTestResource(nil, nil, nil)
+
+	hWith := configExprHash(withDep)
+	hWithout := configExprHash(withoutDep)
+
+	if bytes.Equal(hWith, hWithout) {
+		t.Errorf("expected different hashes for resources with/without depends_on, got the same")
+	}
+}
+
+func TestConfigExprHash_DependsOnOrderIndependent(t *testing.T) {
+	// The hash must be stable regardless of the order depends_on entries appear.
+	depA := hcl.Traversal{
+		hcl.TraverseRoot{Name: "aws_security_group"},
+		hcl.TraverseAttr{Name: "main"},
+	}
+	depB := hcl.Traversal{
+		hcl.TraverseRoot{Name: "aws_vpc"},
+		hcl.TraverseAttr{Name: "main"},
+	}
+
+	rAB := makeTestResource(nil, nil, []hcl.Traversal{depA, depB})
+	rBA := makeTestResource(nil, nil, []hcl.Traversal{depB, depA})
+
+	hAB := configExprHash(rAB)
+	hBA := configExprHash(rBA)
+
+	if !bytes.Equal(hAB, hBA) {
+		t.Errorf("configExprHash is not order-independent for depends_on: %x != %x", hAB, hBA)
+	}
 }
