@@ -11,9 +11,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // countHook is a hook that counts the number of resources
@@ -24,6 +24,7 @@ type countHook struct {
 	Removed   int
 	Imported  int
 	Forgotten int
+	Refreshed int // number of resources that completed a refresh (PostRefresh called)
 
 	ToAdd          int
 	ToChange       int
@@ -48,6 +49,7 @@ func (h *countHook) Reset() {
 	h.Removed = 0
 	h.Imported = 0
 	h.Forgotten = 0
+	h.Refreshed = 0
 }
 
 func (h *countHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generation, action plans.Action, priorState, plannedNewState cty.Value) (ghoten.HookAction, error) {
@@ -129,4 +131,21 @@ func (h *countHook) PostApplyForget(_ addrs.AbsResourceInstance) (ghoten.HookAct
 
 	h.Forgotten++
 	return ghoten.HookActionContinue, nil
+}
+
+func (h *countHook) PostRefresh(_ addrs.AbsResourceInstance, _ states.Generation, _ cty.Value, _ cty.Value) (ghoten.HookAction, error) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.Refreshed++
+	return ghoten.HookActionContinue, nil
+}
+
+// GetRefreshed returns the number of resources refreshed so far.
+// This implements the anonymous interface used in backend_plan.go to extract
+// the refresh count without creating a circular import.
+func (h *countHook) GetRefreshed() int {
+	h.Lock()
+	defer h.Unlock()
+	return h.Refreshed
 }

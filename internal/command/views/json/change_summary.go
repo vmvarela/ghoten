@@ -25,6 +25,12 @@ type ChangeSummary struct {
 	Remove    int       `json:"remove"`
 	Forget    int       `json:"forget"`
 	Operation Operation `json:"operation"`
+
+	// SmartRefresh is true when the plan ran with -refresh=smart.
+	// When true, Refreshed and RefreshSkipped are populated.
+	SmartRefresh   bool `json:"smart_refresh,omitempty"`
+	Refreshed      int  `json:"refreshed,omitempty"`
+	RefreshSkipped int  `json:"refresh_skipped,omitempty"`
 }
 
 // The summary strings for apply and plan are accidentally a public interface
@@ -62,4 +68,18 @@ func (cs *ChangeSummary) String() string {
 	default:
 		return fmt.Sprintf("%s: %d add, %d change, %d destroy", cs.Operation, cs.Add, cs.Change, cs.Remove)
 	}
+}
+
+// RefreshString returns the refresh summary line for smart refresh mode.
+// Returns an empty string when smart refresh is not active or no resources
+// were tracked.
+func (cs *ChangeSummary) RefreshString() string {
+	if !cs.SmartRefresh {
+		return ""
+	}
+	total := cs.Refreshed + cs.RefreshSkipped
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Refresh: %d/%d resources refreshed, %d skipped (smart mode).", cs.Refreshed, total, cs.RefreshSkipped)
 }

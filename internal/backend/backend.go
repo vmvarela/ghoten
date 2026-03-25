@@ -27,12 +27,12 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/depsfile"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // DefaultStateName is the name of the default, initial state that every
@@ -257,8 +257,9 @@ type Operation struct {
 	// PlanOutBackend is the backend to store with the plan. This is the
 	// backend that will be used when applying the plan.
 	PlanId         string
-	PlanRefresh    bool   // PlanRefresh will do a refresh before a plan
-	PlanOutPath    string // PlanOutPath is the path to save the plan
+	PlanRefresh    bool              // PlanRefresh will do a refresh before a plan
+	RefreshMode    plans.RefreshMode // RefreshMode controls smart/all/none refresh strategy
+	PlanOutPath    string            // PlanOutPath is the path to save the plan
 	PlanOutBackend *plans.Backend
 
 	// ConfigDir is the path to the directory containing the configuration's

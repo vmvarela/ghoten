@@ -20,11 +20,11 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/version"
 )
 
@@ -633,6 +633,12 @@ func TestShow_json_output(t *testing.T) {
 
 			args := []string{
 				"-out=tofu.plan",
+			}
+
+			// If the fixture expects drift detection, force all-resource refresh
+			// since smart refresh won't detect drift for unchanged config.
+			if strings.Contains(entry.Name(), "drift") {
+				args = append(args, "-refresh=true")
 			}
 
 			code = pc.Run(args)

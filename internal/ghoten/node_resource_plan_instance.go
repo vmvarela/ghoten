@@ -84,7 +84,13 @@ var (
 	_ GraphNodeAttachResourceConfig = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeExecutable           = (*NodePlannableResourceInstance)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstance)(nil)
 )
+
+// GraphNodeSkipRefresh
+func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
+}
 
 // GraphNodeEvalable
 func (n *NodePlannableResourceInstance) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {

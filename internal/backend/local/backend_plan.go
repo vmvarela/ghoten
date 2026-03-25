@@ -13,13 +13,13 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/genconfig"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func (b *Local) opPlan(
@@ -209,6 +209,16 @@ func (b *Local) opPlan(
 	if moreDiags.HasErrors() {
 		op.ReportResult(runningOp, diags)
 		return
+	}
+
+	// Annotate the plan with refresh telemetry for display.
+	plan.RefreshMode = op.RefreshMode
+	if op.RefreshMode == plans.RefreshSmart {
+		for _, h := range op.Hooks {
+			if ch, ok := h.(interface{ GetRefreshed() int }); ok {
+				plan.ResourcesRefreshed += ch.GetRefreshed()
+			}
+		}
 	}
 
 	op.View.Plan(plan, schemas)

@@ -26,13 +26,13 @@ import (
 	"github.com/vmvarela/ghoten/internal/checks"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestPlan(t *testing.T) {
@@ -666,6 +666,7 @@ func TestPlan_state(t *testing.T) {
 
 	args := []string{
 		"-state", statePath,
+		"-refresh=true",
 	}
 	code := c.Run(args)
 	output := done(t)
@@ -711,7 +712,9 @@ func TestPlan_stateDefault(t *testing.T) {
 		},
 	}
 
-	args := []string{}
+	// Use -refresh=true to force all-resources refresh; TestPlan_state exercises
+	// smart refresh behavior separately.
+	args := []string{"-refresh=true"}
 	code := c.Run(args)
 	output := done(t)
 	if code != 0 {

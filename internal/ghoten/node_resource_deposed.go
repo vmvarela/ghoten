@@ -66,6 +66,7 @@ var (
 	_ GraphNodeExecutable                    = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProviderConsumer              = (*NodePlanDeposedResourceInstanceObject)(nil)
 	_ GraphNodeProvisionerConsumer           = (*NodePlanDeposedResourceInstanceObject)(nil)
+	_ GraphNodeSkipRefresh                   = (*NodePlanDeposedResourceInstanceObject)(nil)
 )
 
 func (n *NodePlanDeposedResourceInstanceObject) Name() string {
@@ -74,6 +75,11 @@ func (n *NodePlanDeposedResourceInstanceObject) Name() string {
 
 func (n *NodePlanDeposedResourceInstanceObject) DeposedInstanceObjectKey() states.DeposedKey {
 	return n.DeposedKey
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlanDeposedResourceInstanceObject) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeReferenceable implementation, overriding the one from NodeAbstractResourceInstance

@@ -169,6 +169,7 @@ func (c *PlanCommand) OperationRequest(
 	opReq.PlanMode = args.PlanMode
 	opReq.Hooks = view.Hooks()
 	opReq.PlanRefresh = args.Refresh
+	opReq.RefreshMode = args.RefreshMode
 	opReq.PlanOutPath = planOutPath
 	opReq.GenerateConfigOut = generateConfigOut
 	opReq.Targets = args.Targets

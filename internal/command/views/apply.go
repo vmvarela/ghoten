@@ -11,9 +11,9 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/command/format"
 	"github.com/vmvarela/ghoten/internal/command/views/json"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // The Apply view is used for the apply command.
@@ -157,6 +157,12 @@ func (v *ApplyHuman) ResourceCount(stateOutPath string) {
 			v.countHook.Removed,
 		)
 	}
+	if v.countHook.Refreshed > 0 {
+		v.view.streams.Printf(
+			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed (smart mode).\n"),
+			v.countHook.Refreshed,
+		)
+	}
 	if (v.countHook.Added > 0 || v.countHook.Changed > 0) && stateOutPath != "" {
 		v.view.streams.Printf("\n%s\n\n", format.WordWrap(stateOutPathPostApply, v.view.outputColumns()))
 		v.view.streams.Printf("State path: %s\n", stateOutPath)
@@ -210,12 +216,14 @@ func (v *ApplyJSON) ResourceCount(stateOutPath string) {
 		operation = json.OperationDestroyed
 	}
 	v.view.ChangeSummary(&json.ChangeSummary{
-		Add:       v.countHook.Added,
-		Change:    v.countHook.Changed,
-		Remove:    v.countHook.Removed,
-		Import:    v.countHook.Imported,
-		Forget:    v.countHook.Forgotten,
-		Operation: operation,
+		Add:          v.countHook.Added,
+		Change:       v.countHook.Changed,
+		Remove:       v.countHook.Removed,
+		Import:       v.countHook.Imported,
+		Forget:       v.countHook.Forgotten,
+		Operation:    operation,
+		SmartRefresh: v.countHook.Refreshed > 0,
+		Refreshed:    v.countHook.Refreshed,
 	})
 }
 

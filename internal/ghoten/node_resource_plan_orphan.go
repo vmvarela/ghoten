@@ -50,10 +50,16 @@ var (
 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstanceOrphan)(nil)
 	_ GraphNodeExecutable           = (*NodePlannableResourceInstanceOrphan)(nil)
 	_ GraphNodeProviderConsumer     = (*NodePlannableResourceInstanceOrphan)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstanceOrphan)(nil)
 )
 
 func (n *NodePlannableResourceInstanceOrphan) Name() string {
 	return n.ResourceInstanceAddr().String() + " (orphan)"
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlannableResourceInstanceOrphan) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeExecutable

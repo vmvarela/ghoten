@@ -42,11 +42,17 @@ var (
 	_ GraphNodeExecutable           = (*NodePlanDestroyableResourceInstance)(nil)
 	_ GraphNodeProviderConsumer     = (*NodePlanDestroyableResourceInstance)(nil)
 	_ dag.NamedVertex               = (*NodePlanDestroyableResourceInstance)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlanDestroyableResourceInstance)(nil)
 )
 
 // dag.NamedVertex
 func (n *NodePlanDestroyableResourceInstance) Name() string {
 	return n.NodeAbstractResourceInstance.Name() + " (destroy)"
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlanDestroyableResourceInstance) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeDestroyer
