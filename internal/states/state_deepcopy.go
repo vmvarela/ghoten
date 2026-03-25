@@ -169,6 +169,12 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
 		copy(private, os.Private)
 	}
 
+	var configExprHash []byte
+	if os.ConfigExprHash != nil {
+		configExprHash = make([]byte, len(os.ConfigExprHash))
+		copy(configExprHash, os.ConfigExprHash)
+	}
+
 	// Some addrs.Referenceable implementations are technically mutable, but
 	// we treat them as immutable by convention and so we don't deep-copy here.
 	var dependencies []addrs.ConfigResource
@@ -188,6 +194,7 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
 		Dependencies:            dependencies,
 		CreateBeforeDestroy:     os.CreateBeforeDestroy,
 		SkipDestroy:             os.SkipDestroy,
+		ConfigExprHash:          configExprHash,
 	}
 }
 
