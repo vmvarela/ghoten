@@ -42,11 +42,17 @@ var (
 	_ GraphNodeExecutable           = (*NodePlanDestroyableResourceInstance)(nil)
 	_ GraphNodeProviderConsumer     = (*NodePlanDestroyableResourceInstance)(nil)
 	_ dag.NamedVertex               = (*NodePlanDestroyableResourceInstance)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlanDestroyableResourceInstance)(nil)
 )
 
 // dag.NamedVertex
 func (n *NodePlanDestroyableResourceInstance) Name() string {
 	return n.NodeAbstractResourceInstance.Name() + " (destroy)"
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlanDestroyableResourceInstance) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeDestroyer
@@ -128,6 +134,12 @@ func (n *NodePlanDestroyableResourceInstance) managedResourceExecute(ctx context
 			return diags
 		}
 		diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, state, refreshState))
+		if diags.HasErrors() {
+			return diags
+		}
+		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+			return h.PostSkipRefresh(addr, states.CurrentGen)
+		}))
 		if diags.HasErrors() {
 			return diags
 		}

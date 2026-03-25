@@ -66,6 +66,21 @@ type Plan struct {
 	// but can be cautiously inspected for debugging purposes.
 	Errored bool
 
+	// RefreshMode is the refresh strategy used when producing this plan.
+	// This is a transient field not written to the plan file; it is used
+	// only for display purposes when rendering the plan summary.
+	RefreshMode RefreshMode
+
+	// ResourcesRefreshed is the number of resources that were actually
+	// refreshed (ReadResource called) during planning. Only meaningful
+	// when RefreshMode == RefreshSmart.
+	ResourcesRefreshed int
+
+	// ResourcesSkipped is the number of resources whose refresh was skipped
+	// by smart refresh mode during planning. Only meaningful when
+	// RefreshMode == RefreshSmart.
+	ResourcesSkipped int
+
 	// Checks captures a snapshot of the (probably-incomplete) check results
 	// at the end of the planning process.
 	//

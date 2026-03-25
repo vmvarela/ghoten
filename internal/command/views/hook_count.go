@@ -11,19 +11,21 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // countHook is a hook that counts the number of resources
 // added, removed, changed during the course of an apply.
 type countHook struct {
-	Added     int
-	Changed   int
-	Removed   int
-	Imported  int
-	Forgotten int
+	Added          int
+	Changed        int
+	Removed        int
+	Imported       int
+	Forgotten      int
+	Refreshed      int // number of resources that completed a refresh (PostRefresh called)
+	RefreshSkipped int // number of resources whose refresh was skipped (PostSkipRefresh called)
 
 	ToAdd          int
 	ToChange       int
@@ -48,6 +50,8 @@ func (h *countHook) Reset() {
 	h.Removed = 0
 	h.Imported = 0
 	h.Forgotten = 0
+	h.Refreshed = 0
+	h.RefreshSkipped = 0
 }
 
 func (h *countHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generation, action plans.Action, priorState, plannedNewState cty.Value) (ghoten.HookAction, error) {
@@ -129,4 +133,37 @@ func (h *countHook) PostApplyForget(_ addrs.AbsResourceInstance) (ghoten.HookAct
 
 	h.Forgotten++
 	return ghoten.HookActionContinue, nil
+}
+
+func (h *countHook) PostRefresh(_ addrs.AbsResourceInstance, _ states.Generation, _ cty.Value, _ cty.Value) (ghoten.HookAction, error) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.Refreshed++
+	return ghoten.HookActionContinue, nil
+}
+
+// GetRefreshed returns the number of resources refreshed so far.
+// This implements the anonymous interface used in backend_plan.go to extract
+// the refresh count without creating a circular import.
+func (h *countHook) GetRefreshed() int {
+	h.Lock()
+	defer h.Unlock()
+	return h.Refreshed
+}
+
+func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (ghoten.HookAction, error) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.RefreshSkipped++
+	return ghoten.HookActionContinue, nil
+}
+
+// GetRefreshSkipped returns the number of resources whose refresh was skipped.
+// This implements the anonymous interface used in backend_plan.go.
+func (h *countHook) GetRefreshSkipped() int {
+	h.Lock()
+	defer h.Unlock()
+	return h.RefreshSkipped
 }

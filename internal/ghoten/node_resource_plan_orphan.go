@@ -50,10 +50,16 @@ var (
 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstanceOrphan)(nil)
 	_ GraphNodeExecutable           = (*NodePlannableResourceInstanceOrphan)(nil)
 	_ GraphNodeProviderConsumer     = (*NodePlannableResourceInstanceOrphan)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstanceOrphan)(nil)
 )
 
 func (n *NodePlannableResourceInstanceOrphan) Name() string {
 	return n.ResourceInstanceAddr().String() + " (orphan)"
+}
+
+// GraphNodeSkipRefresh
+func (n *NodePlannableResourceInstanceOrphan) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
 }
 
 // GraphNodeExecutable
@@ -175,6 +181,13 @@ func (n *NodePlannableResourceInstanceOrphan) managedResourceExecute(ctx context
 		// If we refreshed then our subsequent planning should be in terms of
 		// the new object, not the original object.
 		oldState = refreshedState
+	} else {
+		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+			return h.PostSkipRefresh(n.Addr, states.CurrentGen)
+		}))
+		if diags.HasErrors() {
+			return diags
+		}
 	}
 
 	// If we're skipping planning, all we need to do is write the state. If the

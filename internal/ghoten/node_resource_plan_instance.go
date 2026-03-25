@@ -84,7 +84,13 @@ var (
 	_ GraphNodeAttachResourceConfig = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstance)(nil)
 	_ GraphNodeExecutable           = (*NodePlannableResourceInstance)(nil)
+	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstance)(nil)
 )
+
+// GraphNodeSkipRefresh
+func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
+	n.skipRefresh = v
+}
 
 // GraphNodeEvalable
 func (n *NodePlannableResourceInstance) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {
@@ -338,6 +344,14 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			instanceRefreshState.SkipDestroy = skipDestroy
 
 			if n.skipRefresh {
+				// Notify hooks that this resource's refresh was intentionally skipped
+				// (e.g. smart refresh mode determined no config change).
+				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+					return h.PostSkipRefresh(n.Addr, states.CurrentGen)
+				}))
+				if diags.HasErrors() {
+					return diags
+				}
 				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy {
 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
 					if diags.HasErrors() {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
+	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/zclconf/go-cty/cty"
@@ -250,6 +251,179 @@ func TestApplyHuman_resourceCountStatePath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyHuman_resourceCountSmartRefresh(t *testing.T) {
+	testCases := []struct {
+		name         string
+		refreshed    int
+		skipped      int
+		wantContains string
+		wantMissing  string
+	}{
+		{
+			name:         "all skipped",
+			refreshed:    0,
+			skipped:      5,
+			wantContains: "Refresh: 0 resources refreshed, 5 skipped (smart mode).",
+		},
+		{
+			name:         "mixed",
+			refreshed:    2,
+			skipped:      3,
+			wantContains: "Refresh: 2 resources refreshed, 3 skipped (smart mode).",
+		},
+		{
+			name:         "all refreshed",
+			refreshed:    4,
+			skipped:      0,
+			wantContains: "Refresh: 4 resources refreshed, 0 skipped (smart mode).",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			streams, done := terminal.StreamsForTesting(t)
+			v := NewApply(arguments.ViewOptions{ViewType: arguments.ViewHuman}, false, NewView(streams), plans.RefreshSmart)
+			hooks := v.Hooks()
+
+			var count *countHook
+			for _, hook := range hooks {
+				if ch, ok := hook.(*countHook); ok {
+					count = ch
+				}
+			}
+			if count == nil {
+				t.Fatalf("expected Hooks to include a countHook: %#v", hooks)
+			}
+
+			count.Added = 1
+			count.Refreshed = tc.refreshed
+			count.RefreshSkipped = tc.skipped
+
+			v.ResourceCount("")
+
+			got := done(t).Stdout()
+			if !strings.Contains(got, tc.wantContains) {
+				t.Errorf("wrong result\ngot:  %q\nwant to contain: %q", got, tc.wantContains)
+			}
+		})
+	}
+}
+
+// TestApplyHuman_resourceCountNoSmartRefresh verifies that the refresh line is
+// not emitted when smart refresh mode is not active.
+func TestApplyHuman_resourceCountNoSmartRefresh(t *testing.T) {
+	streams, done := terminal.StreamsForTesting(t)
+	v := NewApply(arguments.ViewOptions{ViewType: arguments.ViewHuman}, false, NewView(streams), plans.RefreshAll)
+	hooks := v.Hooks()
+
+	var count *countHook
+	for _, hook := range hooks {
+		if ch, ok := hook.(*countHook); ok {
+			count = ch
+		}
+	}
+	if count == nil {
+		t.Fatalf("expected Hooks to include a countHook: %#v", hooks)
+	}
+
+	count.Added = 1
+	count.Refreshed = 3
+
+	v.ResourceCount("")
+
+	got := done(t).Stdout()
+	if strings.Contains(got, "smart mode") {
+		t.Errorf("should not contain smart mode output when RefreshAll: %q", got)
+	}
+}
+
+// TestApplyJSON_resourceCountSmartRefresh verifies that the JSON change summary
+// includes smart_refresh, refreshed, and refresh_skipped fields when active.
+func TestApplyJSON_resourceCountSmartRefresh(t *testing.T) {
+	streams, done := terminal.StreamsForTesting(t)
+	v := NewApply(arguments.ViewOptions{ViewType: arguments.ViewJSON}, false, NewView(streams), plans.RefreshSmart)
+	hooks := v.Hooks()
+
+	var count *countHook
+	for _, hook := range hooks {
+		if ch, ok := hook.(*countHook); ok {
+			count = ch
+		}
+	}
+	if count == nil {
+		t.Fatalf("expected Hooks to include a countHook: %#v", hooks)
+	}
+
+	count.Added = 1
+	count.Refreshed = 2
+	count.RefreshSkipped = 3
+
+	v.ResourceCount("")
+
+	want := []map[string]interface{}{
+		{
+			"@level":   "info",
+			"@message": "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.",
+			"@module":  "ghoten.ui",
+			"type":     "change_summary",
+			"changes": map[string]interface{}{
+				"add":             float64(1),
+				"change":          float64(0),
+				"remove":          float64(0),
+				"import":          float64(0),
+				"forget":          float64(0),
+				"operation":       "apply",
+				"smart_refresh":   true,
+				"refreshed":       float64(2),
+				"refresh_skipped": float64(3),
+			},
+		},
+	}
+	testJSONViewOutputEquals(t, done(t).Stdout(), want)
+}
+
+// TestApplyJSON_resourceCountNoSmartRefresh verifies that the JSON change summary
+// does NOT include smart_refresh fields when mode is not smart.
+func TestApplyJSON_resourceCountNoSmartRefresh(t *testing.T) {
+	streams, done := terminal.StreamsForTesting(t)
+	v := NewApply(arguments.ViewOptions{ViewType: arguments.ViewJSON}, false, NewView(streams), plans.RefreshAll)
+	hooks := v.Hooks()
+
+	var count *countHook
+	for _, hook := range hooks {
+		if ch, ok := hook.(*countHook); ok {
+			count = ch
+		}
+	}
+	if count == nil {
+		t.Fatalf("expected Hooks to include a countHook: %#v", hooks)
+	}
+
+	count.Added = 1
+	count.Changed = 2
+	count.Removed = 3
+
+	v.ResourceCount("")
+
+	want := []map[string]interface{}{
+		{
+			"@level":   "info",
+			"@message": "Apply complete! Resources: 1 added, 2 changed, 3 destroyed.",
+			"@module":  "ghoten.ui",
+			"type":     "change_summary",
+			"changes": map[string]interface{}{
+				"add":       float64(1),
+				"change":    float64(2),
+				"remove":    float64(3),
+				"import":    float64(0),
+				"forget":    float64(0),
+				"operation": "apply",
+			},
+		},
+	}
+	testJSONViewOutputEquals(t, done(t).Stdout(), want)
 }
 
 // Basic test coverage of Outputs, since most of its functionality is tested

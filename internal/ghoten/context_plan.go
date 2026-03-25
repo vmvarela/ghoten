@@ -44,6 +44,13 @@ type PlanOpts struct {
 	// instance using its corresponding provider.
 	SkipRefresh bool
 
+	// RefreshMode controls the granularity of refresh operations. When set
+	// to RefreshSmart, only resources with configuration changes and their
+	// dependency subgraph will be refreshed. RefreshAll refreshes everything
+	// (legacy behavior), and RefreshNone skips all refresh (same as
+	// SkipRefresh=true). When SkipRefresh is true, RefreshMode is ignored.
+	RefreshMode plans.RefreshMode
+
 	// PreDestroyRefresh indicated that this is being passed to a plan used to
 	// refresh the state immediately before a destroy plan.
 	// FIXME: This is a temporary fix to allow the pre-destroy refresh to
@@ -884,6 +891,7 @@ func (c *Context) planGraph(ctx context.Context, config *configs.Config, prevRun
 			Excludes:                opts.Excludes,
 			ForceReplace:            opts.ForceReplace,
 			skipRefresh:             opts.SkipRefresh,
+			smartRefresh:            opts.RefreshMode == plans.RefreshSmart,
 			preDestroyRefresh:       opts.PreDestroyRefresh,
 			Operation:               walkPlan,
 			ExternalReferences:      opts.ExternalReferences,
@@ -902,6 +910,7 @@ func (c *Context) planGraph(ctx context.Context, config *configs.Config, prevRun
 			Targets:                 opts.Targets,
 			Excludes:                opts.Excludes,
 			skipRefresh:             opts.SkipRefresh,
+			smartRefresh:            opts.RefreshMode == plans.RefreshSmart,
 			skipPlanChanges:         true, // this activates "refresh only" mode.
 			Operation:               walkPlan,
 			ExternalReferences:      opts.ExternalReferences,

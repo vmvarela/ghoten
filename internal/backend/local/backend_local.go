@@ -17,11 +17,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configload"
+	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
-	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 )
 
 // Ensure that local.Local implements the backend.Local interface.
@@ -209,6 +209,7 @@ func (b *Local) localRunDirect(ctx context.Context, op *backend.Operation, run *
 		ForceReplace:       op.ForceReplace,
 		SetVariables:       variables,
 		SkipRefresh:        op.Type != backend.OperationTypeRefresh && !op.PlanRefresh,
+		RefreshMode:        op.RefreshMode,
 		GenerateConfigPath: op.GenerateConfigOut,
 	}
 	run.PlanOpts = planOpts
