@@ -352,3 +352,56 @@ func (t *SmartRefreshTransformer) skipAllRefresh(g *Graph) {
 		}
 	}
 }
+
+// backfillConfigExprHashes iterates over all resource instances in the state
+// and ensures each one has a ConfigExprHash computed from the current
+// configuration. This is needed because resources with no planned changes
+// (NoOp) are not visited by the apply graph walker, so their hashes would
+// never be populated otherwise.
+func backfillConfigExprHashes(state *states.State, config *configs.Config) {
+	if state == nil || config == nil {
+		return
+	}
+
+	for _, ms := range state.Modules {
+		modCfg := config.Descendent(ms.Addr.Module())
+		if modCfg == nil {
+			continue
+		}
+
+		for _, rs := range ms.Resources {
+			// Find the matching config resource.
+			var rc *configs.Resource
+			switch rs.Addr.Resource.Mode {
+			case addrs.ManagedResourceMode:
+				for _, r := range modCfg.Module.ManagedResources {
+					if r.Type == rs.Addr.Resource.Type && r.Name == rs.Addr.Resource.Name {
+						rc = r
+						break
+					}
+				}
+			case addrs.DataResourceMode:
+				for _, r := range modCfg.Module.DataResources {
+					if r.Type == rs.Addr.Resource.Type && r.Name == rs.Addr.Resource.Name {
+						rc = r
+						break
+					}
+				}
+			}
+			if rc == nil {
+				continue // orphan resource, no config to hash
+			}
+
+			hash := configExprHash(rc)
+			for key, is := range rs.Instances {
+				if is.Current == nil {
+					continue
+				}
+				if !bytes.Equal(is.Current.ConfigExprHash, hash) {
+					is.Current.ConfigExprHash = hash
+					log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s]", rs.Addr, key)
+				}
+			}
+		}
+	}
+}

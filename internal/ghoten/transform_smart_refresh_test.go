@@ -315,3 +315,117 @@ func TestConfigExprHash_DependsOnOrderIndependent(t *testing.T) {
 		t.Errorf("configExprHash is not order-independent for depends_on: %x != %x", hAB, hBA)
 	}
 }
+
+// --- backfillConfigExprHashes tests ---
+
+func TestBackfillConfigExprHashes_PopulatesHash(t *testing.T) {
+	// backfillConfigExprHashes must set ConfigExprHash on instances that don't
+	// already have one.
+	rc := makeTestResource(nil, nil, nil)
+	expectedHash := configExprHash(rc)
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: rc.Type,
+				Name: rc.Name,
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:    states.ObjectReady,
+				AttrsJSON: []byte(`{"id":"abc"}`),
+				// ConfigExprHash deliberately left nil
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				rc.Type + "." + rc.Name: rc,
+			},
+		},
+	}
+
+	backfillConfigExprHashes(state, cfg)
+
+	// Verify the hash was set.
+	ms := state.Module(addrs.RootModuleInstance)
+	if ms == nil {
+		t.Fatal("root module not found in state after backfill")
+	}
+	rsAddr := addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name}
+	rs := ms.Resource(rsAddr)
+	if rs == nil {
+		t.Fatal("resource not found in state after backfill")
+	}
+	is := rs.Instance(addrs.NoKey)
+	if is == nil || is.Current == nil {
+		t.Fatal("resource instance not found in state after backfill")
+	}
+	if !bytes.Equal(is.Current.ConfigExprHash, expectedHash) {
+		t.Errorf("ConfigExprHash not set correctly: got %x, want %x", is.Current.ConfigExprHash, expectedHash)
+	}
+}
+
+func TestBackfillConfigExprHashes_PreservesExistingHash(t *testing.T) {
+	// backfillConfigExprHashes must NOT overwrite an existing hash that already
+	// matches the current config.
+	rc := makeTestResource(nil, nil, nil)
+	existingHash := configExprHash(rc)
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: rc.Type,
+				Name: rc.Name,
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"abc"}`),
+				ConfigExprHash: existingHash,
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				rc.Type + "." + rc.Name: rc,
+			},
+		},
+	}
+
+	backfillConfigExprHashes(state, cfg)
+
+	ms := state.Module(addrs.RootModuleInstance)
+	rs := ms.Resource(addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name})
+	is := rs.Instance(addrs.NoKey)
+	if !bytes.Equal(is.Current.ConfigExprHash, existingHash) {
+		t.Errorf("backfill overwrote an already-correct hash: got %x, want %x",
+			is.Current.ConfigExprHash, existingHash)
+	}
+}
+
+func TestBackfillConfigExprHashes_NilState(t *testing.T) {
+	// Must not panic on nil state.
+	cfg := &configs.Config{Module: &configs.Module{}}
+	backfillConfigExprHashes(nil, cfg)
+}
+
+func TestBackfillConfigExprHashes_NilConfig(t *testing.T) {
+	// Must not panic on nil config.
+	state := states.NewState()
+	backfillConfigExprHashes(state, nil)
+}

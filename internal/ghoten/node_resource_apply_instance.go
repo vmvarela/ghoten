@@ -6,6 +6,7 @@
 package ghoten
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -365,7 +366,18 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 
 	// If there is no change, there was nothing to apply, and we don't need to
 	// re-write the state, but we do need to re-evaluate postconditions.
+	// We do however persist the structural fingerprint so that subsequent plans
+	// can detect config changes for resources with no planned changes.
 	if diffApply.Action == plans.NoOp {
+		if n.Config != nil && state != nil {
+			newHash := configExprHash(n.Config)
+			if !bytes.Equal(state.ConfigExprHash, newHash) {
+				state.ConfigExprHash = newHash
+				if err := n.writeResourceInstanceState(ctx, evalCtx, state, workingState); err != nil {
+					return diags.Append(err)
+				}
+			}
+		}
 		return diags.Append(n.managedResourcePostconditions(ctx, evalCtx, repeatData))
 	}
 
