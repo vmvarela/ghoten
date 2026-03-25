@@ -76,6 +76,11 @@ type Plan struct {
 	// when RefreshMode == RefreshSmart.
 	ResourcesRefreshed int
 
+	// ResourcesSkipped is the number of resources whose refresh was skipped
+	// by smart refresh mode during planning. Only meaningful when
+	// RefreshMode == RefreshSmart.
+	ResourcesSkipped int
+
 	// Checks captures a snapshot of the (probably-incomplete) check results
 	// at the end of the planning process.
 	//

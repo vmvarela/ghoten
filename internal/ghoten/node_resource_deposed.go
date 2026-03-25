@@ -164,6 +164,13 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx context.Context, eva
 		// If we refreshed then our subsequent planning should be in terms of
 		// the new object, not the original object.
 		state = refreshedState
+	} else if n.skipRefresh {
+		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+			return h.PostSkipRefresh(n.Addr, n.DeposedKey)
+		}))
+		if diags.HasErrors() {
+			return diags
+		}
 	}
 
 	if !n.skipPlanChanges {

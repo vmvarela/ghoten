@@ -19,12 +19,13 @@ import (
 // countHook is a hook that counts the number of resources
 // added, removed, changed during the course of an apply.
 type countHook struct {
-	Added     int
-	Changed   int
-	Removed   int
-	Imported  int
-	Forgotten int
-	Refreshed int // number of resources that completed a refresh (PostRefresh called)
+	Added          int
+	Changed        int
+	Removed        int
+	Imported       int
+	Forgotten      int
+	Refreshed      int // number of resources that completed a refresh (PostRefresh called)
+	RefreshSkipped int // number of resources whose refresh was skipped (PostSkipRefresh called)
 
 	ToAdd          int
 	ToChange       int
@@ -50,6 +51,7 @@ func (h *countHook) Reset() {
 	h.Imported = 0
 	h.Forgotten = 0
 	h.Refreshed = 0
+	h.RefreshSkipped = 0
 }
 
 func (h *countHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generation, action plans.Action, priorState, plannedNewState cty.Value) (ghoten.HookAction, error) {
@@ -148,4 +150,20 @@ func (h *countHook) GetRefreshed() int {
 	h.Lock()
 	defer h.Unlock()
 	return h.Refreshed
+}
+
+func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (ghoten.HookAction, error) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.RefreshSkipped++
+	return ghoten.HookActionContinue, nil
+}
+
+// GetRefreshSkipped returns the number of resources whose refresh was skipped.
+// This implements the anonymous interface used in backend_plan.go.
+func (h *countHook) GetRefreshSkipped() int {
+	h.Lock()
+	defer h.Unlock()
+	return h.RefreshSkipped
 }

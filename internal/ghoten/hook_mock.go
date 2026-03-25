@@ -472,3 +472,7 @@ func (h *MockHook) PostStateUpdate(fn func(*states.SyncState)) (HookAction, erro
 	h.PostStateUpdateFn = fn
 	return h.PostStateUpdateReturn, h.PostStateUpdateError
 }
+
+func (h *MockHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {
+	return HookActionContinue, nil
+}

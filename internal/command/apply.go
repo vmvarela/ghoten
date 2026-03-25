@@ -58,7 +58,7 @@ func (c *ApplyCommand) Run(rawArgs []string) int {
 
 	// Instantiate the view, even if there are flag errors, so that we render
 	// diagnostics according to the desired view
-	view := views.NewApply(args.ViewOptions, c.Destroy, c.View)
+	view := views.NewApply(args.ViewOptions, c.Destroy, c.View, args.Operation.RefreshMode)
 
 	if diags.HasErrors() {
 		view.Diagnostics(diags)

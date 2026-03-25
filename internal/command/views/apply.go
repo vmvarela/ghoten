@@ -12,6 +12,7 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/format"
 	"github.com/vmvarela/ghoten/internal/command/views/json"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
@@ -29,14 +30,19 @@ type Apply interface {
 }
 
 // NewApply returns an initialized Apply implementation for the given ViewType.
-func NewApply(args arguments.ViewOptions, destroy bool, view *View) Apply {
+func NewApply(args arguments.ViewOptions, destroy bool, view *View, refreshMode ...plans.RefreshMode) Apply {
+	rm := plans.RefreshAll // default: not smart
+	if len(refreshMode) > 0 {
+		rm = refreshMode[0]
+	}
 	var apply Apply
 	switch args.ViewType {
 	case arguments.ViewJSON:
 		apply = &ApplyJSON{
-			view:      NewJSONView(view, nil),
-			destroy:   destroy,
-			countHook: &countHook{},
+			view:        NewJSONView(view, nil),
+			destroy:     destroy,
+			countHook:   &countHook{},
+			refreshMode: rm,
 		}
 	case arguments.ViewHuman:
 		apply = &ApplyHuman{
@@ -44,6 +50,7 @@ func NewApply(args arguments.ViewOptions, destroy bool, view *View) Apply {
 			destroy:      destroy,
 			inAutomation: view.RunningInAutomation(),
 			countHook:    &countHook{},
+			refreshMode:  rm,
 		}
 	default:
 		panic(fmt.Sprintf("unknown view type %v", args.ViewType))
@@ -51,9 +58,10 @@ func NewApply(args arguments.ViewOptions, destroy bool, view *View) Apply {
 
 	if args.JSONInto != nil {
 		apply = ApplyMulti{apply, &ApplyJSON{
-			view:      NewJSONView(view, args.JSONInto),
-			destroy:   destroy,
-			countHook: &countHook{},
+			view:        NewJSONView(view, args.JSONInto),
+			destroy:     destroy,
+			countHook:   &countHook{},
+			refreshMode: rm,
 		}}
 	}
 	return apply
@@ -111,7 +119,8 @@ type ApplyHuman struct {
 	destroy      bool
 	inAutomation bool
 
-	countHook *countHook
+	countHook   *countHook
+	refreshMode plans.RefreshMode
 }
 
 var _ Apply = (*ApplyHuman)(nil)
@@ -157,10 +166,11 @@ func (v *ApplyHuman) ResourceCount(stateOutPath string) {
 			v.countHook.Removed,
 		)
 	}
-	if v.countHook.Refreshed > 0 {
+	if v.refreshMode == plans.RefreshSmart {
 		v.view.streams.Printf(
-			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed (smart mode).\n"),
+			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed, %d skipped (smart mode).\n"),
 			v.countHook.Refreshed,
+			v.countHook.RefreshSkipped,
 		)
 	}
 	if (v.countHook.Added > 0 || v.countHook.Changed > 0) && stateOutPath != "" {
@@ -205,7 +215,8 @@ type ApplyJSON struct {
 
 	destroy bool
 
-	countHook *countHook
+	countHook   *countHook
+	refreshMode plans.RefreshMode
 }
 
 var _ Apply = (*ApplyJSON)(nil)
@@ -216,14 +227,15 @@ func (v *ApplyJSON) ResourceCount(stateOutPath string) {
 		operation = json.OperationDestroyed
 	}
 	v.view.ChangeSummary(&json.ChangeSummary{
-		Add:          v.countHook.Added,
-		Change:       v.countHook.Changed,
-		Remove:       v.countHook.Removed,
-		Import:       v.countHook.Imported,
-		Forget:       v.countHook.Forgotten,
-		Operation:    operation,
-		SmartRefresh: v.countHook.Refreshed > 0,
-		Refreshed:    v.countHook.Refreshed,
+		Add:            v.countHook.Added,
+		Change:         v.countHook.Changed,
+		Remove:         v.countHook.Removed,
+		Import:         v.countHook.Imported,
+		Forget:         v.countHook.Forgotten,
+		Operation:      operation,
+		SmartRefresh:   v.refreshMode == plans.RefreshSmart,
+		Refreshed:      v.countHook.Refreshed,
+		RefreshSkipped: v.countHook.RefreshSkipped,
 	})
 }
 

@@ -192,10 +192,11 @@ func (v *OperationHuman) Plan(plan *plans.Plan, schemas *ghoten.Schemas) {
 	renderer.RenderHumanPlan(jplan, plan.UIMode, opts...)
 
 	// Emit the smart refresh summary line, if applicable.
-	if plan.RefreshMode == plans.RefreshSmart && plan.ResourcesRefreshed > 0 {
+	if plan.RefreshMode == plans.RefreshSmart {
 		v.view.streams.Printf(
-			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed (smart mode).\n"),
+			v.view.colorize.Color("[reset][bold]Refresh:[reset] %d resources refreshed, %d skipped (smart mode).\n"),
 			plan.ResourcesRefreshed,
+			plan.ResourcesSkipped,
 		)
 	}
 }
@@ -296,9 +297,10 @@ func (v *OperationJSON) Plan(plan *plans.Plan, schemas *ghoten.Schemas) {
 	}
 
 	cs := &viewsjson.ChangeSummary{
-		Operation:    viewsjson.OperationPlanned,
-		SmartRefresh: plan.RefreshMode == plans.RefreshSmart && plan.ResourcesRefreshed > 0,
-		Refreshed:    plan.ResourcesRefreshed,
+		Operation:      viewsjson.OperationPlanned,
+		SmartRefresh:   plan.RefreshMode == plans.RefreshSmart,
+		Refreshed:      plan.ResourcesRefreshed,
+		RefreshSkipped: plan.ResourcesSkipped,
 	}
 	for _, change := range plan.Changes.Resources {
 		if change.Action == plans.Delete && change.Addr.Resource.Resource.Mode == addrs.DataResourceMode {

@@ -232,3 +232,10 @@ func (h *testHook) PostStateUpdate(fn func(*states.SyncState)) (HookAction, erro
 	h.Calls = append(h.Calls, &testHookCall{"PostStateUpdate", ""})
 	return HookActionContinue, nil
 }
+
+func (h *testHook) PostSkipRefresh(addr addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Calls = append(h.Calls, &testHookCall{"PostSkipRefresh", addr.String()})
+	return HookActionContinue, nil
+}

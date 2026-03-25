@@ -137,6 +137,12 @@ func (n *NodePlanDestroyableResourceInstance) managedResourceExecute(ctx context
 		if diags.HasErrors() {
 			return diags
 		}
+		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+			return h.PostSkipRefresh(addr, states.CurrentGen)
+		}))
+		if diags.HasErrors() {
+			return diags
+		}
 	}
 
 	var planDiags tfdiags.Diagnostics

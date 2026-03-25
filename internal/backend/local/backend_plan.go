@@ -218,6 +218,9 @@ func (b *Local) opPlan(
 			if ch, ok := h.(interface{ GetRefreshed() int }); ok {
 				plan.ResourcesRefreshed += ch.GetRefreshed()
 			}
+			if ch, ok := h.(interface{ GetRefreshSkipped() int }); ok {
+				plan.ResourcesSkipped += ch.GetRefreshSkipped()
+			}
 		}
 	}
 

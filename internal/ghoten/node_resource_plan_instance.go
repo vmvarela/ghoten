@@ -344,6 +344,14 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			instanceRefreshState.SkipDestroy = skipDestroy
 
 			if n.skipRefresh {
+				// Notify hooks that this resource's refresh was intentionally skipped
+				// (e.g. smart refresh mode determined no config change).
+				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
+					return h.PostSkipRefresh(n.Addr, states.CurrentGen)
+				}))
+				if diags.HasErrors() {
+					return diags
+				}
 				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy {
 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
 					if diags.HasErrors() {

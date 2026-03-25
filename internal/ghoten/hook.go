@@ -76,6 +76,11 @@ type Hook interface {
 	PreRefresh(addr addrs.AbsResourceInstance, gen states.Generation, priorState cty.Value) (HookAction, error)
 	PostRefresh(addr addrs.AbsResourceInstance, gen states.Generation, priorState cty.Value, newState cty.Value) (HookAction, error)
 
+	// PostSkipRefresh is called when a resource's refresh step is skipped
+	// due to smart refresh mode determining the resource hasn't changed.
+	// It allows hooks to track how many resources were skipped.
+	PostSkipRefresh(addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error)
+
 	// PreImportState and PostImportState are called before and after
 	// (respectively) each state import operation for a given resource address when
 	// using the legacy import command.
@@ -254,5 +259,9 @@ func (*NilHook) Stopping() {
 }
 
 func (*NilHook) PostStateUpdate(func(*states.SyncState)) (HookAction, error) {
+	return HookActionContinue, nil
+}
+
+func (*NilHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {
 	return HookActionContinue, nil
 }
