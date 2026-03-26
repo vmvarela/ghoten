@@ -225,6 +225,12 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
 		copy(dependencies, o.Dependencies)
 	}
 
+	var configExprHash []byte
+	if o.ConfigExprHash != nil {
+		configExprHash = make([]byte, len(o.ConfigExprHash))
+		copy(configExprHash, o.ConfigExprHash)
+	}
+
 	return &ResourceInstanceObject{
 		Value:               o.Value,
 		Status:              o.Status,
@@ -232,6 +238,7 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
 		Dependencies:        dependencies,
 		CreateBeforeDestroy: o.CreateBeforeDestroy,
 		SkipDestroy:         o.SkipDestroy,
+		ConfigExprHash:      configExprHash,
 	}
 }
 

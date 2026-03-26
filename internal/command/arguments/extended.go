@@ -264,13 +264,15 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 
 	// Parse -refresh flag: supports "true", "false", and "smart".
 	switch o.refreshModeRaw {
-	case "true":
+	case "true", "":
+		// Default behavior: refresh everything (traditional behavior).
 		o.RefreshMode = plans.RefreshAll
 		o.Refresh = true
 	case "false":
 		o.RefreshMode = plans.RefreshNone
 		o.Refresh = false
-	case "smart", "":
+	case "smart":
+		// Smart refresh: skip refresh for resources with unchanged structural config.
 		o.RefreshMode = plans.RefreshSmart
 		o.Refresh = true
 	default:
@@ -279,7 +281,7 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 			"Invalid -refresh flag value",
 			fmt.Sprintf("The -refresh flag accepts \"true\", \"false\", or \"smart\". Got %q.", o.refreshModeRaw),
 		))
-		o.RefreshMode = plans.RefreshSmart
+		o.RefreshMode = plans.RefreshAll
 		o.Refresh = true
 	}
 
@@ -353,7 +355,7 @@ func extendedFlagSet(name string, state *State, operation *Operation, vars *Vars
 	if operation != nil {
 		f.IntVar(&operation.Parallelism, "parallelism", DefaultParallelism, "parallelism")
 		// Use a string value for refresh to support true/false/smart values
-		f.StringVar(&operation.refreshModeRaw, "refresh", "smart", "refresh")
+		f.StringVar(&operation.refreshModeRaw, "refresh", "true", "refresh")
 		f.BoolVar(&operation.destroyRaw, "destroy", false, "destroy")
 		f.BoolVar(&operation.refreshOnlyRaw, "refresh-only", false, "refresh-only")
 		f.Var((*flags.FlagStringSlice)(&operation.targetsRaw), "target", "target")

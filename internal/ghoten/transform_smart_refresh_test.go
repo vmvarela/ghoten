@@ -525,3 +525,94 @@ func TestBackfillConfigExprHashes_NilConfig(t *testing.T) {
 	state := states.NewState()
 	backfillConfigExprHashes(state, nil)
 }
+
+func TestBackfillConfigExprHashes_PopulatesDeposedHash(t *testing.T) {
+	// backfillConfigExprHashes must set ConfigExprHash on deposed objects as well.
+	rc := makeTestResource(nil, nil, nil)
+	expectedHash := configExprHash(rc)
+	deposedKey := states.DeposedKey("abc123")
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: rc.Type,
+				Name: rc.Name,
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:    states.ObjectReady,
+				AttrsJSON: []byte(`{"id":"current"}`),
+				// ConfigExprHash deliberately left nil for current
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// Add a deposed object
+		s.SetResourceInstanceDeposed(
+			addrs.Resource{
+				Mode: addrs.ManagedResourceMode,
+				Type: rc.Type,
+				Name: rc.Name,
+			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			deposedKey,
+			&states.ResourceInstanceObjectSrc{
+				Status:    states.ObjectTainted,
+				AttrsJSON: []byte(`{"id":"deposed"}`),
+				// ConfigExprHash deliberately left nil for deposed
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				rc.Type + "." + rc.Name: rc,
+			},
+		},
+	}
+
+	backfillConfigExprHashes(state, cfg)
+
+	// Verify both current and deposed have the hash.
+	ms := state.Module(addrs.RootModuleInstance)
+	if ms == nil {
+		t.Fatal("root module not found in state after backfill")
+	}
+	rsAddr := addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name}
+	rs := ms.Resource(rsAddr)
+	if rs == nil {
+		t.Fatal("resource not found in state after backfill")
+	}
+	is := rs.Instance(addrs.NoKey)
+	if is == nil {
+		t.Fatal("resource instance not found in state after backfill")
+	}
+
+	// Check current
+	if is.Current == nil {
+		t.Fatal("current object not found")
+	}
+	if !bytes.Equal(is.Current.ConfigExprHash, expectedHash) {
+		t.Errorf("Current ConfigExprHash not set correctly: got %x, want %x", is.Current.ConfigExprHash, expectedHash)
+	}
+
+	// Check deposed
+	if !is.HasDeposed(deposedKey) {
+		t.Fatalf("deposed object %q not found", deposedKey)
+	}
+	deposedObj := is.Deposed[deposedKey]
+	if deposedObj == nil {
+		t.Fatal("deposed object is nil")
+	}
+	if !bytes.Equal(deposedObj.ConfigExprHash, expectedHash) {
+		t.Errorf("Deposed ConfigExprHash not set correctly: got %x, want %x", deposedObj.ConfigExprHash, expectedHash)
+	}
+}

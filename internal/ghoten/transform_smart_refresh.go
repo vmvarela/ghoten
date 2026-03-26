@@ -360,12 +360,18 @@ func backfillConfigExprHashes(state *states.State, config *configs.Config) {
 
 			hash := configExprHash(rc)
 			for key, is := range rs.Instances {
-				if is.Current == nil {
-					continue
+				if is.Current != nil {
+					if !bytes.Equal(is.Current.ConfigExprHash, hash) {
+						is.Current.ConfigExprHash = hash
+						log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s]", rs.Addr, key)
+					}
 				}
-				if !bytes.Equal(is.Current.ConfigExprHash, hash) {
-					is.Current.ConfigExprHash = hash
-					log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s]", rs.Addr, key)
+				// Also update deposed objects — they need hashes for correct smart-refresh behavior.
+				for dk, dep := range is.Deposed {
+					if dep != nil && !bytes.Equal(dep.ConfigExprHash, hash) {
+						dep.ConfigExprHash = hash
+						log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s] (deposed %s)", rs.Addr, key, dk)
+					}
 				}
 			}
 		}

@@ -6,6 +6,7 @@
 package states
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 
@@ -162,5 +163,44 @@ func TestResourceInstanceObject_encode_sensitivity(t *testing.T) {
 		if !test.wantTransientPaths && len(encoded.TransientPathValueMarks) != 0 {
 			t.Fatalf("Got unexpected TransientPathValueMarks: %v", encoded.TransientPathValueMarks)
 		}
+	}
+}
+
+func TestResourceInstanceObject_DeepCopy_ConfigExprHash(t *testing.T) {
+	// Verify that DeepCopy correctly copies ConfigExprHash so that modifying
+	// the copy doesn't affect the original.
+	originalHash := []byte{0x01, 0x02, 0x03, 0x04}
+	obj := &ResourceInstanceObject{
+		Value:          cty.NilVal,
+		Status:         ObjectReady,
+		ConfigExprHash: originalHash,
+	}
+
+	copied := obj.DeepCopy()
+
+	// Copied hash should be equal to original.
+	if !bytes.Equal(copied.ConfigExprHash, originalHash) {
+		t.Errorf("DeepCopy ConfigExprHash mismatch: got %v, want %v", copied.ConfigExprHash, originalHash)
+	}
+
+	// Modifying copied hash should not affect original.
+	copied.ConfigExprHash[0] = 0xFF
+	if !bytes.Equal(obj.ConfigExprHash, originalHash) {
+		t.Errorf("Original ConfigExprHash was mutated by copy modification: got %v, want %v", obj.ConfigExprHash, originalHash)
+	}
+}
+
+func TestResourceInstanceObject_DeepCopy_NilConfigExprHash(t *testing.T) {
+	// Verify that DeepCopy handles nil ConfigExprHash correctly.
+	obj := &ResourceInstanceObject{
+		Value:          cty.NilVal,
+		Status:         ObjectReady,
+		ConfigExprHash: nil,
+	}
+
+	copied := obj.DeepCopy()
+
+	if copied.ConfigExprHash != nil {
+		t.Errorf("DeepCopy should preserve nil ConfigExprHash, got %v", copied.ConfigExprHash)
 	}
 }
