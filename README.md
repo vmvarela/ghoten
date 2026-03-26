@@ -50,6 +50,23 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
 - **Safe by default**: locking, retries, and optional compression are built in.
 - **Works in GitHub Actions**: action handles install, auth, init, PR comments, and summaries.
 
+## Smart Refresh
+
+Ghoten includes a `-refresh=smart` flag that speeds up `plan` and `apply` operations in large infrastructures by skipping refresh for resources whose configuration hasn't changed:
+
+```bash
+# Refresh all resources (default behavior)
+ghoten plan
+
+# Skip refresh entirely
+ghoten plan -refresh=false
+
+# Smart refresh: only refresh resources with config changes and their dependents
+ghoten plan -refresh=smart
+```
+
+Smart refresh compares a hash of each resource's configuration expression to detect structural changes. When no changes are detected, the resource is skipped, reducing API calls and execution time. The output shows how many resources were refreshed vs. skipped.
+
 ## Documentation
 
 - [Quickstart & installation](docs/quickstart.md)
