@@ -1681,6 +1681,11 @@ type concurrencyTrackingRepo struct {
 	mu         sync.Mutex
 	active     int
 	peakActive int
+
+	// gate is closed once at least 2 goroutines are concurrently inside
+	// Resolve, making the peak assertion deterministic.
+	gateOnce sync.Once
+	gate     chan struct{}
 }
 
 func (r *concurrencyTrackingRepo) Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error) {
@@ -1689,7 +1694,22 @@ func (r *concurrencyTrackingRepo) Resolve(ctx context.Context, reference string)
 	if r.active > r.peakActive {
 		r.peakActive = r.active
 	}
+	// As soon as 2+ goroutines are active, open the gate for all of them.
+	if r.active >= 2 {
+		r.gateOnce.Do(func() { close(r.gate) })
+	}
 	r.mu.Unlock()
+
+	// Wait until at least 2 goroutines are concurrently inside Resolve,
+	// or the context is cancelled.
+	select {
+	case <-r.gate:
+	case <-ctx.Done():
+		r.mu.Lock()
+		r.active--
+		r.mu.Unlock()
+		return ocispec.Descriptor{}, ctx.Err()
+	}
 
 	desc, err := r.delegatingRepo.Resolve(ctx, reference)
 
@@ -1709,7 +1729,10 @@ func TestGroupVersionsByDigest_parallelResolution(t *testing.T) {
 
 	ctx := context.Background()
 	fake := newFakeORASRepo()
-	tracker := &concurrencyTrackingRepo{delegatingRepo: delegatingRepo{inner: fake}}
+	tracker := &concurrencyTrackingRepo{
+		delegatingRepo: delegatingRepo{inner: fake},
+		gate:           make(chan struct{}),
+	}
 	repo := &orasRepositoryClient{inner: tracker}
 	client := newRemoteClient(repo, "default")
 
