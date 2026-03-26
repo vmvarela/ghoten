@@ -94,7 +94,9 @@ if [[ "$COMMAND" == "plan" && "$CHANGES" == "true" ]]; then
   ADD=$(grep -oE '[0-9]+ to add' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
   CHG=$(grep -oE '[0-9]+ to change' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
   DEL=$(grep -oE '[0-9]+ to destroy' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
+  REFRESH_STATS=$(grep -oE 'Refresh: [0-9]+ resources refreshed, [0-9]+ skipped[^)]*' <<< "$OUTPUT" || true)
   CHANGE_LINE=$'\n\n**'"+${ADD}"'** add · **'"\~${CHG}"'** change · **'"-${DEL}"'** destroy'
+  [[ -n "$REFRESH_STATS" ]] && CHANGE_LINE="${CHANGE_LINE}"$'\n\n'"${REFRESH_STATS}"
 fi
 
 # Short SHA and commit link

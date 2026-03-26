@@ -75,11 +75,12 @@ case "$COMMAND" in
 esac
 
 # ─── Parse plan stats ────────────────────────────────────────────────────────
-ADD="" CHG="" DEL=""
+ADD="" CHG="" DEL="" REFRESH_STATS=""
 if [[ "$COMMAND" == "plan" && "$CHANGES" == "true" && -n "$OUTPUT" ]]; then
   ADD=$(grep -oE '[0-9]+ to add' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
   CHG=$(grep -oE '[0-9]+ to change' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
   DEL=$(grep -oE '[0-9]+ to destroy' <<< "$OUTPUT" | grep -oE '[0-9]+' || echo "0")
+  REFRESH_STATS=$(grep -oE 'Refresh: [0-9]+ resources refreshed, [0-9]+ skipped[^)]*' <<< "$OUTPUT" || true)
 fi
 
 # Parse apply stats
@@ -121,6 +122,7 @@ fi
     echo "| 🟢 **Add** | ${ADD} |"
     echo "| 🟡 **Change** | ${CHG} |"
     echo "| 🔴 **Destroy** | ${DEL} |"
+    [[ -n "$REFRESH_STATS" ]] && echo "| 🔄 **Refresh** | ${REFRESH_STATS} |"
     echo ""
   fi
 
