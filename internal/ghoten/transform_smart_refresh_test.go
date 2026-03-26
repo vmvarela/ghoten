@@ -309,15 +309,402 @@ func TestGraphNodeSkipRefreshInterface(t *testing.T) {
 	var _ GraphNodeSkipRefresh = (*NodePlanDeposedResourceInstanceObject)(nil)
 }
 
+// --- Semantic evaluation tests ---
+
+// mockGraphNodeConfigResource is a mock node implementing GraphNodeConfigResource.
+type mockGraphNodeConfigResource struct {
+	name        string
+	addr        addrs.ConfigResource
+	skipRefresh bool
+}
+
+func (n *mockGraphNodeConfigResource) Name() string                       { return n.name }
+func (n *mockGraphNodeConfigResource) SetSkipRefresh(v bool)              { n.skipRefresh = v }
+func (n *mockGraphNodeConfigResource) ResourceAddr() addrs.ConfigResource { return n.addr }
+
+var _ GraphNodeSkipRefresh = (*mockGraphNodeConfigResource)(nil)
+var _ GraphNodeConfigResource = (*mockGraphNodeConfigResource)(nil)
+
+func TestSmartRefreshTransformer_ReferencesChangedNode(t *testing.T) {
+	// When base is in the changed set (hash mismatch), and web has an attribute
+	// reference to base (edge web -> base), web must also be marked as changed.
+	g := &Graph{Path: addrs.RootModuleInstance}
+
+	baseAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "base",
+		},
+	}
+	webAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "web",
+		},
+	}
+	unrelatedAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "unrelated",
+		},
+	}
+
+	base := &mockGraphNodeConfigResource{name: "aws_instance.base", addr: baseAddr}
+	web := &mockGraphNodeConfigResource{name: "aws_instance.web", addr: webAddr}
+	unrelated := &mockGraphNodeConfigResource{name: "aws_instance.unrelated", addr: unrelatedAddr}
+
+	g.Add(base)
+	g.Add(web)
+	g.Add(unrelated)
+
+	// Edge: web -> base (web references base)
+	g.Connect(dag.BasicEdge(web, base))
+
+	// State with base having a mismatched hash (forcing it into changed set)
+	baseConfig := makeTestResourceNamed("base", nil, nil, nil)
+	baseCorrectHash := configExprHash(baseConfig)
+	// Create a different hash by modifying one byte
+	baseWrongHash := make([]byte, len(baseCorrectHash))
+	copy(baseWrongHash, baseCorrectHash)
+	baseWrongHash[0] ^= 0xFF // Flip bits in first byte to make it different
+
+	state := states.BuildState(func(s *states.SyncState) {
+		// base: hash mismatch - will be in changed
+		s.SetResourceInstanceCurrent(
+			baseAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"old-id"}`),
+				ConfigExprHash: baseWrongHash, // Hash mismatch - will be in changed
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// web: hash matches current config (will reference base via edge)
+		webConfig := makeTestResourceNamed("web", nil, nil, nil)
+		s.SetResourceInstanceCurrent(
+			webAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"web-id"}`),
+				ConfigExprHash: configExprHash(webConfig), // Matching hash
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// unrelated: hash matches current config (no edge to base)
+		unrelatedConfig := makeTestResourceNamed("unrelated", nil, nil, nil)
+		s.SetResourceInstanceCurrent(
+			unrelatedAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"unrelated-id"}`),
+				ConfigExprHash: configExprHash(unrelatedConfig), // Matching hash
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	// Config matching base's current config (hash mismatch forces base into changed)
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				"aws_instance.base":      makeTestResourceNamed("base", nil, nil, nil),
+				"aws_instance.web":       makeTestResourceNamed("web", nil, nil, nil),
+				"aws_instance.unrelated": makeTestResourceNamed("unrelated", nil, nil, nil),
+			},
+		},
+	}
+
+	tf := &SmartRefreshTransformer{
+		Active: true,
+		State:  state,
+		Config: cfg,
+	}
+
+	if err := tf.Transform(t.Context(), g); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// base: should be refreshed (hash mismatch)
+	if base.skipRefresh {
+		t.Errorf("base.skipRefresh should be false (hash mismatch, changed node)")
+	}
+
+	// web: should be refreshed because it references base via attribute edge
+	if web.skipRefresh {
+		t.Errorf("web.skipRefresh should be false (references changed node base)")
+	}
+
+	// unrelated: should be skipped (no reference to changed nodes)
+	if !unrelated.skipRefresh {
+		t.Errorf("unrelated.skipRefresh should be true (no reference to changed nodes)")
+	}
+}
+
+func TestSmartRefreshTransformer_ReferencesChangedNode_NoFalsePositive(t *testing.T) {
+	// Verify that nodes without edges to changed nodes are not marked as changed.
+	g := &Graph{Path: addrs.RootModuleInstance}
+
+	baseAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "base",
+		},
+	}
+	unrelatedAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "unrelated",
+		},
+	}
+
+	base := &mockGraphNodeConfigResource{name: "aws_instance.base", addr: baseAddr}
+	unrelated := &mockGraphNodeConfigResource{name: "aws_instance.unrelated", addr: unrelatedAddr}
+
+	g.Add(base)
+	g.Add(unrelated)
+
+	// No edge between them
+
+	// State with base having a mismatched hash (forcing it into changed set)
+	baseConfig := makeTestResourceNamed("base", nil, nil, nil)
+	baseCorrectHash := configExprHash(baseConfig)
+	// Create a different hash by modifying one byte
+	baseWrongHash := make([]byte, len(baseCorrectHash))
+	copy(baseWrongHash, baseCorrectHash)
+	baseWrongHash[0] ^= 0xFF // Flip bits in first byte to make it different
+
+	state := states.BuildState(func(s *states.SyncState) {
+		// base: hash mismatch - will be in changed
+		s.SetResourceInstanceCurrent(
+			baseAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"old-id"}`),
+				ConfigExprHash: baseWrongHash, // Will not match current config
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// unrelated: hash matches current config (no edge to base)
+		unrelatedConfig := makeTestResourceNamed("unrelated", nil, nil, nil)
+		s.SetResourceInstanceCurrent(
+			unrelatedAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"unrelated-id"}`),
+				ConfigExprHash: configExprHash(unrelatedConfig), // Matching hash
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				"aws_instance.base":      makeTestResourceNamed("base", nil, nil, nil),
+				"aws_instance.unrelated": makeTestResourceNamed("unrelated", nil, nil, nil),
+			},
+		},
+	}
+
+	tf := &SmartRefreshTransformer{
+		Active: true,
+		State:  state,
+		Config: cfg,
+	}
+
+	if err := tf.Transform(t.Context(), g); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// base: should be refreshed (hash mismatch)
+	if base.skipRefresh {
+		t.Errorf("base.skipRefresh should be false (hash mismatch)")
+	}
+
+	// unrelated: should be skipped (no reference to changed nodes)
+	if !unrelated.skipRefresh {
+		t.Errorf("unrelated.skipRefresh should be true (no edge to changed node)")
+	}
+}
+
+func TestSmartRefreshTransformer_ReferencesChangedNode_Chain(t *testing.T) {
+	// Verify that the second pass is transitive: A → B → C, C changes,
+	// both B and A should be marked as changed.
+	g := &Graph{Path: addrs.RootModuleInstance}
+
+	leafAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "leaf",
+		},
+	}
+	middleAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "middle",
+		},
+	}
+	rootAddr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "root",
+		},
+	}
+
+	leaf := &mockGraphNodeConfigResource{name: "aws_instance.leaf", addr: leafAddr}
+	middle := &mockGraphNodeConfigResource{name: "aws_instance.middle", addr: middleAddr}
+	root := &mockGraphNodeConfigResource{name: "aws_instance.root", addr: rootAddr}
+
+	g.Add(leaf)
+	g.Add(middle)
+	g.Add(root)
+
+	// Edges: middle → leaf, root → middle
+	g.Connect(dag.BasicEdge(middle, leaf))
+	g.Connect(dag.BasicEdge(root, middle))
+
+	// State with leaf having a mismatched hash (forcing it into changed set)
+	leafConfig := makeTestResourceNamed("leaf", nil, nil, nil)
+	leafCorrectHash := configExprHash(leafConfig)
+	// Create a different hash by modifying one byte
+	leafWrongHash := make([]byte, len(leafCorrectHash))
+	copy(leafWrongHash, leafCorrectHash)
+	leafWrongHash[0] ^= 0xFF // Flip bits in first byte to make it different
+
+	state := states.BuildState(func(s *states.SyncState) {
+		// leaf: hash mismatch - will be in changed
+		s.SetResourceInstanceCurrent(
+			leafAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"leaf-id"}`),
+				ConfigExprHash: leafWrongHash, // Hash mismatch - will be in changed
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// middle: hash matches current config (will reference leaf via edge)
+		middleConfig := makeTestResourceNamed("middle", nil, nil, nil)
+		s.SetResourceInstanceCurrent(
+			middleAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"middle-id"}`),
+				ConfigExprHash: configExprHash(middleConfig), // Matching hash
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+		// root: hash matches current config (will reference middle via edge)
+		rootConfig := makeTestResourceNamed("root", nil, nil, nil)
+		s.SetResourceInstanceCurrent(
+			rootAddr.Resource.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"root-id"}`),
+				ConfigExprHash: configExprHash(rootConfig), // Matching hash
+			},
+			addrs.AbsProviderConfig{
+				Module:   addrs.RootModule,
+				Provider: addrs.NewDefaultProvider("aws"),
+			},
+			addrs.NoKey,
+		)
+	})
+
+	cfg := &configs.Config{
+		Module: &configs.Module{
+			ManagedResources: map[string]*configs.Resource{
+				"aws_instance.leaf":   makeTestResourceNamed("leaf", nil, nil, nil),
+				"aws_instance.middle": makeTestResourceNamed("middle", nil, nil, nil),
+				"aws_instance.root":   makeTestResourceNamed("root", nil, nil, nil),
+			},
+		},
+	}
+
+	tf := &SmartRefreshTransformer{
+		Active: true,
+		State:  state,
+		Config: cfg,
+	}
+
+	if err := tf.Transform(t.Context(), g); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// leaf: should be refreshed (hash mismatch, changed node)
+	if leaf.skipRefresh {
+		t.Errorf("leaf.skipRefresh should be false (hash mismatch, changed node)")
+	}
+
+	// middle: should be refreshed because it references leaf
+	if middle.skipRefresh {
+		t.Errorf("middle.skipRefresh should be false (references changed node leaf)")
+	}
+
+	// root: should be refreshed because it references middle (which references leaf)
+	// This requires the iterative/fixed-point algorithm
+	if root.skipRefresh {
+		t.Errorf("root.skipRefresh should be false (references middle which references changed node)")
+	}
+}
+
 // --- configExprHash tests ---
 
 // makeTestResource builds a minimal configs.Resource suitable for
-// configExprHash tests.
+// configExprHash tests. Uses "web" as the default name.
 func makeTestResource(count, forEach hcl.Expression, dependsOn []hcl.Traversal) *configs.Resource {
+	return makeTestResourceNamed("web", count, forEach, dependsOn)
+}
+
+// makeTestResourceNamed builds a configs.Resource with a specific name.
+func makeTestResourceNamed(name string, count, forEach hcl.Expression, dependsOn []hcl.Traversal) *configs.Resource {
 	return &configs.Resource{
 		Mode:      addrs.ManagedResourceMode,
 		Type:      "aws_instance",
-		Name:      "web",
+		Name:      name,
 		Config:    configs.SynthBody("", map[string]cty.Value{}),
 		Count:     count,
 		ForEach:   forEach,

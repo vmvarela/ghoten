@@ -149,6 +149,7 @@ func (t *SmartRefreshTransformer) applyRefreshSet(g *Graph, refreshSet dag.Set) 
 func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
 	changed := make(dag.Set)
 
+	// First pass: identify directly changed nodes (new, orphan, hash mismatch).
 	for _, v := range g.Vertices() {
 		rn, ok := v.(GraphNodeConfigResource)
 		if !ok {
@@ -190,7 +191,62 @@ func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
 		}
 	}
 
+	// Second pass: add nodes that reference a changed node via attribute
+	// expressions. If aws_instance.web has ami = aws_instance.base.ami and
+	// base is in changed, web must also be refreshed — its evaluated value
+	// may differ when base is read from remote.
+	//
+	// This is done iteratively (fixed-point) to handle chains: if A → B → C
+	// and C changes, both B and A must be marked as changed. A single pass
+	// would only catch B if it processes A before B is added to changed.
+	//
+	// ReferenceTransformer already built the necessary edges (it covers
+	// attribute references, not just depends_on), so g.Ancestors(v) gives
+	// us the full closure.
+	for {
+		newlyAdded := make(dag.Set)
+		for _, v := range g.Vertices() {
+			if changed.Include(v) {
+				continue // already in changed set
+			}
+			rn, ok := v.(GraphNodeConfigResource)
+			if !ok {
+				continue
+			}
+			if rn.ResourceAddr().Resource.Mode != addrs.ManagedResourceMode {
+				continue // only managed resources need refresh
+			}
+			if t.referencesChangedNode(g, v, changed) {
+				newlyAdded.Add(v)
+				log.Printf("[DEBUG] SmartRefreshTransformer: %q references a changed node, marking for refresh", dag.VertexName(v))
+			}
+		}
+		if len(newlyAdded) == 0 {
+			break // fixed point reached
+		}
+		for _, v := range newlyAdded {
+			changed.Add(v)
+		}
+	}
+
 	return changed
+}
+
+// referencesChangedNode returns true if the given vertex has at least one
+// ancestor that is already in changedNodes. The dependency edges exist
+// because ReferenceTransformer ran before this transformer, connecting
+// attribute-level references (e.g. ami = base.ami), not just depends_on.
+func (t *SmartRefreshTransformer) referencesChangedNode(g *Graph, v dag.Vertex, changedNodes dag.Set) bool {
+	ancestors, err := g.Ancestors(v)
+	if err != nil {
+		return false
+	}
+	for _, a := range ancestors {
+		if changedNodes.Include(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // configBodyChanged returns true if the resource's structural meta-arguments
