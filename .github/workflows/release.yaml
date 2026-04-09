@@ -425,3 +425,82 @@ jobs:
           git push -f origin "$MINOR"
           echo "✅ Updated ${MINOR} → ${TAG}"
 
+  # ---------------------------------------------------------------------------
+  # Homebrew tap — auto-update formula on stable release
+  # ---------------------------------------------------------------------------
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [validate, aggregate]
+    if: needs.validate.outputs.is_release == 'true' && needs.validate.outputs.is_prerelease != 'true'
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: vmvarela/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Download SHA256SUMS from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          gh release download "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --pattern "*_SHA256SUMS" \
+            --dir .
+
+      - name: Update formula version and hashes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          FORMULA="homebrew-tap/Formula/ghoten.rb"
+          SUMS="ghoten_${VERSION}_SHA256SUMS"
+
+          sha_darwin_amd64=$(grep "ghoten_${VERSION}_darwin_amd64.tar.gz" "${SUMS}" | awk '{print $1}')
+          sha_darwin_arm64=$(grep "ghoten_${VERSION}_darwin_arm64.tar.gz" "${SUMS}" | awk '{print $1}')
+          sha_linux_amd64=$(grep "ghoten_${VERSION}_linux_amd64.tar.gz"  "${SUMS}" | awk '{print $1}')
+          sha_linux_arm64=$(grep "ghoten_${VERSION}_linux_arm64.tar.gz"  "${SUMS}" | awk '{print $1}')
+
+          for var in sha_darwin_amd64 sha_darwin_arm64 sha_linux_amd64 sha_linux_arm64; do
+            if [[ -z "${!var}" ]]; then
+              echo "::error::Missing SHA256 for ${var}"
+              exit 1
+            fi
+          done
+
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "${FORMULA}"
+
+          awk -v da64="${sha_darwin_amd64}" -v darm="${sha_darwin_arm64}" \
+              -v la64="${sha_linux_amd64}"  -v larm="${sha_linux_arm64}" '
+          /darwin_amd64\.tar\.gz/ { found="da64" }
+          /darwin_arm64\.tar\.gz/ { found="darm" }
+          /linux_amd64\.tar\.gz/  { found="la64" }
+          /linux_arm64\.tar\.gz/  { found="larm" }
+          /sha256 "/ {
+            if (found == "da64") { sub(/"[^"]*"$/, "\"" da64 "\"") }
+            if (found == "darm") { sub(/"[^"]*"$/, "\"" darm "\"") }
+            if (found == "la64") { sub(/"[^"]*"$/, "\"" la64 "\"") }
+            if (found == "larm") { sub(/"[^"]*"$/, "\"" larm "\"") }
+            found=""
+          }
+          { print }' "${FORMULA}" > "${FORMULA}.tmp"
+          mv "${FORMULA}.tmp" "${FORMULA}"
+
+          echo "=== Updated formula ==="
+          cat "${FORMULA}"
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add Formula/ghoten.rb
+          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+          git commit -m "chore: update ghoten to v${VERSION}"
+          git push origin main
+
