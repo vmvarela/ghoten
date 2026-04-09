@@ -25,6 +25,10 @@ EXT := $(shell go env GOEXE)
 build:
 	go build -ldflags "-X main.version=$(shell git describe --tags --always --dirty)" -o ghoten$(EXT) ./cmd/ghoten
 
+.PHONY: install
+install: ## Downloads and installs the latest ghoten binary via scripts/install.sh.
+	@sh scripts/install.sh
+
 # generate runs `go generate` to build the dynamically generated
 # source files, except the protobuf stubs which are built instead with
 # "make protobuf".
