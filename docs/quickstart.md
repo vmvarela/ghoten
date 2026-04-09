@@ -6,7 +6,23 @@ This guide gets you from clone to a working `ghoten plan` with an OCI-backed sta
 
 If you need full backend tuning (`retry`, `rate_limit`, TLS options), use the ORAS backend guide after this one.
 
-## Local install in 4 commands
+## Install the binary
+
+The fastest way to install `ghoten` is the one-liner:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/vmvarela/ghoten/master/scripts/install.sh | sh
+```
+
+To install a specific version or to a custom directory:
+
+```bash
+VERSION=1.12.0 INSTALL_DIR=./bin curl -sSfL https://raw.githubusercontent.com/vmvarela/ghoten/master/scripts/install.sh | sh
+```
+
+## Build from source
+
+If you prefer to build from source:
 
 ```bash
 git clone https://github.com/vmvarela/ghoten.git
