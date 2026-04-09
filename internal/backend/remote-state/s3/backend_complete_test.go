@@ -2202,4 +2202,6 @@ func initSessionTestEnv(t *testing.T) {
 			t.Setenv(pair[0], "")
 		}
 	}
+	t.Setenv("AWS_CONFIG_FILE", "file_not_exists")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "file_not_exists")
 }
