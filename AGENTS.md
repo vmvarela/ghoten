@@ -17,7 +17,7 @@ ghoten/
 │   ├── ghoten/          # Core engine: graph builder/walker, plan/apply context (203 files)
 │   ├── command/         # CLI commands, views (human/JSON), argument parsing (105 files)
 │   ├── backend/         # Backend interfaces + remote-state/ implementations
-│   │   └── remote-state/oras/  # ORAS backend — Ghoten's key differentiator
+│   │   └── remote-state/oras/  # ORAS backend — thin adapter over ghoten-oras-backend library
 │   ├── engine/          # New execution engine (planning/, applying/)
 │   ├── configs/         # HCL configuration parsing, configschema
 │   ├── addrs/           # Address types for all Terraform objects (cross-cutting)
@@ -39,7 +39,7 @@ ghoten/
 | Task | Location | Notes |
 |------|----------|-------|
 | Add CLI command | `cmd/ghoten/commands.go` + `internal/command/` | Register in factory map, embed `Meta` |
-| ORAS backend changes | `internal/backend/remote-state/oras/` | client.go is main impl (1217 lines) |
+| ORAS backend changes | `internal/backend/remote-state/oras/` | Thin adapter over [`ghoten-oras-backend`](https://github.com/vmvarela/ghoten-oras-backend) library |
 | Smart refresh logic | `internal/ghoten/transform_smart_refresh.go` | Config hash comparison |
 | Plan/apply flow | `internal/ghoten/context_plan.go`, `context_apply.go` | Graph builder → walker → node execution |
 | Graph transforms | `internal/ghoten/transform_*.go` | Implement `GraphTransformer` interface |
