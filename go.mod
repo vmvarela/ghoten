@@ -87,6 +87,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sts v1.1.11
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tag v1.3.54
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.73
+	github.com/vmvarela/ghoten-oras-backend v0.1.0
 	github.com/xanzy/ssh-agent v0.3.3
 	github.com/xlab/treeprint v1.2.0
 	github.com/zclconf/go-cty v1.17.0
