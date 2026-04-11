@@ -2,21 +2,14 @@ package oras
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
-	cleanhttp "github.com/hashicorp/go-cleanhttp"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	oraslib "github.com/vmvarela/ghoten-oras-backend/backend/oras"
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/command/cliconfig"
 	"github.com/vmvarela/ghoten/internal/command/cliconfig/ociauthconfig"
@@ -27,8 +20,6 @@ import (
 	"github.com/vmvarela/ghoten/internal/states/remote"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/version"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"golang.org/x/time/rate"
 	orasRegistry "oras.land/oras-go/v2/registry"
 	orasRemote "oras.land/oras-go/v2/registry/remote"
 	orasAuth "oras.land/oras-go/v2/registry/remote/auth"
@@ -60,13 +51,13 @@ type Backend struct {
 	lockTTL      time.Duration
 	rateLimit    int
 	rateBurst    int
-	retryCfg     RetryConfig
+	retryCfg     oraslib.RetryConfig
 	stateMaxSize int64
 
 	versioningMaxVersions int
 
 	orasCredsPolicy cliconfigORASCredentialsPolicy
-	repoClient      *orasRepositoryClient
+	lib             oraslib.StateBackend
 }
 
 // New creates a new ORAS backend instance with the given state encryption.
@@ -205,11 +196,12 @@ func (b *Backend) configure(ctx context.Context) error {
 	retryWaitMin := time.Duration(data.Get("retry_wait_min").(int)) * time.Second
 	retryWaitMax := time.Duration(data.Get("retry_wait_max").(int)) * time.Second
 
-	retryCfg := DefaultRetryConfig()
-	retryCfg.MaxAttempts = retryMax + 1
-	retryCfg.InitialBackoff = retryWaitMin
-	retryCfg.MaxBackoff = retryWaitMax
-	// Keep BackoffMultiplier from DefaultRetryConfig.
+	retryCfg := oraslib.RetryConfig{
+		MaxAttempts:       retryMax + 1,
+		InitialBackoff:    retryWaitMin,
+		MaxBackoff:        retryWaitMax,
+		BackoffMultiplier: 2.0,
+	}
 	if retryCfg.MaxAttempts < 1 {
 		retryCfg.MaxAttempts = 1
 	}
@@ -222,10 +214,7 @@ func (b *Backend) configure(ctx context.Context) error {
 	b.retryCfg = retryCfg
 
 	// State versioning: max_versions > 0 enables versioning
-	b.versioningMaxVersions = data.Get("max_versions").(int)
-	if b.versioningMaxVersions < 0 {
-		b.versioningMaxVersions = 0
-	}
+	b.versioningMaxVersions = max(data.Get("max_versions").(int), 0)
 
 	// State read size limit: 0 means use the built-in default (256 MiB).
 	maxStateSize := data.Get("max_state_size").(int)
@@ -234,302 +223,83 @@ func (b *Backend) configure(ctx context.Context) error {
 	}
 	b.stateMaxSize = int64(maxStateSize)
 
-	cfg, diags := cliconfig.LoadConfig(ctx)
+	cliCfg, diags := cliconfig.LoadConfig(ctx)
 	if diags.HasErrors() {
 		return diags.Err()
 	}
-	policy, err := cfg.OCICredentialsPolicy(ctx)
+	policy, err := cliCfg.OCICredentialsPolicy(ctx)
 	if err != nil {
 		return err
 	}
 	b.orasCredsPolicy = realORASCredentialsPolicy{policy: policy}
 
-	b.repoClient, err = newORASRepositoryClient(ctx, b.repository, b.insecure, b.caFile, b.orasCredsPolicy, b.rateLimit, b.rateBurst)
+	credFunc, err := b.orasCredsPolicy.CredentialFunc(ctx, b.repository)
+	if err != nil {
+		return err
+	}
+
+	libCfg := oraslib.Config{
+		Repository:   b.repository,
+		Insecure:     b.insecure,
+		CAFile:       b.caFile,
+		Compression:  b.compression,
+		LockTTL:      b.lockTTL,
+		RateLimit:    b.rateLimit,
+		RateBurst:    b.rateBurst,
+		Retry:        b.retryCfg,
+		MaxStateSize: b.stateMaxSize,
+		MaxVersions:  b.versioningMaxVersions,
+		UserAgent:    httpclient.GhotenUserAgent(version.Version),
+	}
+	if credFunc != nil {
+		libCfg.CredentialFunc = func(ctx context.Context, hostport string) (oraslib.Credential, error) {
+			cred, err := credFunc(ctx, hostport)
+			if err != nil {
+				return oraslib.Credential{}, err
+			}
+			return oraslib.Credential{
+				Username:    cred.Username,
+				Password:    cred.Password,
+				AccessToken: cred.AccessToken,
+			}, nil
+		}
+	}
+
+	b.lib, err = oraslib.New(ctx, libCfg)
 	return err
 }
 
-func (b *Backend) getRepository() (*orasRepositoryClient, error) {
-	if b.repoClient == nil {
+func (b *Backend) StateMgr(ctx context.Context, workspace string) (statemgr.Full, error) {
+	if b.lib == nil {
 		return nil, fmt.Errorf("backend is not configured")
 	}
-	return b.repoClient, nil
-}
-
-func (b *Backend) StateMgr(ctx context.Context, workspace string) (statemgr.Full, error) {
-	repo, err := b.getRepository()
+	mgr, err := b.lib.StateMgr(ctx, workspace)
 	if err != nil {
 		return nil, err
 	}
-	client := newRemoteClient(repo, workspace)
-	client.retryConfig = b.retryCfg
-	client.versioningMaxVersions = b.versioningMaxVersions
-	client.stateCompression = b.compression
-	client.stateMaxSize = b.stateMaxSize
-	client.lockTTL = b.lockTTL
-
-	// NOTE: Background lock cleaner is intentionally not started here to avoid
-	// spawning unmanaged goroutines on each StateMgr() call. Stale lock cleanup
-	// happens on-demand during Lock() when lock_ttl > 0.
-
+	client := &RemoteClient{mgr: mgr}
 	return remote.NewState(client, b.encryption), nil
 }
 
 func (b *Backend) Workspaces(ctx context.Context) ([]string, error) {
-	repo, err := b.getRepository()
-	if err != nil {
-		return nil, err
+	if b.lib == nil {
+		return nil, fmt.Errorf("backend is not configured")
 	}
-	wss, err := listWorkspacesFromTags(ctx, repo)
-	if err != nil {
-		if isNotFound(err) {
-			return []string{backend.DefaultStateName}, nil
-		}
-		return nil, err
-	}
-
-	// The backend contract requires that the default workspace is always
-	// present in the returned list, even if no state has been written yet.
-	hasDefault := false
-	for _, w := range wss {
-		if w == backend.DefaultStateName {
-			hasDefault = true
-			break
-		}
-	}
-	if !hasDefault {
-		wss = append(wss, backend.DefaultStateName)
-		sort.Strings(wss)
-	}
-	return wss, nil
+	return b.lib.Workspaces(ctx)
 }
 
-func (b *Backend) DeleteWorkspace(ctx context.Context, name string, _ bool) error {
-	if name == backend.DefaultStateName || name == "" {
-		return fmt.Errorf("can't delete default state")
+func (b *Backend) DeleteWorkspace(ctx context.Context, name string, force bool) error {
+	if b.lib == nil {
+		return fmt.Errorf("backend is not configured")
 	}
-
-	repo, err := b.getRepository()
-	if err != nil {
-		return err
-	}
-
-	wsTag := workspaceTagFor(name)
-	stateRef := stateTagPrefix + wsTag
-	lockRef := lockTagPrefix + wsTag
-	unlockedRef := unlockedTagPrefix + wsTag
-	stateVersionPrefix := stateRef + stateVersionTagSeparator
-
-	// Delete the main state manifest.
-	if err := resolveAndDelete(ctx, repo, stateRef); err != nil {
-		return fmt.Errorf("deleting state for workspace %q: %w", name, err)
-	}
-
-	// Delete versioned state manifests.
-	if err := repo.inner.Tags(ctx, "", func(page []string) error {
-		for _, tag := range page {
-			if !strings.HasPrefix(tag, stateVersionPrefix) {
-				continue
-			}
-			if err := resolveAndDelete(ctx, repo, tag); err != nil {
-				return fmt.Errorf("deleting state version %q for workspace %q: %w", tag, name, err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	// Delete the lock manifest.
-	if err := resolveAndDelete(ctx, repo, lockRef); err != nil {
-		return fmt.Errorf("deleting lock for workspace %q: %w", name, err)
-	}
-
-	// Delete the unlocked manifest (GHCR fallback artifact).
-	if err := resolveAndDelete(ctx, repo, unlockedRef); err != nil {
-		return fmt.Errorf("deleting unlocked tag for workspace %q: %w", name, err)
-	}
-	return nil
+	return b.lib.DeleteWorkspace(ctx, name, force)
 }
-
-// resolveAndDelete resolves a tag and deletes the underlying manifest.
-// Returns nil when the tag doesn't exist (404). Transient Resolve errors
-// are surfaced instead of silently swallowed.
-func resolveAndDelete(ctx context.Context, repo *orasRepositoryClient, ref string) error {
-	desc, err := repo.inner.Resolve(ctx, ref)
-	if err != nil {
-		if isNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	if err := repo.inner.Delete(ctx, desc); err != nil && !isNotFound(err) && !isDeleteUnsupported(err) {
-		return err
-	}
-	return nil
-}
-
-// ORAS repository client
 
 type cliconfigORASCredentialsPolicy interface {
 	CredentialFunc(ctx context.Context, repository string) (credentialFunc, error)
 }
 
 type credentialFunc func(ctx context.Context, hostport string) (orasAuth.Credential, error)
-
-type orasRepositoryClient struct {
-	repository string
-	inner      orasRepository
-	authFn     credentialFunc
-	httpClient *http.Client
-}
-
-func (r *orasRepositoryClient) accessTokenForHost(ctx context.Context, host string) (string, error) {
-	if r == nil || r.authFn == nil {
-		return "", nil
-	}
-	cred, err := r.authFn(ctx, host)
-	if err != nil {
-		return "", err
-	}
-	if cred.AccessToken != "" {
-		return cred.AccessToken, nil
-	}
-	if cred.Password != "" {
-		return cred.Password, nil
-	}
-	return "", nil
-}
-
-type orasRepository interface {
-	Push(ctx context.Context, expected ocispec.Descriptor, content io.Reader) error
-	Fetch(ctx context.Context, target ocispec.Descriptor) (io.ReadCloser, error)
-	Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error)
-	Tag(ctx context.Context, desc ocispec.Descriptor, reference string) error
-	Delete(ctx context.Context, target ocispec.Descriptor) error
-	Tags(ctx context.Context, last string, fn func(tags []string) error) error
-}
-
-func newORASRepositoryClient(ctx context.Context, repository string, insecure bool, caFile string, policy cliconfigORASCredentialsPolicy, rateLimit int, rateBurst int) (*orasRepositoryClient, error) {
-	repo, err := orasRemote.NewRepository(repository)
-	if err != nil {
-		return nil, fmt.Errorf("invalid OCI repository %q: %w", repository, err)
-	}
-
-	if insecure {
-		repo.PlainHTTP = true
-	}
-
-	httpClient, err := newORASHTTPClient(insecure, caFile, rateLimit, rateBurst)
-	if err != nil {
-		return nil, err
-	}
-
-	credFunc, err := policy.CredentialFunc(ctx, repository)
-	if err != nil {
-		return nil, err
-	}
-
-	repoClient := &orasRepositoryClient{
-		repository: repository,
-		inner:      repo,
-		authFn:     credFunc,
-		httpClient: httpClient,
-	}
-
-	repo.Client = &orasAuth.Client{
-		Client: httpClient,
-		Credential: func(ctx context.Context, host string) (orasAuth.Credential, error) {
-			return credFunc(ctx, host)
-		},
-	}
-
-	return repoClient, nil
-}
-
-func newORASHTTPClient(insecure bool, caFile string, rateLimit int, rateBurst int) (*http.Client, error) {
-	client := cleanhttp.DefaultPooledClient()
-
-	if t, ok := client.Transport.(*http.Transport); ok {
-		t = t.Clone()
-		if t.TLSClientConfig == nil {
-			t.TLSClientConfig = &tls.Config{}
-		}
-		t.TLSClientConfig.InsecureSkipVerify = insecure
-		if insecure {
-			logging.HCLogger().Named("backend.oras").Warn("TLS certificate verification is disabled", "insecure", true)
-		}
-		if caFile != "" {
-			pem, err := os.ReadFile(caFile)
-			if err != nil {
-				return nil, fmt.Errorf("reading ca_file %q: %w", caFile, err)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(pem) {
-				return nil, fmt.Errorf("ca_file %q: no valid certificates", caFile)
-			}
-			t.TLSClientConfig.RootCAs = pool
-		}
-		client.Transport = t
-	}
-
-	var limiter requestLimiter
-	if rateLimit > 0 {
-		if rateBurst <= 0 {
-			rateBurst = 1
-		}
-		limiter = rate.NewLimiter(rate.Limit(rateLimit), rateBurst)
-	}
-
-	var rt http.RoundTripper = &userAgentRoundTripper{
-		userAgent: httpclient.GhotenUserAgent(version.Version),
-		inner:     client.Transport,
-	}
-	if limiter != nil {
-		rt = &rateLimitedRoundTripper{limiter: limiter, inner: rt}
-	}
-	// Always wrap with otelhttp so that spans created by later operations
-	// are captured. otelhttp is a no-op when there is no active span,
-	// so there is no overhead when tracing is disabled.
-	rt = otelhttp.NewTransport(rt)
-	client.Transport = rt
-
-	return client, nil
-}
-
-type userAgentRoundTripper struct {
-	userAgent string
-	inner     http.RoundTripper
-}
-
-// RoundTrip sets the User-Agent header if not already present.
-// Per the http.RoundTripper contract, the original request is not mutated;
-// a shallow clone is created when the header needs to be added.
-func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Header.Get("User-Agent") == "" {
-		r2 := req.Clone(req.Context())
-		r2.Header.Set("User-Agent", rt.userAgent)
-		return rt.inner.RoundTrip(r2)
-	}
-	return rt.inner.RoundTrip(req)
-}
-
-type requestLimiter interface {
-	Wait(ctx context.Context) error
-}
-
-type rateLimitedRoundTripper struct {
-	limiter requestLimiter
-	inner   http.RoundTripper
-}
-
-func (rt *rateLimitedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if rt.limiter != nil {
-		if err := rt.limiter.Wait(req.Context()); err != nil {
-			return nil, err
-		}
-	}
-	return rt.inner.RoundTrip(req)
-}
 
 // Credentials
 

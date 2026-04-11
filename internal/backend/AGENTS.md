@@ -24,7 +24,7 @@ Backend abstraction layer. Interfaces for state storage + operation execution.
 | Task | Location | Notes |
 |------|----------|-------|
 | Add new backend | `init/init.go` + `remote-state/newbackend/` | Register in `Init()` map |
-| ORAS backend | `remote-state/oras/` | See subdirectory AGENTS.md |
+| ORAS backend | `remote-state/oras/` | Thin adapter over `ghoten-oras-backend` library — see subdirectory AGENTS.md |
 | Deprecate backend | `init/init.go:RemovedBackends` | Map name → message |
 | Backend testing | `testing.go` | Test helpers with `t.Helper()` |
 
