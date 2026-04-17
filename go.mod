@@ -8,8 +8,8 @@ go 1.26
 godebug tlsmlkem=0
 
 require (
-	cloud.google.com/go/kms v1.27.0
-	cloud.google.com/go/storage v1.61.3
+	cloud.google.com/go/kms v1.29.0
+	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v1.2.0
@@ -44,7 +44,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/googleapis/gax-go/v2 v2.21.0
+	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72
 	github.com/hashicorp/consul/api v1.33.7
 	github.com/hashicorp/consul/sdk v0.17.3
@@ -108,7 +108,7 @@ require (
 	golang.org/x/term v0.41.0
 	golang.org/x/text v0.35.0
 	golang.org/x/time v0.15.0
-	google.golang.org/api v0.273.1
+	google.golang.org/api v0.274.0
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 	k8s.io/api v0.35.3
@@ -121,11 +121,11 @@ require (
 require (
 	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.18.2 // indirect
+	cloud.google.com/go/auth v0.19.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	cloud.google.com/go/iam v1.6.0 // indirect
-	cloud.google.com/go/longrunning v0.8.0 // indirect
+	cloud.google.com/go/iam v1.7.0 // indirect
+	cloud.google.com/go/longrunning v0.9.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/internal v1.2.0 // indirect
