@@ -323,10 +323,10 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 h1:HWRh5R2+9EifMyIHV7ZV+MIZqgz
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0/go.mod h1:JfhWUomR1baixubs02l85lZYYOm7LV6om4ceouMv45c=
 github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72 h1:vTCWu1wbdYo7PEZFem/rlr01+Un+wwVmI7wiegFdRLk=
 github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72/go.mod h1:Vn+BBgKQHVQYdVQ4NZDICE1Brb+JfaONyDHr3q07oQc=
-github.com/hashicorp/consul/api v1.34.1 h1:/qKFfBJ5GEmY3sIlK1HulRJciLoT1pCGBkq2gwILXVg=
-github.com/hashicorp/consul/api v1.34.1/go.mod h1:K+7fQ7o5QEyoFRyXtX3/iGSxDbg9jYWGJ5rDyrXzHU8=
-github.com/hashicorp/consul/sdk v0.18.0 h1:WvrUz2IYZXY4MX0i45QE9aFrD2izjyuUI+NZv2duatE=
-github.com/hashicorp/consul/sdk v0.18.0/go.mod h1:jnOmYjiNfVRpBaujQ1DFFVs0N6g3S1y6wygSjLTzYfc=
+github.com/hashicorp/consul/api v1.34.2 h1:B5jqSSKwWyY8U8WiGS5vmPEPkkF0bAvrECykdZkDR80=
+github.com/hashicorp/consul/api v1.34.2/go.mod h1:+gAdHQa2zvgYX3ZfcgITtnYCSj6AgS/cgotvCKaE+b8=
+github.com/hashicorp/consul/sdk v0.18.1 h1:RDTeBvAeOveI2xI86sV+8WkaN7OkP4zz+cG3fOobDCM=
+github.com/hashicorp/consul/sdk v0.18.1/go.mod h1:XdP2tEJmAvlK4jgoKTTtohGkRJlS4mU44mv9/sjU21s=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/errwrap v1.1.0 h1:OxrOeh75EUXMY8TBjag2fzXGZ40LB6IKw45YeGUDY2I=
 github.com/hashicorp/errwrap v1.1.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=

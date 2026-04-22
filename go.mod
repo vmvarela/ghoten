@@ -46,8 +46,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72
-	github.com/hashicorp/consul/api v1.34.1
-	github.com/hashicorp/consul/sdk v0.18.0
+	github.com/hashicorp/consul/api v1.34.2
+	github.com/hashicorp/consul/sdk v0.18.1
 	github.com/hashicorp/errwrap v1.1.0
 	github.com/hashicorp/go-cleanhttp v0.5.2
 	github.com/hashicorp/go-getter v1.8.6
