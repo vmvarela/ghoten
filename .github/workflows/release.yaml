@@ -36,10 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -79,7 +79,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ steps.version.outputs.tag || github.sha }}
@@ -125,12 +125,12 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.tag || github.sha }}
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -187,7 +187,7 @@ jobs:
       hashes: ${{ steps.hashes.outputs.hashes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.tag || github.sha }}
 
@@ -275,7 +275,7 @@ jobs:
       id-token: write  # needed for keyless cosign signing
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.tag || github.sha }}
 
@@ -396,7 +396,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.tag }}
           fetch-depth: 0
@@ -435,7 +435,7 @@ jobs:
     if: needs.validate.outputs.is_release == 'true' && needs.validate.outputs.is_prerelease != 'true'
     steps:
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: vmvarela/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
