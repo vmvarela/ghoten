@@ -470,7 +470,7 @@ jobs:
             fi
           done
 
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" "${FORMULA}"
+          sed -i "s/version ['\"].*['\"]/version \"${VERSION}\"/" "${FORMULA}"
 
           awk -v da64="${sha_darwin_amd64}" -v darm="${sha_darwin_arm64}" \
               -v la64="${sha_linux_amd64}"  -v larm="${sha_linux_arm64}" '
@@ -478,11 +478,11 @@ jobs:
           /darwin_arm64\.tar\.gz/ { found="darm" }
           /linux_amd64\.tar\.gz/  { found="la64" }
           /linux_arm64\.tar\.gz/  { found="larm" }
-          /sha256 "/ {
-            if (found == "da64") { sub(/"[^"]*"$/, "\"" da64 "\"") }
-            if (found == "darm") { sub(/"[^"]*"$/, "\"" darm "\"") }
-            if (found == "la64") { sub(/"[^"]*"$/, "\"" la64 "\"") }
-            if (found == "larm") { sub(/"[^"]*"$/, "\"" larm "\"") }
+          /sha256 / {
+            if (found == "da64") { sub(/\x27.*\x27$/, "\"" da64 "\""); sub(/".*"$/, "\"" da64 "\"") }
+            if (found == "darm") { sub(/\x27.*\x27$/, "\"" darm "\""); sub(/".*"$/, "\"" darm "\"") }
+            if (found == "la64") { sub(/\x27.*\x27$/, "\"" la64 "\""); sub(/".*"$/, "\"" la64 "\"") }
+            if (found == "larm") { sub(/\x27.*\x27$/, "\"" larm "\""); sub(/".*"$/, "\"" larm "\"") }
             found=""
           }
           { print }' "${FORMULA}" > "${FORMULA}.tmp"
@@ -499,8 +499,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git pull --rebase origin master
+
           git add Formula/ghoten.rb
           git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
           git commit -m "chore: update ghoten to v${VERSION}"
-          git push origin main
+          git push origin master
 
