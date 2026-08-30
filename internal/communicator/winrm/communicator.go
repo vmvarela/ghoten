@@ -6,7 +6,6 @@
 package winrm
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log"
@@ -151,7 +150,7 @@ func (c *Communicator) Start(rc *remote.Cmd) error {
 		}
 	}
 
-	status, err := c.client.RunWithContext(context.Background(), rc.Command, rc.Stdout, rc.Stderr)
+	status, err := c.client.Run(rc.Command, rc.Stdout, rc.Stderr)
 	rc.SetExitStatus(status, err)
 
 	return nil
