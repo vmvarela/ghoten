@@ -83,7 +83,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/posener/complete v1.2.3
 	github.com/spf13/afero v1.15.0
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.170
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.175
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sts v1.1.11
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tag v1.3.110
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
