@@ -71,5 +71,20 @@ func renderTemplate(expr hcl.Expression, varsVal cty.Value, funcs map[string]fun
 		return cty.DynamicVal, diags
 	}
 
+	// ponytail: single-interpolation templates parse as TemplateWrapExpr, which
+	// passes values through verbatim; HCL only null-checks TemplateExpr parts.
+	if wrap, ok := expr.(*hclsyntax.TemplateWrapExpr); ok && val.IsNull() {
+		subj := wrap.Wrapped.Range()
+		src := wrap.SrcRange
+		return cty.DynamicVal, hcl.Diagnostics{{
+			Severity:   hcl.DiagError,
+			Summary:    "Invalid template interpolation value",
+			Detail:     "The expression result is null. Cannot include a null value in a string template.",
+			Subject:    &subj,
+			Context:    &src,
+			Expression: wrap.Wrapped,
+		}}
+	}
+
 	return val, nil
 }
