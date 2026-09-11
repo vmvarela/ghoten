@@ -325,6 +325,30 @@ func TestTemplateString(t *testing.T) {
 			cty.True,
 			``,
 		},
+		"Single interpolation of a null string": {
+			cty.StringVal("${val}"),
+			cty.ObjectVal(map[string]cty.Value{
+				"val": cty.NullVal(cty.String),
+			}),
+			cty.NilVal,
+			`NoFileNeeded:1,3-6: Invalid template interpolation value; The expression result is null. Cannot include a null value in a string template.`,
+		},
+		"Single interpolation of a null number": {
+			cty.StringVal("${val}"),
+			cty.ObjectVal(map[string]cty.Value{
+				"val": cty.NullVal(cty.Number),
+			}),
+			cty.NilVal,
+			`NoFileNeeded:1,3-6: Invalid template interpolation value; The expression result is null. Cannot include a null value in a string template.`,
+		},
+		"Single interpolation of a null sensitive value": {
+			cty.StringVal("${val}"),
+			cty.ObjectVal(map[string]cty.Value{
+				"val": cty.NullVal(cty.String).Mark(marks.Sensitive),
+			}),
+			cty.NilVal,
+			`NoFileNeeded:1,3-6: Invalid template interpolation value; The expression result is null. Cannot include a null value in a string template.`,
+		},
 		"Sensitive string template": {
 			cty.StringVal("My password is 1234").Mark(marks.Sensitive),
 			cty.EmptyObjectVal,
