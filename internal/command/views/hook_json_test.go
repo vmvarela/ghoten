@@ -7,6 +7,7 @@ package views
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +15,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -53,7 +54,8 @@ func TestJSONHook_create(t *testing.T) {
 		}),
 	})
 
-	action, err := hook.PreApply(addr, states.CurrentGen, plans.Create, priorState, plannedNewState)
+	elapsedChan := make(chan time.Duration)
+	action, err := hook.preApply(addr, plans.Create, priorState, plannedNewState, elapsedChan)
 	testHookReturnValues(t, action, err)
 
 	action, err = hook.PreProvisionInstanceStep(addr, "local-exec")
@@ -63,8 +65,6 @@ func TestJSONHook_create(t *testing.T) {
 
 	action, err = hook.PostProvisionInstanceStep(addr, "local-exec", nil)
 	testHookReturnValues(t, action, err)
-
-	elapsedChan := hook.applying[addr.String()].elapsed
 
 	// Travel 10s into the future, notify the progress goroutine, and wait
 	// for execution via 'elapsed' progress
@@ -89,18 +89,22 @@ func TestJSONHook_create(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	nowMu.Unlock()
 
+	// Capture the heartbeat channel before PostApply removes the entry
+	// from the applying map.
+	hook.applyingLock.Lock()
+	heartbeatDone := hook.applying[addr.String()].heartbeatDone
+	hook.applyingLock.Unlock()
+
 	action, err = hook.PostApply(addr, states.CurrentGen, plannedNewState, nil)
 	testHookReturnValues(t, action, err)
 
-	// Shut down the progress goroutine if still active
-	hook.applyingLock.Lock()
-	for key, progress := range hook.applying {
-		close(progress.done)
-		close(progress.elapsed)
-		<-progress.heartbeatDone
-		delete(hook.applying, key)
+	// PostApply stops the progress goroutine. Join it boundedly and confirm
+	// it closed its producer-owned observer before reading the streams, as
+	// tests must neither leak the goroutine nor close the observer.
+	testHeartbeatWait(t, heartbeatDone)
+	if _, ok := <-elapsedChan; ok {
+		t.Error("heartbeat goroutine should have closed its elapsed observer")
 	}
-	hook.applyingLock.Unlock()
 
 	wantResource := map[string]interface{}{
 		"addr":             string("test_instance.boop"),
@@ -216,6 +220,13 @@ func TestJSONHook_errors(t *testing.T) {
 	action, err := hook.PreApply(addr, states.CurrentGen, plans.Delete, priorState, plannedNewState)
 	testHookReturnValues(t, action, err)
 
+	// Capture the heartbeat channel before PostApply removes the entry from
+	// the applying map, so the progress goroutine can be joined explicitly
+	// before closing the streams.
+	hook.applyingLock.Lock()
+	heartbeatDone := hook.applying[addr.String()].heartbeatDone
+	hook.applyingLock.Unlock()
+
 	provisionError := fmt.Errorf("provisioner didn't want to")
 	action, err = hook.PostProvisionInstanceStep(addr, "local-exec", provisionError)
 	testHookReturnValues(t, action, err)
@@ -224,15 +235,7 @@ func TestJSONHook_errors(t *testing.T) {
 	action, err = hook.PostApply(addr, states.CurrentGen, plannedNewState, applyError)
 	testHookReturnValues(t, action, err)
 
-	// Shut down the progress goroutine
-	hook.applyingLock.Lock()
-	for key, progress := range hook.applying {
-		close(progress.done)
-		close(progress.elapsed)
-		<-progress.heartbeatDone
-		delete(hook.applying, key)
-	}
-	hook.applyingLock.Unlock()
+	testHeartbeatWait(t, heartbeatDone)
 
 	wantResource := map[string]interface{}{
 		"addr":             string("test_instance.boop"),
@@ -278,6 +281,219 @@ func TestJSONHook_errors(t *testing.T) {
 	}
 
 	testJSONViewOutputEquals(t, done(t).Stdout(), want)
+}
+
+// TestJSONHook_applyNoOp asserts that a NoOp action emits no apply events.
+func TestJSONHook_applyNoOp(t *testing.T) {
+	streams, done := terminal.StreamsForTesting(t)
+	hook := newJSONHook(NewJSONView(NewView(streams), nil))
+
+	addr := addrs.Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "test_instance",
+		Name: "boop",
+	}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+	priorState := cty.NullVal(cty.Object(map[string]cty.Type{
+		"id": cty.String,
+	}))
+	plannedNewState := cty.ObjectVal(map[string]cty.Value{
+		"id": cty.StringVal("test"),
+	})
+
+	action, err := hook.PreApply(addr, states.CurrentGen, plans.NoOp, priorState, plannedNewState)
+	testHookReturnValues(t, action, err)
+
+	action, err = hook.PostApply(addr, states.CurrentGen, plannedNewState, nil)
+	testHookReturnValues(t, action, err)
+
+	// NoOp must emit no hook events at all.
+	testJSONViewOutputEquals(t, done(t).Stdout(), []map[string]interface{}{{}})
+}
+
+// TestJSONHook_heartbeatWithoutElapsedObserver exercises the production path
+// (public PreApply, no elapsed observer) and verifies that heartbeats are
+// emitted and the goroutine is reaped deterministically. The unbuffered tick
+// channel makes a successful send an explicit rendezvous with the progress
+// goroutine, which orders each emitted apply_progress record before the next
+// tick is delivered. Under the pre-fix behavior (heartbeat sending to a
+// never-read elapsed channel) the second send below times out bounded,
+// failing without hanging the suite.
+func TestJSONHook_heartbeatWithoutElapsedObserver(t *testing.T) {
+	streams, closeStreams := terminal.StreamsForTesting(t)
+	hook := newJSONHook(NewJSONView(NewView(streams), nil))
+
+	var nowMu sync.Mutex
+	now := time.Now()
+	hook.timeNow = func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	}
+
+	// Unbuffered: a successful send is a rendezvous with the progress
+	// goroutine. The clock is advanced inside the timeAfter mock, which the
+	// heartbeat itself calls on every loop iteration in the select, so each
+	// 10s advance is ordered before the corresponding elapsed read and the
+	// progress values stay deterministic.
+	after := make(chan time.Time)
+	// Producer-owned side channel counting mock timeAfter calls; each call
+	// happens at select entry, so count 2 proves the first record was
+	// emitted and count 3 proves the second was.
+	timeAfterCalls := make(chan struct{}, 4)
+	hook.timeAfter = func(time.Duration) <-chan time.Time {
+		nowMu.Lock()
+		now = now.Add(10 * time.Second)
+		nowMu.Unlock()
+		timeAfterCalls <- struct{}{}
+		return after
+	}
+
+	addr := addrs.Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "test_instance",
+		Name: "boop",
+	}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance)
+	priorState := cty.NullVal(cty.Object(map[string]cty.Type{
+		"id":  cty.String,
+		"bar": cty.List(cty.String),
+	}))
+	plannedNewState := cty.ObjectVal(map[string]cty.Value{
+		"id": cty.StringVal("test"),
+		"bar": cty.ListVal([]cty.Value{
+			cty.StringVal("baz"),
+		}),
+	})
+
+	// Teardown safety net, registered right after the streams: on any early
+	// failure it stops the producer via PostApply (if the test never got
+	// there), joins it boundedly, and only then closes the output streams.
+	// If the producer cannot be joined (pre-fix behavior wedges it on its
+	// producer-owned observer) testHeartbeatWait fail-stops the package test
+	// process, so no goroutine or pipe is left behind. The flags below mark
+	// the work the test body already did so cleanup never does it twice.
+	var (
+		postApplied   bool
+		streamsClosed bool
+		heartbeatDone chan struct{}
+	)
+	t.Cleanup(func() {
+		if !postApplied {
+			postApplied = true
+			action, err := hook.PostApply(addr, states.CurrentGen, plannedNewState, nil)
+			testHookReturnValues(t, action, err)
+		}
+		if heartbeatDone != nil {
+			testHeartbeatWait(t, heartbeatDone)
+		}
+		if !streamsClosed {
+			closeStreams(t)
+		}
+	})
+
+	beforeStart := now
+	action, err := hook.PreApply(addr, states.CurrentGen, plans.Create, priorState, plannedNewState)
+
+	// Capture the heartbeat channel before PostApply removes the entry from
+	// the applying map. Note: no elapsed-observer assertion here, so the
+	// pre-fix behavior runs all the way to the bounded second-tick timeout
+	// instead of failing early; the assertion lives after the join below.
+	hook.applyingLock.Lock()
+	progress := hook.applying[addr.String()]
+	hook.applyingLock.Unlock()
+	elapsedObserver := progress.elapsed
+	heartbeatDone = progress.heartbeatDone
+	testHookReturnValues(t, action, err)
+
+	// Two heartbeats: each rendezvous return implies the goroutine consumed
+	// the tick, and the second imply the first record was already emitted
+	// (select re-entry happens after emission).
+	testSendTick(t, after, beforeStart)
+	testSendTick(t, after, beforeStart)
+
+	// Wait for the producer's third select entry: the third mock timeAfter
+	// call occurs only after the second apply_progress record was emitted.
+	for i := 0; i < 3; i++ {
+		select {
+		case <-timeAfterCalls:
+		case <-time.After(testHeartbeatTimeout):
+			t.Fatal("heartbeat goroutine did not progress as expected")
+		}
+	}
+
+	postApplied = true
+	action, err = hook.PostApply(addr, states.CurrentGen, plannedNewState, nil)
+	testHookReturnValues(t, action, err)
+
+	// Explicitly join the heartbeat goroutine before closing the streams.
+	testHeartbeatWait(t, heartbeatDone)
+
+	// Relocated production-path assertion: with the pre-fix behavior the
+	// test never reaches this point (it fail-stops on the second tick), so
+	// the required bounded behavior is what gets exercised.
+	if elapsedObserver != nil {
+		t.Fatal("production path must not attach an elapsed observer")
+	}
+
+	wantResource := map[string]interface{}{
+		"addr":             string("test_instance.boop"),
+		"implied_provider": string("test"),
+		"module":           string(""),
+		"resource":         string("test_instance.boop"),
+		"resource_key":     nil,
+		"resource_name":    string("boop"),
+		"resource_type":    string("test_instance"),
+	}
+	want := []map[string]interface{}{
+		{
+			"@level":   "info",
+			"@message": "test_instance.boop: Creating...",
+			"@module":  "ghoten.ui",
+			"type":     "apply_start",
+			"hook": map[string]interface{}{
+				"action":   string("create"),
+				"resource": wantResource,
+			},
+		},
+		{
+			"@level":   "info",
+			"@message": "test_instance.boop: Still creating... [10s elapsed]",
+			"@module":  "ghoten.ui",
+			"type":     "apply_progress",
+			"hook": map[string]interface{}{
+				"action":          string("create"),
+				"elapsed_seconds": float64(10),
+				"resource":        wantResource,
+			},
+		},
+		{
+			"@level":   "info",
+			"@message": "test_instance.boop: Still creating... [20s elapsed]",
+			"@module":  "ghoten.ui",
+			"type":     "apply_progress",
+			"hook": map[string]interface{}{
+				"action":          string("create"),
+				"elapsed_seconds": float64(20),
+				"resource":        wantResource,
+			},
+		},
+		{
+			"@level":   "info",
+			"@message": "test_instance.boop: Creation complete after 30s [id=test]",
+			"@module":  "ghoten.ui",
+			"type":     "apply_complete",
+			"hook": map[string]interface{}{
+				"action":          string("create"),
+				"elapsed_seconds": float64(30),
+				"id_key":          "id",
+				"id_value":        "test",
+				"resource":        wantResource,
+			},
+		},
+	}
+
+	output := closeStreams(t)
+	streamsClosed = true
+	testJSONViewOutputEquals(t, output.Stdout(), want)
 }
 
 func TestJSONHook_refresh(t *testing.T) {
@@ -539,5 +755,40 @@ func testDurationEqual(t *testing.T, wantedDuration time.Duration, gotDuration t
 
 	if !cmp.Equal(wantedDuration, gotDuration) {
 		t.Errorf("unexpected time elapsed:%s\n", cmp.Diff(wantedDuration, gotDuration))
+	}
+}
+
+// testHeartbeatTimeout bounds every wait on the heartbeat goroutine in tests
+// so a wedged producer fails the test instead of hanging the whole suite.
+const testHeartbeatTimeout = 2 * time.Second
+
+// testHeartbeatWait joins the heartbeat goroutine after its done channel was
+// closed (by PostApply). It must be called before closing the output streams.
+// If the join cannot be proven within the timeout — e.g. the pre-fix
+// heartbeat blocks forever on its producer-owned observer — the test process
+// is fail-stopped, matching the approved test-only cleanup pattern in
+// internal/command/apply_test.go: the blocked goroutine cannot be reaped, so
+// exiting avoids leaking or hanging the rest of the package suite.
+func testHeartbeatWait(t *testing.T, heartbeatDone chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-heartbeatDone:
+	case <-time.After(testHeartbeatTimeout):
+		fmt.Fprintln(os.Stderr, "fatal test cleanup: heartbeat goroutine did not stop after done close; aborting package test process")
+		os.Exit(1)
+	}
+}
+
+// testSendTick delivers a mocked timeAfter tick to the heartbeat goroutine.
+// It must only be used with an unbuffered tick channel, so a successful send
+// doubles as a rendezvous proving the goroutine consumed the tick.
+func testSendTick(t *testing.T, after chan<- time.Time, now time.Time) {
+	t.Helper()
+
+	select {
+	case after <- now:
+	case <-time.After(testHeartbeatTimeout):
+		t.Fatal("heartbeat goroutine did not consume a tick in time")
 	}
 }

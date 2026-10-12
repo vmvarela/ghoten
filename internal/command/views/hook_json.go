@@ -17,9 +17,9 @@ import (
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/format"
 	"github.com/vmvarela/ghoten/internal/command/views/json"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // How long to wait between sending heartbeat/progress messages
@@ -63,11 +63,20 @@ type applyProgress struct {
 	// goroutine to finish
 	heartbeatDone chan struct{}
 
-	// elapsed is used to allow tests to safely check for heartbeat executions
+	// elapsed is an optional test-only observer of heartbeat executions.
+	// It is producer-owned: the progress goroutine is solely responsible for
+	// sending to and closing it. It is nil on the production path.
 	elapsed chan time.Duration
 }
 
 func (h *jsonHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generation, action plans.Action, priorState, plannedNewState cty.Value) (ghoten.HookAction, error) {
+	return h.preApply(addr, action, priorState, plannedNewState, nil)
+}
+
+// preApply emits the "apply start" event and starts the progress goroutine.
+// The elapsed observer, when non-nil, receives the elapsed duration on every
+// heartbeat so tests can wait for an event to be emitted before proceeding.
+func (h *jsonHook) preApply(addr addrs.AbsResourceInstance, action plans.Action, priorState, plannedNewState cty.Value, elapsed chan time.Duration) (ghoten.HookAction, error) {
 	if action != plans.NoOp {
 		idKey, idValue := format.ObjectValueIDOrName(priorState)
 		h.view.Hook(json.NewApplyStart(addr, action, idKey, idValue))
@@ -77,7 +86,7 @@ func (h *jsonHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generatio
 		addr:          addr,
 		action:        action,
 		start:         h.timeNow().Round(time.Second),
-		elapsed:       make(chan time.Duration),
+		elapsed:       elapsed,
 		done:          make(chan struct{}),
 		heartbeatDone: make(chan struct{}),
 	}
@@ -93,7 +102,11 @@ func (h *jsonHook) PreApply(addr addrs.AbsResourceInstance, gen states.Generatio
 
 func (h *jsonHook) applyingHeartbeat(progress applyProgress) {
 	defer close(progress.heartbeatDone)
-	defer close(progress.elapsed)
+	// The elapsed observer is producer-owned: only this goroutine sends to
+	// and closes it, so callers must never close it.
+	if progress.elapsed != nil {
+		defer close(progress.elapsed)
+	}
 	for {
 		select {
 		case <-progress.done:
@@ -103,7 +116,9 @@ func (h *jsonHook) applyingHeartbeat(progress applyProgress) {
 
 		elapsed := h.timeNow().Round(time.Second).Sub(progress.start)
 		h.view.Hook(json.NewApplyProgress(progress.addr, progress.action, elapsed))
-		progress.elapsed <- elapsed
+		if progress.elapsed != nil {
+			progress.elapsed <- elapsed
+		}
 	}
 }
 
