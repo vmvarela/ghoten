@@ -6,10 +6,19 @@
 package getproviders
 
 import (
+	"archive/zip"
+	"context"
+	"errors"
 	"maps"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/collections"
 )
 
@@ -323,4 +332,204 @@ func TestHashDispositionsMerge(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestEmptyPackageHashV1(t *testing.T) {
+	emptyDir := t.TempDir()
+	realHash, err := PackageHashV1(PackageLocalDir(emptyDir))
+	if err != nil {
+		t.Fatalf("failed to calculate hash of empty package: %s", err)
+	}
+	if realHash != emptyPackageHashV1 {
+		t.Errorf("emptyPackageHashV1 does not match freshly-calculated hash of empty package\nemptyPackageHashV1: %s\ncalculated result:  %s", emptyPackageHashV1, realHash)
+	}
+}
+
+// testLocalArchiveZip writes a minimal real provider package .zip file
+// containing the given files, for exercising the local archive installation
+// codepath in tests, and returns its full path.
+func testLocalArchiveZip(t *testing.T, files map[string]string) PackageLocalArchive {
+	t.Helper()
+
+	zipPath := filepath.Join(t.TempDir(), "fake-provider-package.zip")
+	f, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("failed to create temporary zip file: %s", err)
+	}
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+	// Iterate in a fixed order so that filenames in the resulting archive
+	// are deterministic and thus its calculated hash is predictable.
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("failed to create zip entry %q: %s", name, err)
+		}
+		if _, err := w.Write([]byte(files[name])); err != nil {
+			t.Fatalf("failed to write zip entry %q: %s", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to finish zip file: %s", err)
+	}
+	return PackageLocalArchive(zipPath)
+}
+
+// TestPackageLocalArchiveInstallProviderPackage covers the behavior of
+// PackageLocalArchive.InstallProviderPackage when there already is a directory
+// entry at the installation target: exact matching entries are reused, empty
+// directories are accepted, and anything else (including a symlink to an empty
+// directory) must be rejected without modifying the existing entry.
+func TestPackageLocalArchiveInstallProviderPackage(t *testing.T) {
+	provider := addrs.MustParseProviderSourceString("example.com/test/provider")
+	packageFiles := map[string]string{
+		"terraform-provider-test_v1.0.0_x5": "fake provider binary",
+		"LICENSE":                           "fake license text",
+	}
+	zipFile := testLocalArchiveZip(t, packageFiles)
+
+	meta := PackageMeta{
+		Provider:       provider,
+		Version:        MustParseVersion("1.0.0"),
+		Location:       zipFile,
+		TargetPlatform: CurrentPlatform,
+	}
+	install := func(t *testing.T, targetDir string) error {
+		t.Helper()
+		_, err := zipFile.InstallProviderPackage(context.Background(), meta, targetDir, nil)
+		return err
+	}
+
+	t.Run("fresh install", func(t *testing.T) {
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		if err := install(t, targetDir); err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+		for name, want := range packageFiles {
+			got, err := os.ReadFile(filepath.Join(targetDir, name))
+			if err != nil {
+				t.Fatalf("expected file %q is missing: %s", name, err)
+			}
+			if string(got) != want {
+				t.Errorf("wrong content for file %q", name)
+			}
+		}
+	})
+	t.Run("reuse exact matching entry", func(t *testing.T) {
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		if err := install(t, targetDir); err != nil {
+			t.Fatalf("unexpected error during preparation: %s", err)
+		}
+
+		// Making the directory read-only means a second installation that
+		// tried to write there would fail, so returning success proves that
+		// the matching entry was reused without rewriting it.
+		if err := os.Chmod(targetDir, 0o500); err == nil {
+			t.Cleanup(func() {
+				if err := os.Chmod(targetDir, 0o700); err != nil {
+					t.Errorf("failed to restore directory permissions: %s", err)
+				}
+			})
+		} else {
+			t.Fatalf("failed to make existing entry read-only: %s", err)
+		}
+		if err := install(t, targetDir); err != nil {
+			t.Errorf("unexpected error when installing into an already-matching entry: %s", err)
+		}
+	})
+	t.Run("reject mismatching entry, preserve it", func(t *testing.T) {
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		err := os.MkdirAll(targetDir, os.ModePerm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		extraFile := filepath.Join(targetDir, "extra.txt")
+		const extraContent = "this file is not part of the fake package"
+		if err := os.WriteFile(extraFile, []byte(extraContent), os.ModePerm); err != nil {
+			t.Fatal(err)
+		}
+
+		err = install(t, targetDir)
+		if err == nil {
+			t.Fatal("unexpected success; want rejection of mismatching entry")
+		}
+		if want := "does not match the content of the downloaded package"; !strings.Contains(err.Error(), want) {
+			t.Errorf("error message missing expected substring %q\ngot: %s", want, err)
+		}
+		got, err := os.ReadFile(extraFile)
+		if err != nil {
+			t.Fatalf("mismatching entry was not preserved: %s", err)
+		}
+		if string(got) != extraContent {
+			t.Error("mismatching entry was modified")
+		}
+	})
+	t.Run("accept empty directory", func(t *testing.T) {
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		if err := os.Mkdir(targetDir, os.ModePerm); err != nil {
+			t.Fatal(err)
+		}
+		if err := install(t, targetDir); err != nil {
+			t.Fatalf("unexpected failure installing into a preexisting empty directory: %s", err)
+		}
+		for name, want := range packageFiles {
+			got, err := os.ReadFile(filepath.Join(targetDir, name))
+			if err != nil {
+				t.Fatalf("expected file %q is missing: %s", name, err)
+			}
+			if string(got) != want {
+				t.Errorf("wrong content for file %q", name)
+			}
+		}
+	})
+	t.Run("reject symlink to empty directory", func(t *testing.T) {
+		symlinkTarget := filepath.Join(t.TempDir(), "empty-target")
+		if err := os.Mkdir(symlinkTarget, os.ModePerm); err != nil {
+			t.Fatal(err)
+		}
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		if err := os.Symlink(symlinkTarget, targetDir); err != nil {
+			skipIfSymlinkUnavailable(t, err)
+		}
+
+		err := install(t, targetDir)
+		if err == nil {
+			t.Fatal("unexpected success; want rejection of symlink to an empty directory")
+		}
+		if want := "does not match the content of the downloaded package"; !strings.Contains(err.Error(), want) {
+			t.Errorf("error message missing expected substring %q\ngot: %s", want, err)
+		}
+		// The symlink and its target must be left untouched.
+		entries, err := os.ReadDir(symlinkTarget)
+		if err != nil {
+			t.Fatalf("symlink target disappeared: %s", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("symlink target was modified: %v", entries)
+		}
+	})
+	t.Run("accept symlink to matching directory", func(t *testing.T) {
+		symlinkTarget := filepath.Join(t.TempDir(), "installed")
+		if err := install(t, symlinkTarget); err != nil {
+			t.Fatalf("unexpected error during preparation: %s", err)
+		}
+		targetDir := filepath.Join(t.TempDir(), "provider")
+		if err := os.Symlink(symlinkTarget, targetDir); err != nil {
+			skipIfSymlinkUnavailable(t, err)
+		}
+		if err := install(t, targetDir); err != nil {
+			t.Errorf("unexpected error when installing through a symlink to a matching directory: %s", err)
+		}
+	})
+}
+
+func skipIfSymlinkUnavailable(t *testing.T, err error) {
+	t.Helper()
+	errMessage := strings.ToLower(err.Error())
+	if runtime.GOOS == "windows" &&
+		(errors.Is(err, os.ErrPermission) || strings.Contains(errMessage, "privilege") || strings.Contains(errMessage, "access is denied")) {
+		t.Skipf("cannot create symlink without Windows privileges: %s", err)
+	}
+	t.Fatalf("failed to create symlink: %s", err)
 }
