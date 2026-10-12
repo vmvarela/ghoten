@@ -397,6 +397,19 @@ func applyFixtureSchema() providers.ProviderSchema {
 	}
 }
 
+// providerSchemaRequiredAttribute returns a provider schema with a required attribute
+func providerSchemaRequiredAttribute() providers.ProviderSchema {
+	return providers.ProviderSchema{
+		Provider: providers.Schema{
+			Block: &configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"required": {Type: cty.String, Required: true},
+				},
+			},
+		},
+	}
+}
+
 func TestApply_applyCanceledAutoApprove(t *testing.T) {
 	b := TestLocal(t)
 

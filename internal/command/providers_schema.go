@@ -113,7 +113,9 @@ func (c *ProvidersSchemaCommand) Run(args []string) int {
 	}
 
 	// Get the context
-	lr, _, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	diags = diags.Append(ctxDiags)
 	if ctxDiags.HasErrors() {
 		c.showDiagnostics(diags)

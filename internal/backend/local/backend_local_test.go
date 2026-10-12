@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -21,15 +24,16 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs/configload"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/initwd"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/plans/planfile"
+	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestLocalRun(t *testing.T) {
@@ -49,7 +53,7 @@ func TestLocalRun(t *testing.T) {
 		StateLocker:  stateLocker,
 	}
 
-	_, _, diags := b.LocalRun(context.Background(), op)
+	_, _, diags := b.LocalRun(context.Background(), t.Context(), op)
 	if diags.HasErrors() {
 		t.Fatalf("unexpected error: %s", diags.Err().Error())
 	}
@@ -79,7 +83,7 @@ func TestLocalRun_error(t *testing.T) {
 		StateLocker:  stateLocker,
 	}
 
-	_, _, diags := b.LocalRun(context.Background(), op)
+	_, _, diags := b.LocalRun(context.Background(), t.Context(), op)
 	if !diags.HasErrors() {
 		t.Fatal("unexpected success")
 	}
@@ -113,7 +117,7 @@ func TestLocalRun_cloudPlan(t *testing.T) {
 		StateLocker:  stateLocker,
 	}
 
-	_, _, diags := b.LocalRun(context.Background(), op)
+	_, _, diags := b.LocalRun(context.Background(), t.Context(), op)
 	if !diags.HasErrors() {
 		t.Fatal("unexpected success")
 	}
@@ -198,7 +202,7 @@ func TestLocalRun_stalePlan(t *testing.T) {
 		StateLocker:  stateLocker,
 	}
 
-	_, _, diags := b.LocalRun(context.Background(), op)
+	_, _, diags := b.LocalRun(context.Background(), t.Context(), op)
 	if !diags.HasErrors() {
 		t.Fatal("unexpected success")
 	}
@@ -280,4 +284,261 @@ func (s *stateStorageThatFailsRefresh) RefreshState(_ context.Context) error {
 
 func (s *stateStorageThatFailsRefresh) PersistState(_ context.Context, schemas *ghoten.Schemas) error {
 	return fmt.Errorf("unimplemented")
+}
+
+// lockRecordingBackend is a state backend whose state manager delegates to a
+// real filesystem state but records every Lock/Unlock call, so tests can
+// prove lock release deterministically.
+type lockRecordingBackend struct {
+	statePath string
+
+	state *lockRecordingState
+}
+
+var _ backend.Backend = (*lockRecordingBackend)(nil)
+
+func newLockRecordingBackend(t *testing.T) *lockRecordingBackend {
+	t.Helper()
+	return &lockRecordingBackend{statePath: filepath.Join(t.TempDir(), "state.tfstate")}
+}
+
+func (b *lockRecordingBackend) StateMgr(_ context.Context, _ string) (statemgr.Full, error) {
+	if b.state == nil {
+		b.state = &lockRecordingState{
+			Filesystem: statemgr.NewFilesystem(b.statePath, encryption.StateEncryptionDisabled()),
+		}
+	}
+	return b.state, nil
+}
+
+func (b *lockRecordingBackend) ConfigSchema() *configschema.Block {
+	return &configschema.Block{}
+}
+
+func (b *lockRecordingBackend) PrepareConfig(in cty.Value) (cty.Value, tfdiags.Diagnostics) {
+	return in, nil
+}
+
+func (b *lockRecordingBackend) Configure(context.Context, cty.Value) tfdiags.Diagnostics {
+	return nil
+}
+
+func (b *lockRecordingBackend) DeleteWorkspace(_ context.Context, name string, force bool) error {
+	return fmt.Errorf("unimplemented")
+}
+
+func (b *lockRecordingBackend) Workspaces(context.Context) ([]string, error) {
+	return []string{"default"}, nil
+}
+
+func (b *lockRecordingBackend) counts() (locks, unlocks int) {
+	if b.state == nil {
+		return 0, 0
+	}
+	b.state.lockMu.Lock()
+	defer b.state.lockMu.Unlock()
+	return b.state.lockCalls, b.state.unlockCalls
+}
+
+// unlockResults reports whether the Unlock context was already cancelled and
+// whether the delegated Filesystem.Unlock succeeded, guarded by the same
+// mutex as the call counts.
+func (b *lockRecordingBackend) unlockResults() (ctxCancelled bool, err error) {
+	if b.state == nil {
+		return false, nil
+	}
+	b.state.lockMu.Lock()
+	defer b.state.lockMu.Unlock()
+	return b.state.unlockCtxCancelled, b.state.unlockErr
+}
+
+type lockRecordingState struct {
+	*statemgr.Filesystem
+
+	lockMu             sync.Mutex
+	lockCalls          int
+	unlockCalls        int
+	unlockCtxCancelled bool
+	unlockErr          error
+}
+
+var _ statemgr.Full = (*lockRecordingState)(nil)
+
+func (s *lockRecordingState) Lock(ctx context.Context, info *statemgr.LockInfo) (string, error) {
+	s.lockMu.Lock()
+	s.lockCalls++
+	s.lockMu.Unlock()
+	return s.Filesystem.Lock(ctx, info)
+}
+
+func (s *lockRecordingState) Unlock(ctx context.Context, lockID string) error {
+	s.lockMu.Lock()
+	s.unlockCalls++
+	ctxCancelled := ctx.Err() != nil
+	err := s.Filesystem.Unlock(ctx, lockID)
+	s.unlockCtxCancelled = ctxCancelled
+	s.unlockErr = err
+	s.lockMu.Unlock()
+	return err
+}
+
+// blockedOnPromptUIInput is a ghoten.UIInput mock that signals a channel once
+// a prompt is entered, then blocks until either its context is cancelled or a
+// generous failsafe timeout expires.
+type blockedOnPromptUIInput struct {
+	entered chan struct{}
+	after   time.Duration
+	once    sync.Once
+}
+
+func (m *blockedOnPromptUIInput) Input(ctx context.Context, _ *ghoten.InputOpts) (string, error) {
+	m.once.Do(func() { close(m.entered) })
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(m.after):
+		return "", fmt.Errorf("ui input was not closed within %s", m.after)
+	}
+}
+
+// newBlockingUIInput returns a UIInput mock and the channel closed when its
+// first prompt is entered (proving the prompt is actually blocked).
+func newBlockingUIInput(t *testing.T, after time.Duration) (*blockedOnPromptUIInput, <-chan struct{}) {
+	t.Helper()
+	entered := make(chan struct{})
+	return &blockedOnPromptUIInput{entered: entered, after: after}, entered
+}
+
+// waitForPromptEntry proves that an interactive prompt is actually blocked
+// before the test asks the backend to stop, so cancellation timing is
+// deterministic rather than sleep-based.
+func waitForPromptEntry(t *testing.T, entered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the operation never reached an interactive prompt")
+	}
+}
+
+func awaitStoppedOperation(t *testing.T, run *backend.RunningOperation) {
+	t.Helper()
+	go run.Stop()
+	select {
+	case <-run.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("hit the timeout. expected for the operation to finish before the timeout")
+	}
+	if run.Result != backend.OperationFailure {
+		t.Fatal("operation succeeded but expected to fail")
+	}
+}
+
+func TestLocalRun_cancelledVariablePrompt(t *testing.T) {
+	b := TestLocal(t)
+
+	// testOperationApply supplies no UIIn, so the variable prompt is exercised
+	// by this test's own real blocking input rather than by upstream's test.
+	op, done := testOperationApply(t, "./testdata/apply-with-vars")
+	in, entered := newBlockingUIInput(t, 10*time.Second)
+	op.UIIn = in
+	b.OpInput = true
+
+	run, err := b.Operation(context.Background(), op)
+	if err != nil {
+		t.Fatalf("bad: %s", err)
+	}
+
+	waitForPromptEntry(t, entered)
+	awaitStoppedOperation(t, run)
+
+	expectedErrHeader := "Error: No value for required variable"
+	if errOutput := done(t).Stderr(); !strings.Contains(errOutput, expectedErrHeader) {
+		t.Fatalf("unexpected error output. Expected to contain %q but it does not:\n%s", expectedErrHeader, errOutput)
+	}
+}
+
+func TestLocalRun_cancelledProviderPrompt(t *testing.T) {
+	b := TestLocal(t)
+
+	p := TestLocalProvider(t, b, "test", providerSchemaRequiredAttribute())
+	p.ApplyResourceChangeResponse = &providers.ApplyResourceChangeResponse{NewState: cty.ObjectVal(map[string]cty.Value{
+		"id":  cty.StringVal("yes"),
+		"ami": cty.StringVal("bar"),
+	})}
+
+	op, done := testOperationApply(t, "./testdata/apply-with-required-provider-configs")
+	op.Variables = map[string]backend.UnparsedVariableValue{}
+	in, entered := newBlockingUIInput(t, 10*time.Second)
+	op.UIIn = in
+	b.OpInput = true
+
+	run, err := b.Operation(context.Background(), op)
+	if err != nil {
+		t.Fatalf("bad: %s", err)
+	}
+
+	waitForPromptEntry(t, entered)
+	awaitStoppedOperation(t, run)
+
+	expectedErrHeader := "Error: execution halted"
+	if errOutput := done(t).Stderr(); !strings.Contains(errOutput, expectedErrHeader) {
+		t.Fatalf("unexpected error output. Expected to contain %q but it does not:\n%s", expectedErrHeader, errOutput)
+	}
+}
+
+func TestLocalRun_cancelledPromptReleasesStateLock(t *testing.T) {
+	b := TestLocal(t)
+
+	rec := newLockRecordingBackend(t)
+	b.Backend = rec
+
+	op, done := testOperationApply(t, "./testdata/apply-with-vars")
+	in, entered := newBlockingUIInput(t, 10*time.Second)
+	op.UIIn = in
+	b.OpInput = true
+
+	// Replace the noop locker with a real one backed by the recording
+	// state manager, so we can prove the lock was actually taken and
+	// then released after the cancelled prompt failed the operation.
+	streams, _ := terminal.StreamsForTesting(t)
+	view := views.NewView(streams)
+	op.StateLocker = clistate.NewLocker(0, views.NewStateLocker(arguments.ViewOptions{ViewType: arguments.ViewHuman}, view))
+
+	run, err := b.Operation(context.Background(), op)
+	if err != nil {
+		t.Fatalf("bad: %s", err)
+	}
+
+	waitForPromptEntry(t, entered)
+	if locks, unlocks := rec.counts(); locks != 1 || unlocks != 0 {
+		t.Fatalf("expected the state lock to be held while prompting, got %d locks and %d unlocks", locks, unlocks)
+	}
+	awaitStoppedOperation(t, run)
+	_ = done(t)
+
+	locks, unlocks := rec.counts()
+	if locks != 1 {
+		t.Fatalf("expected exactly 1 lock call, got %d", locks)
+	}
+	if unlocks != 1 {
+		t.Fatalf("expected exactly 1 unlock call after cancellation, got %d", unlocks)
+	}
+	unlockCtxCancelled, unlockErr := rec.unlockResults()
+	if unlockCtxCancelled {
+		t.Fatal("expected Unlock to be called with a non-cancelled context, but the context was already cancelled")
+	}
+	if unlockErr != nil {
+		t.Fatalf("expected the delegated Filesystem.Unlock to succeed, got error: %s", unlockErr)
+	}
+
+	// Reacquire and release the same real filesystem state lock to prove
+	// the backend's lock was actually released and the lock is available.
+	lockID, err := rec.state.Filesystem.Lock(t.Context(), statemgr.NewLockInfo())
+	if err != nil {
+		t.Fatalf("expected to be able to reacquire the state lock, got error: %s", err)
+	}
+	if err := rec.state.Filesystem.Unlock(t.Context(), lockID); err != nil {
+		t.Fatalf("expected to be able to release the reacquired state lock, got error: %s", err)
+	}
 }
