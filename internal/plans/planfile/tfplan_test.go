@@ -155,6 +155,31 @@ func TestTFPlanRoundTrip(t *testing.T) {
 					Addr: addrs.Resource{
 						Mode: addrs.ManagedResourceMode,
 						Type: "test_thing",
+						Name: "forgetthencreate",
+					}.Instance(addrs.IntKey(1)).Absolute(addrs.RootModuleInstance),
+					PrevRunAddr: addrs.Resource{
+						Mode: addrs.ManagedResourceMode,
+						Type: "test_thing",
+						Name: "forgetthencreate",
+					}.Instance(addrs.IntKey(1)).Absolute(addrs.RootModuleInstance),
+					ProviderAddr: addrs.AbsProviderConfig{
+						Provider: addrs.NewDefaultProvider("test"),
+						Module:   addrs.RootModule,
+					},
+					ChangeSrc: plans.ChangeSrc{
+						Action: plans.ForgetThenCreate,
+						Before: mustNewDynamicValue(cty.ObjectVal(map[string]cty.Value{
+							"id": cty.StringVal("bar-baz-forgetthencreate"),
+						}), objTy),
+						After: mustNewDynamicValue(cty.ObjectVal(map[string]cty.Value{
+							"id": cty.UnknownVal(cty.String),
+						}), objTy),
+					},
+				},
+				{
+					Addr: addrs.Resource{
+						Mode: addrs.ManagedResourceMode,
+						Type: "test_thing",
 						Name: "importing",
 					}.Instance(addrs.IntKey(1)).Absolute(addrs.RootModuleInstance),
 					PrevRunAddr: addrs.Resource{
