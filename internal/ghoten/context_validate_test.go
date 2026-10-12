@@ -274,6 +274,43 @@ func TestContext2Validate_countNegative(t *testing.T) {
 	}
 }
 
+func TestContext2Validate_countTooLarge(t *testing.T) {
+	p := testProvider("aws")
+	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+		ResourceTypes: map[string]providers.Schema{
+			"aws_instance": {
+				Block: &configschema.Block{
+					Attributes: map[string]*configschema.Attribute{},
+				},
+			},
+		},
+	}
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "aws_instance" "test" {
+  count = 2147483648
+}
+`,
+	})
+	c := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	diags := c.Validate(context.Background(), m)
+	if !diags.HasErrors() {
+		t.Fatalf("succeeded; want error")
+	}
+	got := diags.Err().Error()
+	if !strings.Contains(got, `2147483647`) {
+		t.Fatalf("wrong error:\ngot:  %s\nwant: message containing %q", got, `2147483647`)
+	}
+	if !strings.Contains(got, `must be less than or equal to`) {
+		t.Fatalf("wrong error:\ngot:  %s\nwant: message containing count limit diagnostic", got)
+	}
+}
+
 func TestContext2Validate_countVariable(t *testing.T) {
 	p := testProvider("aws")
 	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
