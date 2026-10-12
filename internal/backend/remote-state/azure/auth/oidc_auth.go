@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/vmvarela/ghoten/internal/httpclient"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
@@ -53,9 +54,9 @@ func (cred *oidcAuth) Construct(ctx context.Context, config *Config) (azcore.Tok
 		// a fresh OIDC token as needed, enabling proper token refresh behavior.
 		func(ctx context.Context) (string, error) {
 			client := httpclient.New(ctx)
-			
+
 			if config.OIDCToken == "" && config.OIDCTokenFilePath == "" {
-				return getTokenFromRemote(client, config.OIDCAuthConfig)
+				return getTokenFromRemote(client, config.OIDCAuthConfig, config.CloudConfig)
 			}
 			return consolidateToken(config)
 		},
@@ -69,7 +70,21 @@ type TokenResponse struct {
 	Value string `json:"value"`
 }
 
-func getTokenFromRemote(client *http.Client, config OIDCAuthConfig) (string, error) {
+// The token exchanged for OIDC credentials lives in different resource
+// applications depending on the cloud, so the request audience must match.
+func audienceForCloudConfig(cloudConfig cloud.Configuration) string {
+	// The authority host uniquely identifies the Azure SDK's built-in cloud configurations.
+	switch cloudConfig.ActiveDirectoryAuthorityHost {
+	case cloud.AzureChina.ActiveDirectoryAuthorityHost:
+		return "api://AzureADTokenExchangeChina"
+	case cloud.AzureGovernment.ActiveDirectoryAuthorityHost:
+		return "api://AzureADTokenExchangeUSGov"
+	default:
+		return "api://AzureADTokenExchange"
+	}
+}
+
+func getTokenFromRemote(client *http.Client, config OIDCAuthConfig, cloudConfig cloud.Configuration) (string, error) {
 	// GET from the request URL, using the bearer token
 	req, err := http.NewRequest(http.MethodGet, config.OIDCRequestURL, nil)
 	if err != nil {
@@ -80,8 +95,10 @@ func getTokenFromRemote(client *http.Client, config OIDCAuthConfig) (string, err
 	req.Header.Add("Content-Type", "application/json")
 
 	query := req.URL.Query()
-	query.Set("audience", "api://AzureADTokenExchange")
-	req.URL.RawQuery = query.Encode()
+	if _, ok := query["audience"]; !ok {
+		query.Set("audience", audienceForCloudConfig(cloudConfig))
+		req.URL.RawQuery = query.Encode()
+	}
 
 	// Read the response
 	resp, err := client.Do(req)
@@ -145,7 +162,7 @@ func (cred *oidcAuth) Validate(ctx context.Context, config *Config) tfdiags.Diag
 	}
 	if directTokenUnset {
 		// check request URL and token
-		_, err := getTokenFromRemote(httpclient.New(ctx), config.OIDCAuthConfig)
+		_, err := getTokenFromRemote(httpclient.New(ctx), config.OIDCAuthConfig, config.CloudConfig)
 		if err != nil {
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Error,
