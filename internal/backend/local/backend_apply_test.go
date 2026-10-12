@@ -441,3 +441,185 @@ func TestApply_applyCanceledAutoApprove(t *testing.T) {
 	}
 
 }
+
+func TestGetEnvAsInt(t *testing.T) {
+	const testEnv = "TEST_GET_ENV_AS_INT"
+
+	tests := []struct {
+		name         string
+		setEnv       bool
+		envValue     string
+		defaultValue int
+		wantValue    int
+		wantError    bool
+	}{
+		{
+			name:         "env not set returns default",
+			setEnv:       false,
+			defaultValue: 20,
+			wantValue:    20,
+		},
+		{
+			name:         "valid integer is parsed",
+			setEnv:       true,
+			envValue:     "30",
+			defaultValue: 20,
+			wantValue:    30,
+		},
+		{
+			name:      "empty value returns error",
+			setEnv:    true,
+			envValue:  "",
+			wantError: true,
+		},
+		{
+			name:      "non-integer value returns error",
+			setEnv:    true,
+			envValue:  "abc",
+			wantError: true,
+		},
+		{
+			name:      "float value returns error",
+			setEnv:    true,
+			envValue:  "1.5",
+			wantError: true,
+		},
+		{
+			name:      "value exceeding integer range returns error",
+			setEnv:    true,
+			envValue:  "99999999999999999999999",
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnv {
+				t.Setenv(testEnv, tt.envValue)
+			} else {
+				original, wasSet := os.LookupEnv(testEnv)
+				if err := os.Unsetenv(testEnv); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if wasSet {
+						if err := os.Setenv(testEnv, original); err != nil {
+							t.Errorf("failed to restore %s: %s", testEnv, err)
+						}
+					} else if err := os.Unsetenv(testEnv); err != nil {
+						t.Errorf("failed to unset %s: %s", testEnv, err)
+					}
+				})
+			}
+
+			got, diags := getEnvAsInt(testEnv, tt.defaultValue)
+			if tt.wantError {
+				if !diags.HasErrors() {
+					t.Errorf("expected error but got none, value=%d", got)
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("unexpected error: %s", diags.Err())
+			}
+			if got != tt.wantValue {
+				t.Errorf("got %d, want %d", got, tt.wantValue)
+			}
+		})
+	}
+}
+
+// runInvalidPersistIntervalApply runs an apply operation with
+// TF_STATE_PERSIST_INTERVAL set to an invalid value, using a real state
+// locker backed by a real filesystem state (recorded via lockRecordingBackend)
+// so release of the state lock can be proven.
+func runInvalidPersistIntervalApply(t *testing.T, envValue string) {
+	t.Helper()
+	t.Setenv(persistIntervalEnvironmentVariableName, envValue)
+
+	b := TestLocal(t)
+	p := TestLocalProvider(t, b, "test", applyFixtureSchema())
+
+	rec := newLockRecordingBackend(t)
+	b.Backend = rec
+
+	op, done := testOperationApply(t, "./testdata/apply")
+
+	// Replace the noop locker with a real one so the deferred unlock in
+	// opApply is exercised against a real filesystem lock.
+	streams, _ := terminal.StreamsForTesting(t)
+	view := views.NewView(streams)
+	op.StateLocker = clistate.NewLocker(0, views.NewStateLocker(arguments.ViewOptions{ViewType: arguments.ViewHuman}, view))
+
+	run, err := b.Operation(context.Background(), op)
+	if err != nil {
+		t.Fatalf("unexpected error starting operation: %v", err)
+	}
+	<-run.Done()
+	if run.Result == backend.OperationSuccess {
+		t.Fatalf("expected operation to fail with invalid %s=%s", persistIntervalEnvironmentVariableName, envValue)
+	}
+
+	if p.ApplyResourceChangeCalled {
+		t.Fatal("provider apply should not have been called")
+	}
+
+	if got, want := done(t).Stderr(), "Invalid environment variable value"; !strings.Contains(got, want) {
+		t.Errorf("expected stderr to contain %q, got:\n%s", want, got)
+	}
+
+	if locks, unlocks := rec.counts(); locks != 1 || unlocks != 1 {
+		t.Errorf("expected the state lock to be taken and then released, got %d locks and %d unlocks", locks, unlocks)
+	}
+
+	// Reacquire the same real filesystem state lock to prove the backend's
+	// lock was actually released and the lock is available.
+	lockID, err := rec.state.Filesystem.Lock(t.Context(), statemgr.NewLockInfo())
+	if err != nil {
+		t.Errorf("expected to be able to reacquire the state lock, got error: %s", err)
+	} else if err := rec.state.Filesystem.Unlock(t.Context(), lockID); err != nil {
+		t.Errorf("expected to be able to release the reacquired state lock, got error: %s", err)
+	}
+}
+
+func TestLocal_applyInvalidPersistInterval(t *testing.T) {
+	t.Run("non-integer value causes error diagnostic", func(t *testing.T) {
+		runInvalidPersistIntervalApply(t, "abc")
+	})
+
+	t.Run("below minimum value causes error diagnostic", func(t *testing.T) {
+		runInvalidPersistIntervalApply(t, "5")
+	})
+
+	t.Run("one below minimum value causes error diagnostic", func(t *testing.T) {
+		runInvalidPersistIntervalApply(t, "19")
+	})
+
+	t.Run("value at the minimum boundary succeeds", func(t *testing.T) {
+		t.Setenv(persistIntervalEnvironmentVariableName, "20")
+
+		b := TestLocal(t)
+		p := TestLocalProvider(t, b, "test", applyFixtureSchema())
+		p.ApplyResourceChangeResponse = &providers.ApplyResourceChangeResponse{NewState: cty.ObjectVal(map[string]cty.Value{
+			"id":  cty.StringVal("yes"),
+			"ami": cty.StringVal("bar"),
+		})}
+
+		op, done := testOperationApply(t, "./testdata/apply")
+
+		run, err := b.Operation(context.Background(), op)
+		if err != nil {
+			t.Fatalf("unexpected error starting operation: %v", err)
+		}
+		<-run.Done()
+		if run.Result != backend.OperationSuccess {
+			t.Fatalf("expected operation to succeed with %s=20", persistIntervalEnvironmentVariableName)
+		}
+		if !p.ApplyResourceChangeCalled {
+			t.Fatal("provider apply should have been called")
+		}
+		if errOutput := done(t).Stderr(); errOutput != "" {
+			t.Fatalf("unexpected error output:\n%s", errOutput)
+		}
+	})
+}
