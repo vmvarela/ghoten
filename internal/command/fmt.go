@@ -165,7 +165,7 @@ func (c *FmtCommand) fmt(paths []string, stdin io.Reader, stdout io.Writer) tfdi
 			}
 
 			if !fmtd {
-				diags = diags.Append(fmt.Errorf("Only .tf, .tfvars, and .tftest.hcl files can be processed with ghoten fmt"))
+				diags = diags.Append(fmt.Errorf("Only .tf, .tofu, .tfvars, .tftest.hcl, and .tofutest.hcl files can be processed with ghoten fmt"))
 				continue
 			}
 		}
