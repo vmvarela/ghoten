@@ -5337,6 +5337,127 @@ import {
 	}
 }
 
+func TestContext2Plan_importUsingProviderDefinedFunction(t *testing.T) {
+	p := testProvider("aws")
+
+	p.GetProviderSchemaResponse.Functions = map[string]providers.FunctionSpec{
+		"echo": {
+			Parameters: []providers.FunctionParameterSpec{{
+				Name: "input",
+				Type: cty.String,
+			}},
+			Return: cty.String,
+		},
+	}
+
+	p.CallFunctionResponse = &providers.CallFunctionResponse{
+		Result: cty.StringVal("foo"),
+	}
+
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+terraform {
+	required_providers {
+	  aws = {}
+	}
+}
+
+import {
+	to = aws_instance.foo
+	id = provider::aws::echo("foo")
+}
+
+resource "aws_instance" "foo" {
+}
+`,
+	})
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_instance",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+
+	_, diags := ctx.Plan(t.Context(), m, states.NewState(), DefaultPlanOpts)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
+func TestContext2Plan_importUsingProviderDefinedFunctionChildModule(t *testing.T) {
+	p := testProvider("aws")
+
+	p.GetProviderSchemaResponse.Functions = map[string]providers.FunctionSpec{
+		"echo": {
+			Parameters: []providers.FunctionParameterSpec{{
+				Name: "input",
+				Type: cty.String,
+			}},
+			Return: cty.String,
+		},
+	}
+
+	p.CallFunctionResponse = &providers.CallFunctionResponse{
+		Result: cty.StringVal("foo"),
+	}
+
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+terraform {
+	required_providers {
+	  aws = {}
+	}
+}
+
+import {
+	to = module.child.aws_instance.foo
+	id = provider::aws::echo("foo")
+}
+
+module "child" {
+  source = "./child"
+}
+`,
+		"child/main.tf": `
+resource "aws_instance" "foo" {
+}
+`,
+	})
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
+		ImportedResources: []providers.ImportedResource{
+			{
+				TypeName: "aws_instance",
+				State: cty.ObjectVal(map[string]cty.Value{
+					"id": cty.StringVal("foo"),
+				}),
+			},
+		},
+	}
+
+	_, diags := ctx.Plan(t.Context(), m, states.NewState(), DefaultPlanOpts)
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors: %s", diags.Err())
+	}
+}
+
 func TestContext2Plan_importToDynamicAddress(t *testing.T) {
 	type TestConfiguration struct {
 		Description         string
