@@ -490,6 +490,14 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 	sV4.CheckResults = encodeCheckResultsV4(file.State.CheckResults)
 
+	// Gate on accumulated conversion/validation errors before normalizing,
+	// marshaling and writing: a state whose serialization produced errors
+	// must never reach the writer. Warning-only diagnostics must still
+	// produce valid output.
+	if diags.HasErrors() {
+		return diags
+	}
+
 	sV4.normalize()
 
 	src, err := json.Marshal(sV4)
@@ -506,6 +514,11 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 	encrypted, encDiags := enc.EncryptState(src)
 	diags = diags.Append(encDiags)
+	if diags.HasErrors() {
+		// Encryption failed, possibly even after returning some bytes.
+		// Never present such output to the writer.
+		return diags
+	}
 
 	_, err = w.Write(encrypted)
 	if err != nil {
@@ -522,6 +535,18 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 func appendInstanceObjectStateV4(rs *states.Resource, is *states.ResourceInstance, key addrs.InstanceKey, obj *states.ResourceInstanceObjectSrc, deposed states.DeposedKey, isV4s []instanceObjectStateV4, hasProviderInstanceKeys bool) ([]instanceObjectStateV4, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
+
+	// Ephemeral values must never be persisted. AttrSensitivePaths only
+	// carries the serializable sensitive subset; the remaining transient
+	// marks (including Ephemeral) live in TransientPathValueMarks, so a
+	// leaked ephemeral mark here means the object cannot be saved.
+	if err := marks.EnsureNoEphemeralMarks(obj.TransientPathValueMarks); err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to serialize resource instance in state",
+			fmt.Sprintf("Instance %s contains ephemeral values, which cannot be saved in state: %s.", rs.Addr.Instance(key), err),
+		))
+	}
 
 	var status string
 	switch obj.Status {

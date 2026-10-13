@@ -6,13 +6,17 @@
 package ghoten
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/refactoring"
@@ -229,7 +233,6 @@ func TestNodePlanDeposedResourceInstanceObject_Execute(t *testing.T) {
 
 func TestNodeDestroyDeposedResourceInstanceObject_Execute(t *testing.T) {
 	deposedKey := states.NewDeposedKey()
-	state := states.NewState()
 	absResourceAddr := "test_instance.foo"
 	evalCtx, p := initMockEvalContext(t.Context(), absResourceAddr, deposedKey)
 
@@ -243,14 +246,19 @@ func TestNodeDestroyDeposedResourceInstanceObject_Execute(t *testing.T) {
 		},
 		DeposedKey: deposedKey,
 	}
-	err := node.Execute(t.Context(), evalCtx, walkApply)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %s", err)
+	if diags := node.Execute(t.Context(), evalCtx, walkApply); diags.HasErrors() {
+		t.Fatalf("unexpected error: %s", diags.Err())
 	}
 
-	if !state.Empty() {
-		t.Fatalf("resources left in state after destroy")
+	// Assert on the state actually under the walk, not a freshly allocated
+	// empty state like before.
+	if is := evalCtx.StateState.ResourceInstance(absResource); is != nil {
+		if is.Current != nil {
+			t.Fatalf("unexpected current object left in state after destroy")
+		}
+		if len(is.Deposed) != 0 {
+			t.Fatalf("deposed objects left in state after destroy: %v", is.Deposed)
+		}
 	}
 }
 
@@ -297,6 +305,339 @@ aws_instance.foo: (1 deposed)
 	`)
 }
 
+func TestNodeDestroyDeposedResourceInstanceObject_WriteResourceInstanceState_EphemeralGuard(t *testing.T) {
+	writeOnlySchema := &configschema.Block{
+		Attributes: map[string]*configschema.Attribute{
+			"id": {
+				Type:     cty.String,
+				Optional: true,
+			},
+			"password": {
+				Type:      cty.String,
+				Optional:  true,
+				WriteOnly: true,
+			},
+		},
+	}
+
+	newWriteOnlyBase := func() cty.Value {
+		return cty.ObjectVal(map[string]cty.Value{
+			"id":       cty.StringVal("i-abc123"),
+			"password": cty.NullVal(cty.String),
+		})
+	}
+
+	seed := &states.ResourceInstanceObjectSrc{
+		Status:    states.ObjectReady,
+		AttrsJSON: []byte(`{"id":"keep"}`),
+	}
+	providerCfg := mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`)
+
+	tests := map[string]struct {
+		val      cty.Value
+		wantErr  bool
+		wantMark bool
+	}{
+		"root ephemeral mark rejected": {
+			val:     cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal("i-abc123")}).Mark(marks.Ephemeral),
+			wantErr: true,
+		},
+		"nested ephemeral mark rejected": {
+			val: cty.ObjectVal(map[string]cty.Value{
+				"id": cty.StringVal("i-abc123").Mark(marks.Ephemeral),
+			}),
+			wantErr: true,
+		},
+		"correctly nullified write-only ephemeral accepted": {
+			val: newWriteOnlyBase().MarkWithPaths([]cty.PathValueMarks{{
+				Path:  cty.Path{cty.GetAttrStep{Name: "password"}},
+				Marks: cty.NewValueMarks(marks.Ephemeral),
+			}}),
+			wantMark: false,
+		},
+		"nullified write-only ephemeral accepted but simultaneous leak elsewhere rejected": {
+			val: newWriteOnlyBase().MarkWithPaths([]cty.PathValueMarks{
+				{
+					Path:  cty.Path{cty.GetAttrStep{Name: "password"}},
+					Marks: cty.NewValueMarks(marks.Ephemeral),
+				},
+				{
+					Path:  cty.Path{cty.GetAttrStep{Name: "id"}},
+					Marks: cty.NewValueMarks(marks.Ephemeral),
+				},
+			}),
+			wantErr: true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			state := states.NewState()
+			evalCtx := new(MockEvalContext)
+			evalCtx.StateState = state.SyncWrapper()
+			evalCtx.PathPath = addrs.RootModuleInstance
+			p := mockProviderWithResourceTypeSchema("test_instance", writeOnlySchema)
+			evalCtx.installProvider(addrs.NewDefaultProvider("test"), p)
+
+			addr := mustResourceInstanceAddr("test_instance.foo")
+			deposedKey := states.NewDeposedKey()
+			state.Module(addr.Module).SetResourceInstanceDeposed(addr.Resource, deposedKey, seed, providerCfg, addrs.NoKey)
+
+			node := &NodeDestroyDeposedResourceInstanceObject{
+				NodeAbstractResourceInstance: &NodeAbstractResourceInstance{
+					Addr: addr,
+					NodeAbstractResource: NodeAbstractResource{
+						ResolvedProvider: mustResolvedProviderInRoot("test", p),
+					},
+				},
+				DeposedKey: deposedKey,
+			}
+			err := node.writeResourceInstanceState(t.Context(), evalCtx, &states.ResourceInstanceObject{
+				Value:  test.val,
+				Status: states.ObjectReady,
+			})
+			if test.wantErr != (err != nil) {
+				t.Fatalf("expected error %t, got error: %v", test.wantErr, err)
+			}
+
+			// A rejected write must not replace the preseeded deposed object.
+			is := state.ResourceInstance(addr)
+			if is == nil {
+				t.Fatalf("state lost the resource entirely")
+			}
+			got := is.Deposed[deposedKey]
+			if test.wantErr {
+				if diff := cmp.Diff(seed, got); diff != "" {
+					t.Errorf("rejected write replaced the preseeded deposed object unexpectedly (-want +got):\n%s", diff)
+				}
+				return
+			}
+			if got == nil || got == seed {
+				t.Fatalf("expected the write to replace the preseeded deposed object, but it did not")
+			}
+			for _, pvm := range got.TransientPathValueMarks {
+				if _, ok := pvm.Marks[marks.Ephemeral]; ok {
+					t.Errorf("ephemeral mark leaked into written deposed state: %v", pvm.Path)
+				}
+			}
+		})
+	}
+}
+
+func TestNodeDestroyDeposedResourceInstanceObject_Execute_WriteErrorsExposeAndRetainObject(t *testing.T) {
+	idObjType := cty.Object(map[string]cty.Type{"id": cty.String})
+
+	buildContext := func(deposedKey states.DeposedKey, srcSeed func(*states.ResourceInstanceObjectSrc), upgradedVal cty.Value, applyFn func(providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse) (*MockEvalContext, *states.State, *MockProvider) {
+		absResource := mustResourceInstanceAddr("test_instance.foo")
+		src := &states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectTainted,
+			AttrsJSON: []byte(`{"id":"bar"}`),
+		}
+		if srcSeed != nil {
+			srcSeed(src)
+		}
+		state := states.NewState()
+		state.Module(absResource.Module).SetResourceInstanceDeposed(
+			absResource.Resource,
+			deposedKey,
+			src,
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+
+		p := testProvider("test")
+		p.ConfigureProvider(t.Context(), providers.ConfigureProviderRequest{})
+		p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+			ResourceTypes: map[string]providers.Schema{
+				"test_instance": {
+					Block: &configschema.Block{
+						Attributes: map[string]*configschema.Attribute{
+							"id": {Type: cty.String, Computed: true},
+						},
+					},
+				},
+			},
+		}
+		p.UpgradeResourceStateResponse = &providers.UpgradeResourceStateResponse{
+			UpgradedState: upgradedVal,
+		}
+		if applyFn != nil {
+			p.ApplyResourceChangeFn = applyFn
+		}
+
+		evalCtx := &MockEvalContext{
+			PrevRunStateState: state.DeepCopy().SyncWrapper(),
+			RefreshStateState: state.DeepCopy().SyncWrapper(),
+			StateState:        state.SyncWrapper(),
+			ChangesChanges:    plans.NewChanges().SyncWrapper(),
+		}
+		evalCtx.installProvider(addrs.NewDefaultProvider("test"), p)
+		return evalCtx, state, p
+	}
+
+	newNode := func(p *MockProvider, deposedKey states.DeposedKey) NodeDestroyDeposedResourceInstanceObject {
+		return NodeDestroyDeposedResourceInstanceObject{
+			NodeAbstractResourceInstance: &NodeAbstractResourceInstance{
+				Addr: mustResourceInstanceAddr("test_instance.foo"),
+				NodeAbstractResource: NodeAbstractResource{
+					ResolvedProvider: mustResolvedProviderInRoot("test", p),
+				},
+			},
+			DeposedKey: deposedKey,
+		}
+	}
+
+	t.Run("write error alone with clean destroy", func(t *testing.T) {
+		deposedKey := states.NewDeposedKey()
+		// Null-valued deposed object whose root is marked ephemeral: the
+		// destroy plan is a NoOp, destroy itself succeeds cleanly, and only
+		// the state write exposes the leaked ephemeral mark.
+		wantSrc := &states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectTainted,
+			AttrsJSON: []byte(`null`),
+			TransientPathValueMarks: []cty.PathValueMarks{{
+				Path:  cty.Path{},
+				Marks: cty.NewValueMarks(marks.Ephemeral),
+			}},
+		}
+		evalCtx, state, p := buildContext(
+			deposedKey,
+			func(src *states.ResourceInstanceObjectSrc) {
+				src.AttrsJSON = []byte(`null`)
+				src.TransientPathValueMarks = wantSrc.TransientPathValueMarks
+			},
+			cty.NullVal(idObjType),
+			nil,
+		)
+
+		node := newNode(p, deposedKey)
+		diags := node.Execute(t.Context(), evalCtx, walkApply)
+		if !diags.HasErrors() {
+			t.Fatalf("expected write error to surface, got: %#v", diags)
+		}
+		if len(diags) != 1 {
+			t.Errorf("expected exactly one diagnostic, got:\n%s", diags.Err())
+		}
+		if msg := diags.Err().Error(); !strings.Contains(msg, "ephemeral marks found at the following paths") {
+			t.Errorf("expected the leaked ephemeral write error, got: %s", msg)
+		}
+		is := state.ResourceInstance(mustResourceInstanceAddr("test_instance.foo"))
+		if is == nil {
+			t.Fatal("state lost the resource entirely")
+		}
+		if diff := cmp.Diff(wantSrc, is.Deposed[deposedKey]); diff != "" {
+			t.Errorf("failed-destroy retention broken: prior deposed object was replaced (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("write error alongside provider destroy error", func(t *testing.T) {
+		deposedKey := states.NewDeposedKey()
+		// Marked "id" on a non-null deposed object: destroy fails, so the
+		// prior (marked) object is retained and then rejected by the writer.
+		wantSrc := &states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectTainted,
+			AttrsJSON: []byte(`{"id":"bar"}`),
+			TransientPathValueMarks: []cty.PathValueMarks{{
+				Path:  cty.Path{cty.GetAttrStep{Name: "id"}},
+				Marks: cty.NewValueMarks(marks.Ephemeral),
+			}},
+		}
+		evalCtx, state, p := buildContext(
+			deposedKey,
+			func(src *states.ResourceInstanceObjectSrc) {
+				src.TransientPathValueMarks = wantSrc.TransientPathValueMarks
+			},
+			cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal("bar")}),
+			func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+				resp := providers.ApplyResourceChangeResponse{NewState: cty.NilVal}
+				resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Provider failed to destroy",
+					"destroy failed",
+				))
+				return resp
+			},
+		)
+
+		node := newNode(p, deposedKey)
+		diags := node.Execute(t.Context(), evalCtx, walkApply)
+		if !diags.HasErrors() {
+			t.Fatalf("expected errors, got: %#v", diags)
+		}
+		if len(diags) != 2 {
+			t.Errorf("expected exactly two diagnostics (destroy + write), got %d:\n%s", len(diags), diags.Err())
+		}
+		msg := diags.Err().Error()
+		if !strings.Contains(msg, "Provider failed to destroy") {
+			t.Errorf("expected the provider destroy error, got: %s", msg)
+		}
+		if !strings.Contains(msg, "ephemeral marks found at the following paths") {
+			t.Errorf("expected the leaked ephemeral write error, got: %s", msg)
+		}
+		if idxDestroy := strings.Index(msg, "Provider failed to destroy"); idxDestroy > strings.Index(msg, "ephemeral marks found") {
+			t.Errorf("expected the write error after the destroy error, got: %s", msg)
+		}
+		is := state.ResourceInstance(mustResourceInstanceAddr("test_instance.foo"))
+		if is == nil {
+			t.Fatal("state lost the resource entirely")
+		}
+		if diff := cmp.Diff(wantSrc, is.Deposed[deposedKey]); diff != "" {
+			t.Errorf("failed-destroy retention broken: prior deposed object was replaced (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("ordinary failed provider destroy retains unmarked object and retry removes the deposed key", func(t *testing.T) {
+		deposedKey := states.NewDeposedKey()
+		absResource := mustResourceInstanceAddr("test_instance.foo")
+		evalCtx, state, p := buildContext(
+			deposedKey,
+			nil,
+			cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal("bar")}),
+			func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+				resp := providers.ApplyResourceChangeResponse{NewState: cty.NilVal}
+				resp.Diagnostics = resp.Diagnostics.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Provider failed to destroy",
+					"destroy failed",
+				))
+				return resp
+			},
+		)
+		node := newNode(p, deposedKey)
+
+		// Failed destroy: only the provider error is reported and the
+		// unmarked, serializable deposed object is retained for a retry.
+		diags := node.Execute(t.Context(), evalCtx, walkApply)
+		if !diags.HasErrors() {
+			t.Fatalf("expected destroy error, got: %#v", diags)
+		}
+		if len(diags) != 1 {
+			t.Errorf("expected exactly one diagnostic, got %d:\n%s", len(diags), diags.Err())
+		}
+		if msg := diags.Err().Error(); !strings.Contains(msg, "Provider failed to destroy") {
+			t.Errorf("expected the provider destroy error, got: %s", msg)
+		}
+		retained := state.ResourceInstance(absResource)
+		if retained == nil || retained.Deposed[deposedKey] == nil {
+			t.Fatalf("failed destroy must retain the deposed object for retry")
+		}
+		got := retained.Deposed[deposedKey]
+		if !bytes.Equal(got.AttrsJSON, []byte(`{"id":"bar"}`)) || got.Status != states.ObjectTainted {
+			t.Errorf("retained deposed object was modified unexpectedly: %#v", got)
+		}
+
+		// Successful retry removes the actual deposed key and prunes the
+		// resource from the state the failed attempt ran against.
+		p.ApplyResourceChangeFn = nil
+		if retryDiags := node.Execute(t.Context(), evalCtx, walkApply); retryDiags.HasErrors() {
+			t.Fatalf("unexpected error from successful retry: %s", retryDiags.Err())
+		}
+		if retryIs := state.ResourceInstance(absResource); retryIs != nil && len(retryIs.Deposed) != 0 {
+			t.Errorf("successful retry must remove the deposed object, got: %v", retryIs.Deposed)
+		}
+	})
+}
+
 func TestNodeDestroyDeposedResourceInstanceObject_ExecuteMissingState(t *testing.T) {
 	p := simpleMockProvider()
 	evalCtx := &MockEvalContext{
@@ -323,7 +664,6 @@ func TestNodeDestroyDeposedResourceInstanceObject_ExecuteMissingState(t *testing
 
 func TestNodeForgetDeposedResourceInstanceObject_Execute(t *testing.T) {
 	deposedKey := states.NewDeposedKey()
-	state := states.NewState()
 	absResourceAddr := "test_instance.foo"
 	evalCtx, p := initMockEvalContext(t.Context(), absResourceAddr, deposedKey)
 
@@ -343,8 +683,10 @@ func TestNodeForgetDeposedResourceInstanceObject_Execute(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 
-	if !state.Empty() {
-		t.Fatalf("resources left in state after forget")
+	if got := evalCtx.StateState.ResourceInstance(absResource); got != nil {
+		if _, exists := got.Deposed[deposedKey]; exists {
+			t.Fatalf("deposed object %q left in state after forget", deposedKey)
+		}
 	}
 }
 

@@ -8953,3 +8953,355 @@ func TestContext2Plan_moduleDependsOnWithCheck(t *testing.T) {
 		t.Fatalf("unexpected errors: %s", diags.Err())
 	}
 }
+
+// smartRefreshTestProvider builds a provider exposing only the minimal
+// schema needed by the smart refresh planning-node tests.
+func smartRefreshTestProvider(sensitive bool) *MockProvider {
+	schema := &configschema.Block{
+		Attributes: map[string]*configschema.Attribute{
+			"test_string": {
+				Type:      cty.String,
+				Optional:  true,
+				Sensitive: sensitive,
+			},
+		},
+	}
+	return &MockProvider{
+		GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
+			Provider:           providers.Schema{Block: &configschema.Block{}},
+			ResourceTypes:      map[string]providers.Schema{"test_object": {Block: schema}},
+			DataSources:        map[string]providers.Schema{"test_object": {Block: schema}},
+			EphemeralResources: map[string]providers.Schema{},
+		},
+	}
+}
+
+// TestContext2Plan_smartRefreshNodeExecution drives smart refresh through the
+// actual planning-node execution path (PlanOpts.RefreshMode == RefreshSmart),
+// not just the SmartRefreshTransformer skip-flag wiring: unchanged configs skip
+// the provider read entirely, changed/stale configs refresh normally, and
+// refreshed sensitive values pass through without tripping the ephemeral
+// guard while hashes and dependencies are preserved.
+func TestContext2Plan_smartRefreshNodeExecution(t *testing.T) {
+	providerCfg := mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`)
+	planOpts := &PlanOpts{Mode: plans.NormalMode, RefreshMode: plans.RefreshSmart}
+
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			resource "test_object" "base" {
+				test_string = "base"
+			}
+
+			resource "test_object" "a" {
+				test_string = test_object.base.test_string
+			}
+		`,
+	})
+
+	configHashes := map[string][]byte{
+		"base": configExprHash(m.Module.ManagedResources["test_object.base"]),
+		"a":    configExprHash(m.Module.ManagedResources["test_object.a"]),
+	}
+	baseDep := mustResourceInstanceAddr("test_object.base").ContainingResource().Config()
+
+	seedState := func(hashForBase, hashForA []byte) *states.State {
+		return states.BuildState(func(s *states.SyncState) {
+			s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_object.base"), &states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"test_string":"base"}`),
+				ConfigExprHash: hashForBase,
+			}, providerCfg, addrs.NoKey)
+			s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_object.a"), &states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"test_string":"a"}`),
+				ConfigExprHash: hashForA,
+				Dependencies:   []addrs.ConfigResource{baseDep},
+			}, providerCfg, addrs.NoKey)
+		})
+	}
+
+	t.Run("unchanged config skips refresh and preserves hashes and dependencies", func(t *testing.T) {
+		p := smartRefreshTestProvider(false)
+		readCalled := false
+		p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+			readCalled = true
+			return providers.ReadResourceResponse{}
+		}
+		h := &testHook{}
+
+		ctx := testContext2(t, &ContextOpts{
+			Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			}, nil),
+			Hooks: []Hook{h},
+		})
+
+		plan, diags := ctx.Plan(context.Background(), m, seedState(configHashes["base"], configHashes["a"]), planOpts)
+		assertNoErrors(t, diags)
+
+		if readCalled || p.ReadResourceCalled {
+			t.Fatalf("provider ReadResource was called; smart refresh must avoid provider reads for unchanged configs")
+		}
+
+		var postSkips []string
+		for _, call := range h.Calls {
+			if call.Action == "PostSkipRefresh" {
+				postSkips = append(postSkips, call.InstanceID)
+			}
+		}
+		slices.Sort(postSkips)
+		wantSkips := []string{"test_object.a", "test_object.base"}
+		if diff := cmp.Diff(wantSkips, postSkips); diff != "" {
+			t.Fatalf("unexpected PostSkipRefresh hook calls (-want +got):\n%s", diff)
+		}
+
+		for _, name := range []string{"base", "a"} {
+			is := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object." + name))
+			if is == nil || is.Current == nil {
+				t.Fatalf("test_object.%s missing from plan.PriorState", name)
+			}
+			if !bytes.Equal(is.Current.ConfigExprHash, configHashes[name]) {
+				t.Errorf("ConfigExprHash for test_object.%s was not preserved", name)
+			}
+		}
+		gotDeps := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object.a")).Current.Dependencies
+		if diff := cmp.Diff([]addrs.ConfigResource{baseDep}, gotDeps); diff != "" {
+			t.Errorf("dependencies were not preserved across the skipped refresh (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("changed config refreshes normally and records the new hash", func(t *testing.T) {
+		p := smartRefreshTestProvider(false)
+		var reads []string
+		p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+			val := req.PriorState.AsValueMap()
+			reads = append(reads, val["test_string"].AsString())
+			val["test_string"] = cty.StringVal("refreshed")
+			return providers.ReadResourceResponse{NewState: cty.ObjectVal(val)}
+		}
+
+		ctx := testContext2(t, &ContextOpts{
+			Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			}, nil),
+		})
+
+		// "a" has no stored fingerprint (older state): smart refresh must
+		// conservatively refresh it, and "base" is part of its refresh set
+		// either as ancestor or dependent depending on graph direction.
+		plan, diags := ctx.Plan(context.Background(), m, seedState(configHashes["base"], nil), planOpts)
+		assertNoErrors(t, diags)
+
+		if !p.ReadResourceCalled {
+			t.Fatalf("provider ReadResource was not called; stale config must trigger a normal refresh")
+		}
+		slices.Sort(reads)
+		if diff := cmp.Diff([]string{"a", "base"}, reads); diff != "" {
+			t.Fatalf("unexpected refreshed instances (-want +got):\n%s", diff)
+		}
+
+		for _, name := range []string{"base", "a"} {
+			is := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object." + name))
+			if is == nil || is.Current == nil {
+				t.Fatalf("test_object.%s missing from plan.PriorState", name)
+			}
+			if !bytes.Contains(is.Current.AttrsJSON, []byte(`"test_string":"refreshed"`)) {
+				t.Errorf("refreshed value not written for test_object.%s: %s", name, is.Current.AttrsJSON)
+			}
+			if !bytes.Equal(is.Current.ConfigExprHash, configHashes[name]) {
+				t.Errorf("ConfigExprHash for test_object.%s was not set to the current config hash", name)
+			}
+		}
+	})
+
+	t.Run("refreshed sensitive values are accepted by the guard", func(t *testing.T) {
+		p := smartRefreshTestProvider(true)
+		p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+			val := req.PriorState.AsValueMap()
+			val["test_string"] = cty.StringVal("refreshed")
+			return providers.ReadResourceResponse{NewState: cty.ObjectVal(val)}
+		}
+
+		ctx := testContext2(t, &ContextOpts{
+			Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+			}, nil),
+		})
+
+		// Stale fingerprint for "a" forces a normal refresh; the provider
+		// schema marks the refreshed value sensitive, which the guard
+		// must accept (only ephemeral marks are rejected).
+		plan, diags := ctx.Plan(context.Background(), m, seedState(configHashes["base"], nil), planOpts)
+		if diags.HasErrors() {
+			t.Fatalf("refreshed sensitive values must not be rejected: %s", diags.Err())
+		}
+		if !p.ReadResourceCalled {
+			t.Fatalf("provider ReadResource was not called; test is not exercising the refresh path")
+		}
+
+		got := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object.a")).Current
+		if !bytes.Contains(got.AttrsJSON, []byte(`"test_string":"refreshed"`)) {
+			t.Errorf("refreshed value not written for test_object.a: %s", got.AttrsJSON)
+		}
+		if len(got.AttrSensitivePaths) == 0 {
+			t.Errorf("sensitive mark on the refreshed value was lost in the refresh state")
+		}
+	})
+}
+
+// TestContext2Plan_smartRefreshRejectsEphemeralFromStateObject injects an
+// ephemeral mark through the in-memory prior state object (transient path
+// marks survive decoding) and verifies the planning-node write guard rejects
+// the state write, propagates the diagnostics to the plan caller, avoids the
+// provider read, and replaces no state object.
+func TestContext2Plan_smartRefreshRejectsEphemeralFromStateObject(t *testing.T) {
+	providerCfg := mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`)
+
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			resource "test_object" "a" {
+				test_string = "clean"
+			}
+		`,
+	})
+	wantSrc := &states.ResourceInstanceObjectSrc{
+		Status:         states.ObjectReady,
+		AttrsJSON:      []byte(`{"test_string":"prior"}`),
+		ConfigExprHash: configExprHash(m.Module.ManagedResources["test_object.a"]),
+		TransientPathValueMarks: []cty.PathValueMarks{{
+			Path:  cty.Path{cty.GetAttrStep{Name: "test_string"}},
+			Marks: cty.NewValueMarks(marks.Ephemeral),
+		}},
+	}
+	seed := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_object.a"), wantSrc, providerCfg, addrs.NoKey)
+	})
+
+	p := smartRefreshTestProvider(false)
+	readCalled := false
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		readCalled = true
+		val := req.PriorState.AsValueMap()
+		val["test_string"] = cty.StringVal("refreshed")
+		return providers.ReadResourceResponse{NewState: cty.ObjectVal(val)}
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	plan, diags := ctx.Plan(context.Background(), m, seed, &PlanOpts{
+		Mode:        plans.NormalMode,
+		RefreshMode: plans.RefreshSmart,
+	})
+	if !diags.HasErrors() {
+		t.Fatalf("expected ephemeral leak in in-process state to fail the plan; got diagnostics:\n%s", diags)
+	}
+	if msg := diags.Err().Error(); !strings.Contains(msg, "ephemeral marks found at the following paths") {
+		t.Fatalf("unexpected diagnostics:\n%s", msg)
+	}
+	if readCalled || p.ReadResourceCalled {
+		t.Errorf("provider ReadResource was called; the rejected pre-refresh write must avoid provider reads")
+	}
+
+	got := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object.a")).Current
+	if diff := cmp.Diff(wantSrc, got); diff != "" {
+		t.Errorf("rejected write replaced the state object (-want +got):\n%s", diff)
+	}
+}
+
+// TestContext2Plan_smartRefreshRejectsEphemeralInProviderResponse injects an
+// ephemeral mark into the provider's refresh response (an in-process value the
+// guard must never see persisted) and verifies a normal smart refresh rejects
+// the post-refresh state write, propagates the diagnostics to the plan caller
+// and leaves the pre-refresh state object in place.
+func TestContext2Plan_smartRefreshRejectsEphemeralInProviderResponse(t *testing.T) {
+	providerCfg := mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`)
+
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			resource "test_object" "a" {
+				test_string = "clean"
+			}
+		`,
+	})
+	seed := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(mustResourceInstanceAddr("test_object.a"), &states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectReady,
+			AttrsJSON: []byte(`{"test_string":"prior"}`),
+		}, providerCfg, addrs.NoKey)
+	})
+
+	p := smartRefreshTestProvider(false)
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		val := req.PriorState.AsValueMap()
+		val["test_string"] = cty.StringVal("eph-leak").Mark(marks.Ephemeral)
+		return providers.ReadResourceResponse{NewState: cty.ObjectVal(val)}
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	plan, diags := ctx.Plan(context.Background(), m, seed, &PlanOpts{
+		Mode:        plans.NormalMode,
+		RefreshMode: plans.RefreshSmart,
+	})
+	if !diags.HasErrors() {
+		t.Fatalf("expected ephemeral mark in provider refresh response to fail the plan; got diagnostics:\n%s", diags)
+	}
+	if msg := diags.Err().Error(); !strings.Contains(msg, "ephemeral marks found at the following paths") {
+		t.Fatalf("unexpected diagnostics:\n%s", msg)
+	}
+
+	got := plan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object.a")).Current
+	if !bytes.Contains(got.AttrsJSON, []byte(`"test_string":"prior"`)) {
+		t.Errorf("rejected write replaced the pre-refresh state object: %s", got.AttrsJSON)
+	}
+	if bytes.Contains(got.AttrsJSON, []byte("eph-leak")) {
+		t.Errorf("ephemeral payload from the provider response leaked into state: %s", got.AttrsJSON)
+	}
+}
+
+// TestContext2Plan_dataSourceRejectsEphemeralInProviderResponse verifies the
+// guard also propagates the ephemeral-mark rejection for a data source read
+// during plan, instead of silently persisting the marked value.
+func TestContext2Plan_dataSourceRejectsEphemeralInProviderResponse(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			data "test_object" "d" {
+				test_string = "x"
+			}
+		`,
+	})
+
+	p := smartRefreshTestProvider(false)
+	p.ReadDataSourceFn = func(req providers.ReadDataSourceRequest) providers.ReadDataSourceResponse {
+		return providers.ReadDataSourceResponse{
+			State: cty.ObjectVal(map[string]cty.Value{
+				"test_string": cty.StringVal("data-value"),
+			}).MarkWithPaths([]cty.PathValueMarks{{
+				Path:  cty.Path{cty.GetAttrStep{Name: "test_string"}},
+				Marks: cty.NewValueMarks(marks.Ephemeral),
+			}}),
+		}
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	_, diags := ctx.Plan(context.Background(), m, states.NewState(), DefaultPlanOpts)
+	if !diags.HasErrors() {
+		t.Fatalf("expected ephemeral mark in data source response to fail the plan; got diagnostics:\n%s", diags)
+	}
+	if msg := diags.Err().Error(); !strings.Contains(msg, "ephemeral marks found at the following paths") {
+		t.Fatalf("unexpected diagnostics:\n%s", msg)
+	}
+}

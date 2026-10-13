@@ -21,9 +21,9 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/encryption"
 	"github.com/vmvarela/ghoten/internal/flock"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // Filesystem is a full state manager that uses a file in the local filesystem
@@ -190,16 +190,17 @@ func (s *Filesystem) PersistState(_ context.Context, schemas *ghoten.Schemas) er
 	return s.persistState(schemas)
 }
 
-func (s *Filesystem) persistState(schemas *ghoten.Schemas) error {
-	// TODO: this should use a more robust method of writing state, by first
-	// writing to a temp file on the same filesystem, and renaming the file over
-	// the original.
+func (s *Filesystem) persistState(_ *ghoten.Schemas) error {
 	if s.stateFileOut == nil {
 		if err := s.createStateFiles(); err != nil {
-			return nil
+			// The handle we just opened is unlocked, so reset it and let a
+			// later attempt start cleanly. A locked handle is never replaced.
+			s.resetUnlockedFile()
+			return fmt.Errorf("failed to create local state file %s: %w", s.path, err)
 		}
 		if err := s.prepareBackupFile(); err != nil {
-			return nil
+			s.resetUnlockedFile()
+			return fmt.Errorf("failed to read existing snapshot from %s: %w", s.path, err)
 		}
 	}
 	defer func() {
@@ -213,23 +214,17 @@ func (s *Filesystem) persistState(schemas *ghoten.Schemas) error {
 	}
 	state := s.file.State
 
-	// We'll try to write our backup first, so we can be sure we've created
-	// it successfully before clobbering the original file it came from.
+	// We'll stage the backup snapshot first: serializing and encrypting it
+	// must succeed before we make any destructive change, so a failure here
+	// leaves the previous snapshot files intact.
+	var backupBuf bytes.Buffer
 	if !s.writtenBackup && s.backupFile != nil && s.backupPath != "" {
 		if !statefile.StatesMarshalEqual(state, s.backupFile.State) {
 			log.Printf("[TRACE] statemgr.Filesystem: creating backup snapshot at %s", s.backupPath)
-			bfh, err := os.Create(s.backupPath)
-			if err != nil {
-				return fmt.Errorf("failed to create local state backup file: %w", err)
+			// The backup is of the old output file, not the read path.
+			if err := statefile.Write(s.backupFile, &backupBuf, s.encryption); err != nil {
+				return fmt.Errorf("failed to serialize local state backup snapshot: %w", err)
 			}
-			defer bfh.Close()
-
-			err = statefile.Write(s.backupFile, bfh, s.encryption)
-			if err != nil {
-				return fmt.Errorf("failed to write to local state backup file: %w", err)
-			}
-
-			s.writtenBackup = true
 		} else {
 			log.Print("[TRACE] statemgr.Filesystem: not making a backup, because the new snapshot is identical to the old")
 		}
@@ -247,6 +242,47 @@ func (s *Filesystem) persistState(schemas *ghoten.Schemas) error {
 		}
 	}
 
+	// Stage the main snapshot fully in memory (serialization and encryption)
+	// before truncating the output file. The updated metadata is held by a
+	// candidate copy and only committed to s.file once the write succeeds.
+	var mainBuf bytes.Buffer
+	var candidate *statefile.File
+	if state != nil {
+		candidate = s.file.DeepCopy()
+		if s.readFile == nil || !statefile.StatesMarshalEqual(state, s.readFile.State) {
+			candidate.Serial++
+			log.Printf("[TRACE] statemgr.Filesystem: state has changed since last snapshot, so incrementing serial to %d", candidate.Serial)
+		} else {
+			log.Print("[TRACE] statemgr.Filesystem: no state changes since last snapshot")
+		}
+
+		log.Printf("[TRACE] statemgr.Filesystem: writing snapshot at %s", s.path)
+		if err := statefile.Write(candidate, &mainBuf, s.encryption); err != nil {
+			return fmt.Errorf("failed to serialize local state snapshot: %w", err)
+		}
+	}
+
+	// Both serializations have succeeded, so the backup can be created now,
+	// before cleaving the original file it came from.
+	if backupBuf.Len() > 0 {
+		bfh, err := os.Create(s.backupPath)
+		if err != nil {
+			return fmt.Errorf("failed to create local state backup file: %w", err)
+		}
+		if _, err := bfh.Write(backupBuf.Bytes()); err != nil {
+			bfh.Close()
+			return fmt.Errorf("failed to write to local state backup file: %w", err)
+		}
+		if err := bfh.Sync(); err != nil {
+			bfh.Close()
+			return fmt.Errorf("failed to sync local state backup file: %w", err)
+		}
+		bfh.Close()
+		s.writtenBackup = true
+	}
+
+	// Destructive point: failures after this stage can still leave the file
+	// truncated or partially written, which is a deliberate limitation.
 	if _, err := s.stateFileOut.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -257,24 +293,34 @@ func (s *Filesystem) persistState(schemas *ghoten.Schemas) error {
 	if state == nil {
 		// if we have no state, don't write anything else.
 		log.Print("[TRACE] statemgr.Filesystem: state is nil, so leaving the file empty")
+		// The empty output file is now the authoritative snapshot, so a
+		// refresh must not resurrect an older snapshot still on the original
+		// read path.
+		s.readPath = s.path
 		return nil
 	}
 
-	if s.readFile == nil || !statefile.StatesMarshalEqual(s.file.State, s.readFile.State) {
-		s.file.Serial++
-		log.Printf("[TRACE] statemgr.Filesystem: state has changed since last snapshot, so incrementing serial to %d", s.file.Serial)
-	} else {
-		log.Print("[TRACE] statemgr.Filesystem: no state changes since last snapshot")
-	}
-
-	log.Printf("[TRACE] statemgr.Filesystem: writing snapshot at %s", s.path)
-	if err := statefile.Write(s.file, s.stateFileOut, s.encryption); err != nil {
+	// The staged bytes were fully encrypted before truncation; only writing
+	// them out happens from here on.
+	if _, err := s.stateFileOut.Write(mainBuf.Bytes()); err != nil {
 		return err
 	}
 
-	// Any future reads must come from the file we've now updated
+	// The write succeeded; commit the candidate metadata and make future
+	// reads come from the file we've now updated
+	s.file = candidate
 	s.readPath = s.path
 	return nil
+}
+
+// resetUnlockedFile closes and clears the output file handle so that a later
+// attempt can open it again. It never touches a handle that is successfully
+// locked, since the lock must keep corresponding to the same handle.
+func (s *Filesystem) resetUnlockedFile() {
+	if s.stateFileOut != nil && s.lockID == "" {
+		s.stateFileOut.Close()
+		s.stateFileOut = nil
+	}
 }
 
 // RefreshState is an implementation of Refresher.
@@ -389,7 +435,16 @@ func (s *Filesystem) Lock(_ context.Context, info *LockInfo) (string, error) {
 	}
 
 	if err := s.prepareBackupFile(); err != nil {
-		return "", fmt.Errorf("failed to write backup file: %w", err)
+		err = fmt.Errorf("failed to read existing snapshot from %s: %w", s.path, err)
+		// The lock was never handed to the caller, so release it and reset
+		// the handle: a retry would otherwise bypass the failed preparation.
+		// A locked handle returned successfully by Lock is never touched here.
+		if unlockErr := flock.Unlock(s.stateFileOut); unlockErr != nil {
+			log.Printf("[ERROR] statemgr.Filesystem: failed to release lock on %s after failed preparation: %s", s.path, unlockErr)
+			err = multierror.Append(err, unlockErr)
+		}
+		s.resetUnlockedFile()
+		return "", err
 	}
 
 	s.lockID = info.ID
@@ -504,12 +559,20 @@ func (s *Filesystem) WriteStateForMigration(f *statefile.File, force bool) error
 		)
 	}
 
+	prevFile := s.file // for forced migrations we can restore this on failure
 	err := s.writeState(f.State, &SnapshotMeta{Lineage: f.Lineage, Serial: f.Serial})
 	if err != nil {
+		s.file = prevFile
 		return err
 	}
 
-	return s.persistState(nil)
+	err = s.persistState(nil)
+	if err != nil && force {
+		// The forced migration is rejected wholesale, so restore the
+		// snapshot that was in place before the attempt.
+		s.file = prevFile
+	}
+	return err
 }
 
 // Open the state file, creating the directories and file as needed.
