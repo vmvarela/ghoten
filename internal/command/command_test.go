@@ -302,7 +302,10 @@ func testState() *states.State {
 				// The weird whitespace here is reflective of how this would
 				// get written out in a real state file, due to the indentation
 				// of all of the containing wrapping objects and arrays.
-				AttrsJSON:    []byte(`{"id":"bar"}`),
+				// Los archivos locales usan sangría y el análisis conserva esos
+				// espacios en el JSON crudo de los atributos; las comparaciones
+				// posteriores dependen de esos bytes.
+				AttrsJSON:    []byte("{\n            \"id\": \"bar\"\n          }"),
 				Status:       states.ObjectReady,
 				Dependencies: []addrs.ConfigResource{},
 			},
@@ -327,7 +330,9 @@ func writeStateForTesting(state *states.State, w io.Writer) error {
 		Lineage: "fake-for-testing",
 		State:   state,
 	}
-	return statefile.Write(sf, w, encryption.StateEncryptionDisabled())
+	// Los archivos locales usan sangría; así este helper reproduce el formato
+	// de las instantáneas principal y de respaldo de statemgr.Filesystem.
+	return statefile.WriteIndent(sf, w, encryption.StateEncryptionDisabled())
 }
 
 // testStateMgrCurrentLineage returns the current lineage for the given state

@@ -8,6 +8,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"strings"
@@ -397,6 +398,10 @@ func TestStatePersist(t *testing.T) {
 	if logIdx != logCnt {
 		t.Fatalf("not all requests were read. Expected logIdx to be %d but got %d", logCnt, logIdx)
 	}
+
+	// El contenido enviado con Put debe ser compacto; los backends remotos
+	// no deben recibir el formato indentado de los archivos locales.
+	assertCompactStateJSON(t, mockClient.current)
 }
 
 func TestState_GetRootOutputValues(t *testing.T) {
@@ -818,6 +823,22 @@ func seedRemoteStateSnapshot(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// assertCompactStateJSON comprueba que el contenido del estado sea JSON
+// compacto: una línea sin espacios insignificantes y con un salto final,
+// como produce statefile.Write. Así se verifican los bytes remotos y de nube,
+// no solo los mapas decodificados.
+func assertCompactStateJSON(t *testing.T, data []byte) {
+	t.Helper()
+	line, _, found := bytes.Cut(data, []byte{'\n'})
+	if !found || len(line) == 0 || !json.Valid(line) {
+		t.Fatalf("expected a compact single-line state JSON payload, got:\n%s", data)
+	}
+	var compacted bytes.Buffer
+	if err := json.Compact(&compacted, line); err != nil || !bytes.Equal(compacted.Bytes(), line) {
+		t.Fatalf("expected a compact (non-indented) state JSON payload, got:\n%s", data)
+	}
+}
+
 // leakEphemeralMarkIntoState adds an Ephemeral transient mark to every current
 // instance object, emulating an in-process write that bypassed the ephemeral
 // guards and left a leaked mark behind.
@@ -910,6 +931,7 @@ func TestStatePersistFailedSerializationPutsNothing(t *testing.T) {
 	if serial := put.Content["serial"]; serial != 3.0 {
 		t.Fatalf("expected serial 3.0 after failed attempt and corrected retry, got %v", serial)
 	}
+	assertCompactStateJSON(t, client.current)
 }
 
 // TestStatePersistFailedEncryptionPutsNothing verifies that an encryption
@@ -957,6 +979,7 @@ func TestStatePersistFailedEncryptionPutsNothing(t *testing.T) {
 	if serial := put.Content["serial"]; serial != 3.0 {
 		t.Fatalf("expected serial 3.0 after failed attempt and corrected retry, got %v", serial)
 	}
+	assertCompactStateJSON(t, client.current)
 }
 
 // mockOptionalClientLocker is a mock implementation of a client that supports optional locking.

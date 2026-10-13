@@ -222,7 +222,7 @@ func (s *Filesystem) persistState(_ *ghoten.Schemas) error {
 		if !statefile.StatesMarshalEqual(state, s.backupFile.State) {
 			log.Printf("[TRACE] statemgr.Filesystem: creating backup snapshot at %s", s.backupPath)
 			// The backup is of the old output file, not the read path.
-			if err := statefile.Write(s.backupFile, &backupBuf, s.encryption); err != nil {
+			if err := statefile.WriteIndent(s.backupFile, &backupBuf, s.encryption); err != nil {
 				return fmt.Errorf("failed to serialize local state backup snapshot: %w", err)
 			}
 		} else {
@@ -257,7 +257,7 @@ func (s *Filesystem) persistState(_ *ghoten.Schemas) error {
 		}
 
 		log.Printf("[TRACE] statemgr.Filesystem: writing snapshot at %s", s.path)
-		if err := statefile.Write(candidate, &mainBuf, s.encryption); err != nil {
+		if err := statefile.WriteIndent(candidate, &mainBuf, s.encryption); err != nil {
 			return fmt.Errorf("failed to serialize local state snapshot: %w", err)
 		}
 	}

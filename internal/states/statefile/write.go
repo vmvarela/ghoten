@@ -12,21 +12,34 @@ import (
 	tfversion "github.com/vmvarela/ghoten/version"
 )
 
-// Write writes the given state to the given writer in the current state
-// serialization format.
+// Write escribe el estado en el formato de serialización actual, como JSON
+// compacto con un único salto de línea final.
 func Write(s *File, w io.Writer, enc encryption.StateEncryption) error {
-	// Always record the current tofu version in the state.
+	// Registra siempre la versión actual de Ghoten en el estado.
 	s.TerraformVersion = tfversion.SemVer
 
-	diags := writeStateV4(s, w, enc)
+	diags := writeStateV4(s, w, enc, false)
 	return diags.Err()
 }
 
-// WriteForTest writes the given state to the given writer in the current state
-// serialization format without recording the current tofu version. This is
-// intended for use in tests that need to override the current tofu
-// version.
+// WriteIndent escribe el estado en el formato de serialización actual, con
+// sangría de dos espacios y un único salto de línea final.
+//
+// La sangría se aplica al texto en claro antes del cifrado, por lo que el
+// resultado cifrado sigue siendo un sobre compacto. Se usa para archivos
+// locales; los sistemas remotos deben usar Write.
+func WriteIndent(s *File, w io.Writer, enc encryption.StateEncryption) error {
+	// Registra siempre la versión actual de Ghoten en el estado.
+	s.TerraformVersion = tfversion.SemVer
+
+	diags := writeStateV4(s, w, enc, true)
+	return diags.Err()
+}
+
+// WriteForTest escribe el estado con el formato indentado de WriteIndent sin
+// reemplazar su versión. Se usa en pruebas que necesitan especificar otra
+// versión.
 func WriteForTest(s *File, w io.Writer) error {
-	diags := writeStateV4(s, w, encryption.StateEncryptionDisabled())
+	diags := writeStateV4(s, w, encryption.StateEncryptionDisabled(), true)
 	return diags.Err()
 }

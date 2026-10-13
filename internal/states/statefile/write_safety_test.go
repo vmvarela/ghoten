@@ -7,11 +7,14 @@ package statefile
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
+
+	version "github.com/hashicorp/go-version"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/encryption"
@@ -220,7 +223,7 @@ func TestVersion4WriteEncryptionWarningsPreserved(t *testing.T) {
 	// and still produces output.
 	cw := &countingWriter{}
 	file := newTestFile(nil, addrs.ManagedResourceMode)
-	diags := writeStateV4(file, cw, enc)
+	diags := writeStateV4(file, cw, enc, false)
 	if !encryptCalled {
 		t.Fatal("encryption was never called")
 	}
@@ -310,33 +313,200 @@ func checkValidOutput(t *testing.T, out []byte) {
 	}
 }
 
-// Ordinary successful serialization must remain byte-compatible:
-// WriteForTest bypasses the current-version stamp so its output can be pinned
-// exactly, and Write with encryption disabled must differ from it only in the
-// terraform_version field it stamps.
-func TestVersion4WriteForTestGoldenOutput(t *testing.T) {
+// compactStateV4Golden devuelve la serialización compacta exacta de
+// newTestFile(nil, addrs.ManagedResourceMode) con la versión indicada.
+func compactStateV4Golden(versionStamp string) string {
 	instanceJSON := `"instances":[{"schema_version":0,"attributes":{"id":"x"},"sensitive_attributes":[]}]`
-	want := fmt.Sprintf(`{"version":4,"terraform_version":"","serial":1,"lineage":"test-lineage","outputs":{},"resources":[{"mode":"managed","type":"test_instance","name":"foo","provider":"provider[\"registry.opentofu.org/hashicorp/test\"]",%s}],"check_results":null}`+"\n", instanceJSON)
+	return fmt.Sprintf(`{"version":4,"terraform_version":%q,"serial":1,"lineage":"test-lineage","outputs":{},"resources":[{"mode":"managed","type":"test_instance","name":"foo","provider":"provider[\"registry.opentofu.org/hashicorp/test\"]",%s}],"check_results":null}`+"\n", versionStamp, instanceJSON)
+}
 
+// indentedStateV4Golden devuelve la serialización del mismo estado con dos
+// espacios de sangría, como producen WriteIndent y WriteForTest.
+func indentedStateV4Golden(versionStamp string) string {
+	return fmt.Sprintf(`{
+  "version": 4,
+  "terraform_version": %q,
+  "serial": 1,
+  "lineage": "test-lineage",
+  "outputs": {},
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "test_instance",
+      "name": "foo",
+      "provider": "provider[\"registry.opentofu.org/hashicorp/test\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "x"
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}
+`, versionStamp)
+}
+
+// Comprueba los bytes exactos: Write sigue siendo compacto y actualiza la
+// versión; WriteIndent usa dos espacios y un único salto final; WriteForTest
+// mantiene ese formato sin modificar la versión indicada por la prueba.
+func TestVersion4WriteForTestGoldenOutput(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteForTest(newTestFile(nil, addrs.ManagedResourceMode), &buf); err != nil {
 		t.Fatalf("unexpected error:\n%s", err)
 	}
-	if got := buf.String(); got != want {
-		t.Errorf("wrong output\n got: %s\nwant: %s", got, want)
+	if got := buf.String(); got != indentedStateV4Golden("") {
+		t.Errorf("wrong WriteForTest output\n got: %s\nwant: %s", got, indentedStateV4Golden(""))
 	}
 
 	if testing.Short() {
 		return
 	}
-	// Write with encryption disabled produces the same bytes except for the
-	// version stamp.
-	wantStamped := fmt.Sprintf(`{"version":4,"terraform_version":%q,"serial":1,"lineage":"test-lineage","outputs":{},"resources":[{"mode":"managed","type":"test_instance","name":"foo","provider":"provider[\"registry.opentofu.org/hashicorp/test\"]",%s}],"check_results":null}`+"\n", tfversion.SemVer.String(), instanceJSON)
+	// Write actualiza la versión y conserva el formato compacto.
 	var buf2 bytes.Buffer
 	if err := Write(newTestFile(nil, addrs.ManagedResourceMode), &buf2, encryption.StateEncryptionDisabled()); err != nil {
 		t.Fatalf("unexpected error:\n%s", err)
 	}
+	wantStamped := compactStateV4Golden(tfversion.SemVer.String())
 	if got := buf2.String(); got != wantStamped {
 		t.Errorf("wrong Write output\n got: %s\nwant: %s", got, wantStamped)
+	}
+
+	// WriteIndent actualiza la versión y aplica sangría.
+	var buf3 bytes.Buffer
+	if err := WriteIndent(newTestFile(nil, addrs.ManagedResourceMode), &buf3, encryption.StateEncryptionDisabled()); err != nil {
+		t.Fatalf("unexpected error:\n%s", err)
+	}
+	wantIndentStamped := indentedStateV4Golden(tfversion.SemVer.String())
+	if got := buf3.String(); got != wantIndentStamped {
+		t.Errorf("wrong WriteIndent output\n got: %s\nwant: %s", got, wantIndentStamped)
+	}
+}
+
+// WriteForTest conserva la versión proporcionada; Write la reemplaza por la
+// versión actual.
+func TestVersion4WriteForTestPreservesVersionStamp(t *testing.T) {
+	file := newTestFile(nil, addrs.ManagedResourceMode)
+	file.TerraformVersion = version.Must(version.NewVersion("0.0.0-test"))
+	var buf bytes.Buffer
+	if err := WriteForTest(file, &buf); err != nil {
+		t.Fatalf("unexpected error:\n%s", err)
+	}
+	if got, want := file.TerraformVersion.String(), "0.0.0-test"; got != want {
+		t.Errorf("WriteForTest mutated the caller's version stamp: got %q, want %q", got, want)
+	}
+	if got, want := buf.String(), indentedStateV4Golden("0.0.0-test"); got != want {
+		t.Errorf("wrong WriteForTest output\n got: %s\nwant: %s", got, want)
+	}
+
+	if testing.Short() {
+		return
+	}
+	// Write reemplaza la versión proporcionada por la versión actual.
+	stamped := newTestFile(nil, addrs.ManagedResourceMode)
+	stamped.TerraformVersion = version.Must(version.NewVersion("0.0.0-test"))
+	var buf2 bytes.Buffer
+	if err := Write(stamped, &buf2, encryption.StateEncryptionDisabled()); err != nil {
+		t.Fatalf("unexpected error:\n%s", err)
+	}
+	if got, want := stamped.TerraformVersion.String(), tfversion.SemVer.String(); got != want {
+		t.Errorf("Write did not stamp the current version: got %q, want %q", got, want)
+	}
+	if got, want := buf2.String(), compactStateV4Golden(tfversion.SemVer.String()); got != want {
+		t.Errorf("wrong Write output\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// reversibleEncryption simula un cifrado determinista: registra el texto en
+// claro y lo codifica en base64 compacto. El sobre no lleva saltos de línea,
+// por lo que no debe exponer el formato del texto en claro.
+type reversibleEncryption struct {
+	plaintext func([]byte)
+}
+
+var _ encryption.StateEncryption = (*reversibleEncryption)(nil)
+
+func (e *reversibleEncryption) DecryptState(b []byte) ([]byte, encryption.EncryptionStatus, error) {
+	const prefix = "enc:"
+	payload, ok := bytes.CutPrefix(b, []byte(prefix))
+	if !ok {
+		return nil, encryption.StatusUnknown, fmt.Errorf("not an enc: envelope")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(payload))
+	if err != nil {
+		return nil, encryption.StatusUnknown, fmt.Errorf("bad envelope: %s", err)
+	}
+	return decoded, encryption.StatusSatisfied, nil
+}
+
+func (e *reversibleEncryption) EncryptState(b []byte) ([]byte, error) {
+	if e.plaintext != nil {
+		e.plaintext(b)
+	}
+	return append([]byte("enc:"), base64.StdEncoding.EncodeToString(b)...), nil
+}
+
+// La sangría se aplica antes del cifrado: el cifrador recibe texto con dos
+// espacios y un único salto final; el sobre permanece compacto y se descifra
+// a un estado válido. Write debe enviar texto compacto al cifrador.
+func TestVersion4WriteEncryptsIndentedPlaintext(t *testing.T) {
+	var indentedPlaintext []byte
+	var declaredEnvelope []byte
+	enc := &reversibleEncryption{
+		plaintext: func(b []byte) {
+			indentedPlaintext = b
+			declaredEnvelope = append([]byte("enc:"), base64.StdEncoding.EncodeToString(b)...)
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteIndent(newTestFile(nil, addrs.ManagedResourceMode), &buf, enc); err != nil {
+		t.Fatalf("unexpected error:\n%s", err)
+	}
+
+	if got, want := string(indentedPlaintext), indentedStateV4Golden(tfversion.SemVer.String()); got != want {
+		t.Errorf("encryptor did not receive the indented plaintext\n got: %s\nwant: %s", got, want)
+	}
+	if got := buf.Bytes(); !bytes.Equal(got, declaredEnvelope) {
+		t.Errorf("written envelope differs from the encryptor output:\ngot:  %q\nwant: %q", got, declaredEnvelope)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("\n")) {
+		t.Error("encrypted envelope must stay compact, found a newline")
+	}
+
+	// El sobre se descifra a bytes de estado indentados y válidos.
+	decrypted, status, err := enc.DecryptState(buf.Bytes())
+	if err != nil {
+		t.Fatalf("failed to decrypt the envelope: %s", err)
+	}
+	if status != encryption.StatusSatisfied {
+		t.Errorf("unexpected decryption status %v", status)
+	}
+	if got, want := string(decrypted), indentedStateV4Golden(tfversion.SemVer.String()); got != want {
+		t.Errorf("decrypted plaintext is not the indented state file\n got: %s\nwant: %s", got, want)
+	}
+	f, diags := readStateV4(decrypted)
+	if diags.HasErrors() {
+		t.Fatalf("decrypted plaintext is not a valid state file:\n%s", diags.Err())
+	}
+	if got, want := f.TerraformVersion.String(), tfversion.SemVer.String(); got != want {
+		t.Errorf("wrong version stamp\n got: %q\nwant: %q", got, want)
+	}
+
+	// Write también conserva el formato compacto antes del cifrado.
+	var compactPlaintext []byte
+	compactEnc := &reversibleEncryption{
+		plaintext: func(b []byte) { compactPlaintext = b },
+	}
+	var buf2 bytes.Buffer
+	if err := Write(newTestFile(nil, addrs.ManagedResourceMode), &buf2, compactEnc); err != nil {
+		t.Fatalf("unexpected error:\n%s", err)
+	}
+	if got, want := string(compactPlaintext), compactStateV4Golden(tfversion.SemVer.String()); got != want {
+		t.Errorf("compact Write did not hand the encryptor compact plaintext\n got: %s\nwant: %s", got, want)
 	}
 }

@@ -977,6 +977,110 @@ func TestFilesystem_nilStateClearDoesNotResurrectReadPathState(t *testing.T) {
 	}
 }
 
+// assertIndentedStatefileBytes comprueba que la instantánea use JSON con dos
+// espacios de sangría y un único salto de línea final.
+func assertIndentedStatefileBytes(t *testing.T, raw []byte) {
+	t.Helper()
+	if !bytes.HasPrefix(raw, []byte("{\n  ")) {
+		t.Errorf("expected top-level keys indented by two spaces, got prefix %q", string(raw[:min(len(raw), 40)]))
+	}
+	for i, line := range strings.Split(string(raw), "\n") {
+		n := 0
+		for n < len(line) && line[n] == ' ' {
+			n++
+		}
+		if n%2 != 0 && n < len(line) {
+			t.Errorf("line %d is indented by %d spaces, not a multiple of two: %q", i, n, line)
+		}
+	}
+	if !bytes.HasSuffix(raw, []byte("\n")) {
+		t.Error("missing final newline")
+	}
+	if bytes.Contains(raw, []byte("\n\n")) {
+		t.Error("expected exactly one final newline, found a blank line")
+	}
+	if bytes.Contains(raw, []byte("\t")) {
+		t.Error("expected space indentation, found a tab")
+	}
+}
+
+// Comprueba que la persistencia local indente las instantáneas principal y de
+// respaldo, que ambas sigan siendo legibles y que el respaldo conserve el
+// estado anterior. La instantánea inicial se escribe en formato compacto.
+func TestFilesystem_persistState_indentsMainAndBackup(t *testing.T) {
+	defer testOverrideVersion(t, "1.2.3")()
+	ls := testFilesystem(t)
+	defer os.Remove(ls.readPath)
+
+	backupPath := ls.readPath + ".backup"
+	defer os.Remove(backupPath)
+	ls.SetBackupPath(backupPath)
+
+	if err := ls.WriteState(newStateWithOutput(t, "changed", "new value")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ls.PersistState(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	mainRaw, err := os.ReadFile(ls.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIndentedStatefileBytes(t, mainRaw)
+	main := readStatefileForTest(t, ls.path)
+	if main.State.OutputValue(addrs.RootModuleInstance.OutputValue("changed")) == nil {
+		t.Error("main file should contain the new state")
+	}
+
+	// El respaldo conserva el estado de salida anterior con el nuevo formato.
+	backupRaw, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIndentedStatefileBytes(t, backupRaw)
+	bf := readStatefileForTest(t, backupPath)
+	if !bf.State.Equal(TestFullInitialState()) {
+		t.Errorf("backup does not contain the previous snapshot:\n%s", spew.Sdump(bf.State))
+	}
+}
+
+// Comprueba que persistir el mismo estado, inicialmente compacto, solo cambia
+// su presentación: no incrementa el serial ni crea un respaldo.
+func TestFilesystem_persistState_formattingOnlyWriteKeepsSerialAndBackup(t *testing.T) {
+	defer testOverrideVersion(t, "1.2.3")()
+	ls := testFilesystem(t)
+	defer os.Remove(ls.readPath)
+
+	backupPath := ls.readPath + ".backup"
+	defer os.Remove(backupPath)
+	ls.SetBackupPath(backupPath)
+
+	beforeMeta := ls.StateSnapshotMeta()
+
+	if err := ls.WriteState(readStatefileForTest(t, ls.path).State); err != nil {
+		t.Fatal(err)
+	}
+	if err := ls.PersistState(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if meta := ls.StateSnapshotMeta(); meta.Serial != beforeMeta.Serial {
+		t.Errorf("formatting-only persist incremented the serial: got %d, want %d", meta.Serial, beforeMeta.Serial)
+	}
+	if ls.writtenBackup {
+		t.Error("formatting-only persist created a backup")
+	}
+	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
+		t.Errorf("formatting-only persist wrote a backup file: %s", err)
+	}
+	mainRaw, err := os.ReadFile(ls.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIndentedStatefileBytes(t, mainRaw)
+}
+
 func readStatefileForTest(t *testing.T, path string) *statefile.File {
 	t.Helper()
 	fh, err := os.Open(path)
@@ -999,7 +1103,7 @@ func writeStatefileForTest(t *testing.T, path string, f *statefile.File) {
 	}
 	defer fh.Close()
 	// WriteForTest honors f.TerraformVersion instead of stamping the current
-	// test version, so callers control the stamped version explicitly.
+	// versión de prueba indicada por cada caso y conserva el formato indentado.
 	if err := statefile.WriteForTest(f, fh); err != nil {
 		t.Fatal(err)
 	}

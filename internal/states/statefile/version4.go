@@ -363,7 +363,7 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 	return file, diags
 }
 
-func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdiags.Diagnostics {
+func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption, indent bool) tfdiags.Diagnostics {
 	// Here we'll convert back from the "File" representation to our
 	// stateV4 struct representation and write that.
 	//
@@ -500,7 +500,15 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 	sV4.normalize()
 
-	src, err := json.Marshal(sV4)
+	var src []byte
+	var err error
+	if indent {
+		// Indenta el JSON en claro antes de cifrarlo: el estado local queda
+		// legible y el sobre cifrado conserva el formato compacto.
+		src, err = json.MarshalIndent(sV4, "", "  ")
+	} else {
+		src, err = json.Marshal(sV4)
+	}
 	if err != nil {
 		// Shouldn't happen if we do our conversion to *stateV4 correctly above.
 		diags = diags.Append(tfdiags.Sourceless(
