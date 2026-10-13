@@ -37,14 +37,15 @@ func TestEnsureProviderVersions(t *testing.T) {
 	// permutations that it ends up being more concise to express them as
 	// normal code.
 	type Test struct {
-		Source     getproviders.Source
-		Prepare    func(*testing.T, *Installer, *Dir)
-		LockFile   string
-		Reqs       getproviders.Requirements
-		Mode       InstallMode
-		Check      func(*testing.T, *Dir, *depsfile.Locks)
-		WantErr    string
-		WantEvents func(*Installer, *Dir) map[addrs.Provider][]*testInstallerEventLogItem
+		Source      getproviders.Source
+		Prepare     func(*testing.T, *Installer, *Dir)
+		LockFile    string
+		Reqs        getproviders.Requirements
+		Mode        InstallMode
+		Check       func(*testing.T, *Dir, *depsfile.Locks)
+		CheckSource func(*testing.T, getproviders.Source)
+		WantErr     string
+		WantEvents  func(*Installer, *Dir) map[addrs.Provider][]*testInstallerEventLogItem
 	}
 
 	// noProvider is just the zero value of addrs.Provider, which we're
@@ -709,23 +710,15 @@ func TestEnsureProviderVersions(t *testing.T) {
 			},
 		},
 		"successful initial install of one provider through a warm global cache and correct locked checksum": {
-			Source: getproviders.NewMockSource(
-				[]getproviders.PackageMeta{
-					{
-						Provider:       beepProvider,
-						Version:        getproviders.MustParseVersion("2.0.0"),
-						TargetPlatform: fakePlatform,
-						Location:       beepProviderDir,
-					},
-					{
-						Provider:       beepProvider,
-						Version:        getproviders.MustParseVersion("2.1.0"),
-						TargetPlatform: fakePlatform,
-						Location:       beepProviderDir,
-					},
-				},
-				nil,
-			),
+			Source: getproviders.NewMockSource(nil, nil),
+			CheckSource: func(t *testing.T, source getproviders.Source) {
+				// The source must not be consulted at all when the locked
+				// provider version is already in the global cache; if this
+				// log is non-empty, the short-circuit regressed.
+				if calls := source.(*getproviders.MockSource).CallLog(); len(calls) != 0 {
+					t.Errorf("unexpected source calls\n%s", spew.Sdump(calls))
+				}
+			},
 			LockFile: `
 				# The existing cache entry is valid only if it matches a
 				# checksum already recorded in the lock file.
@@ -865,6 +858,18 @@ func TestEnsureProviderVersions(t *testing.T) {
 				},
 				nil,
 			),
+			CheckSource: func(t *testing.T, source getproviders.Source) {
+				// AvailableVersions must be skipped even when the cache
+				// entry's checksum is incompatible; the install path still
+				// fetches package metadata to verify, so the only source
+				// call should be PackageMeta for the exact locked version.
+				want := [][]interface{}{
+					{"PackageMeta", beepProvider, getproviders.MustParseVersion("2.1.0"), fakePlatform},
+				}
+				if diff := cmp.Diff(want, source.(*getproviders.MockSource).CallLog()); diff != "" {
+					t.Errorf("wrong source call log\n%s", diff)
+				}
+			},
 			LockFile: `
 				# This is approximating the awkward situation where the lock
 				# file was populated by someone who installed from a location
@@ -2509,6 +2514,10 @@ func TestEnsureProviderVersions(t *testing.T) {
 
 			if test.Check != nil {
 				test.Check(t, outputDir, newLocks)
+			}
+
+			if test.CheckSource != nil {
+				test.CheckSource(t, source)
 			}
 
 			if test.WantEvents != nil {
