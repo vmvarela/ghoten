@@ -15,9 +15,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/apparentlymart/go-shquot/shquot"
 	"github.com/mitchellh/go-linereader"
 	"github.com/vmvarela/ghoten/internal/communicator"
 	"github.com/vmvarela/ghoten/internal/communicator/remote"
+	"github.com/vmvarela/ghoten/internal/communicator/ssh"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/provisioners"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
@@ -132,7 +134,7 @@ func (p *provisioner) ProvisionResource(req provisioners.ProvisionResourceReques
 	}
 
 	// Copy and execute each script
-	if err := runScripts(p.ctx, req.UIOutput, comm, scripts); err != nil {
+	if err := runScripts(p.ctx, req.UIOutput, comm, scripts, posixQuotedCommands(req.Connection)); err != nil {
 		resp.Diagnostics = resp.Diagnostics.Append(tfdiags.WholeContainingBody(
 			tfdiags.Error,
 			"remote-exec provisioner error",
@@ -230,8 +232,39 @@ func collectScripts(v cty.Value) ([]io.ReadCloser, error) {
 	return fhs, nil
 }
 
-// runScripts is used to copy and execute a set of scripts
-func runScripts(ctx context.Context, o provisioners.UIOutput, comm communicator.Communicator, scripts []io.ReadCloser) error {
+// posixQuotedCommands reports whether the remote command token sent for this
+// connection is interpreted by a POSIX shell, based on the validated
+// connection block only. SSH connections default to a Unix target when
+// "target_platform" is omitted or null; Windows SSH targets and WinRM keep
+// the legacy unquoted command construction.
+func posixQuotedCommands(conn cty.Value) bool {
+	typ := connStringAttr(conn, "type")
+	if typ == "winrm" || (typ != "" && typ != "ssh") {
+		return false
+	}
+	return connStringAttr(conn, "target_platform") != ssh.TargetPlatformWindows
+}
+
+func connStringAttr(v cty.Value, name string) string {
+	if v.IsNull() {
+		return ""
+	}
+	t := v.Type()
+	if !t.IsObjectType() || !t.HasAttribute(name) {
+		return ""
+	}
+	attr := v.GetAttr(name)
+	if attr.IsNull() {
+		return ""
+	}
+	return attr.AsString()
+}
+
+// runScripts is used to copy and execute a set of scripts. quoteCommand
+// selects POSIX-shell quoting of the script path command for SSH connections
+// to Unix targets; it must be false for Windows SSH and WinRM targets, where
+// the command token is passed through unquoted.
+func runScripts(ctx context.Context, o provisioners.UIOutput, comm communicator.Communicator, scripts []io.ReadCloser, quoteCommand bool) error {
 	retryCtx, cancel := context.WithTimeout(ctx, comm.Timeout())
 	defer cancel()
 
@@ -268,8 +301,15 @@ func runScripts(ctx context.Context, o provisioners.UIOutput, comm communicator.
 			return fmt.Errorf("Failed to upload script: %w", err)
 		}
 
+		// On a Unix SSH target the server interprets the command via the
+		// user's shell, so the script path must stay literal (OpenTofu #4330).
+		command := remotePath
+		if quoteCommand {
+			command = shquot.POSIXShell([]string{remotePath})
+		}
+
 		cmd = &remote.Cmd{
-			Command: remotePath,
+			Command: command,
 			Stdout:  outW,
 			Stderr:  errW,
 		}
