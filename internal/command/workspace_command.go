@@ -67,7 +67,8 @@ will be removed in a future Ghoten version.
 }
 
 const (
-	envExists = `Workspace %q already exists`
+	envExists = `Workspace %q already exists.
+Use "ghoten workspace select %[1]s" to switch to it.`
 
 	envDoesNotExist = `
 Workspace %q doesn't exist.
