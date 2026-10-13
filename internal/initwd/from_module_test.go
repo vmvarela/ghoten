@@ -224,6 +224,76 @@ func TestDirFromModule_submodules(t *testing.T) {
 	assertResultDeepEqual(t, gotTraces, wantTraces)
 }
 
+// TestDirFromModule_varSource verifica que instalar un módulo con una llamada
+// cuya fuente referencia una variable del mismo módulo no provoque un panic
+// durante la evaluación estática de init -from-module.
+func TestDirFromModule_varSource(t *testing.T) {
+	// En Windows, EvalSymlinks expande rutas cortas, por ejemplo:
+	// C:\RUNN~1\T... -> C:\runneradmin\T...
+	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to expand short path: %v", err)
+	}
+
+	// Generar el fixture en tiempo de ejecución evita modificar
+	// los fixtures compartidos de testdata/local-modules.
+	sourceDir := filepath.Join(tmpDir, "source")
+	if err := os.Mkdir(sourceDir, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+	mainContent := `
+variable "src" {
+	default = "./child"
+}
+
+module "child" {
+	source = var.src
+}
+`
+	if err := os.WriteFile(filepath.Join(sourceDir, "main.tf"), []byte(mainContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	childDir := filepath.Join(sourceDir, "child")
+	if err := os.Mkdir(childDir, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, "main.tf"), []byte("# in child module\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	targetDir := filepath.Join(tmpDir, "target")
+	if err := os.Mkdir(targetDir, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := &testInstallHooks{}
+
+	loader := configload.NewLoaderForTests(t)
+	diags := DirFromModule(
+		context.Background(),
+		loader,
+		targetDir,
+		filepath.Join(targetDir, ".terraform/modules"),
+		sourceDir,
+		nil,
+		// La instalación de módulos trata rutas absolutas como fuentes
+		// "remotas"; el fetcher real usado aquí no realiza solicitudes de red.
+		getmodules.NewPackageFetcher(t.Context(), nil),
+		hooks,
+	)
+	assertNoDiagnostics(t, diags)
+	wantCalls := []testInstallHookCall{
+		{
+			Name:       "Install",
+			ModuleAddr: "child",
+			LocalPath:  filepath.Join(sourceDir, "child"),
+		},
+	}
+	if diff := cmp.Diff(wantCalls, hooks.Calls); diff != "" {
+		t.Fatalf("wrong installer calls\n%s", diff)
+	}
+}
+
 // submodulesWithProvider is identical to above, except that the configuration
 // would fail to load for some reason. We still want the module to be installed
 // for use cases like testing or CDKTF, and will only emit warnings for config
