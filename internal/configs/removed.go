@@ -81,6 +81,9 @@ func decodeRemovedBlock(removedBlock *hcl.Block) (*Removed, hcl.Diagnostics) {
 					})
 					continue
 				}
+				if removed.From == nil {
+					continue
+				}
 				if removed.From.RelSubject.AddrType() == addrs.ModuleAddrType {
 					diags = append(diags, &hcl.Diagnostic{
 						Severity: hcl.DiagError,

@@ -285,6 +285,43 @@ func TestRemovedBlock_decode(t *testing.T) {
 			`Invalid "removed.provisioner" block`,
 			hcl.Diagnostics{},
 		},
+		"error: invalid from with destroy provisioner": {
+			&hcl.Block{
+				Type: "removed",
+				Body: hcltest.MockBody(&hcl.BodyContent{
+					Attributes: hcl.Attributes{
+						"from": {
+							Name: "from",
+							// Una expresión literal no es un recorrido válido y deja removed.From en nil.
+							Expr: &hclsyntax.LiteralValueExpr{Val: cty.StringVal("test_instance.foo")},
+						},
+					},
+					Blocks: hcl.Blocks{
+						{
+							Type:   "provisioner",
+							Labels: []string{"local-exec"},
+							LabelRanges: []hcl.Range{
+								{
+									Filename: "file",
+								},
+							},
+							Body: hcltest.MockBody(&hcl.BodyContent{
+								Attributes: hcl.Attributes{
+									"command": &hcl.Attribute{Expr: &hclsyntax.LiteralValueExpr{Val: cty.StringVal("echo 'test'")}},
+									"when":    &hcl.Attribute{Expr: &hclsyntax.ScopeTraversalExpr{Traversal: hcl.Traversal{hcl.TraverseRoot{Name: "destroy"}}}},
+								},
+							}),
+						},
+					},
+				}),
+				DefRange: blockRange,
+			},
+			&Removed{
+				DeclRange: blockRange,
+			},
+			`Invalid expression`,
+			hcl.Diagnostics{},
+		},
 		"error: missing argument": {
 			&hcl.Block{
 				Type: "removed",
