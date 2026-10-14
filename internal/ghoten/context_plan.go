@@ -44,11 +44,12 @@ type PlanOpts struct {
 	// instance using its corresponding provider.
 	SkipRefresh bool
 
-	// RefreshMode controls the granularity of refresh operations. When set
-	// to RefreshSmart, only resources with configuration changes and their
-	// dependency subgraph will be refreshed. RefreshAll refreshes everything
-	// (legacy behavior), and RefreshNone skips all refresh (same as
-	// SkipRefresh=true). When SkipRefresh is true, RefreshMode is ignored.
+	// RefreshMode controls the granularity of refresh operations. RefreshSmart
+	// graph-prunes obvious unaffected resources and then verifies each skipped
+	// instance against evaluated resource/provider fingerprints and bounded
+	// freshness. RefreshAll refreshes everything (the default), and RefreshNone
+	// skips all refresh (same as SkipRefresh=true). When SkipRefresh is true,
+	// RefreshMode is ignored.
 	RefreshMode plans.RefreshMode
 
 	// PreDestroyRefresh indicated that this is being passed to a plan used to
