@@ -662,3 +662,23 @@ func TestParsePlan_vars(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePlan_smartRefreshRejectsDestroy(t *testing.T) {
+	_, _, diags := ParsePlan([]string{"-destroy", "-refresh=smart"})
+	if !diags.HasErrors() {
+		t.Fatal("expected -destroy -refresh=smart to be rejected")
+	}
+	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -destroy") {
+		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
+
+func TestParsePlan_smartRefreshRejectsRefreshOnly(t *testing.T) {
+	_, _, diags := ParsePlan([]string{"-refresh-only", "-refresh=smart"})
+	if !diags.HasErrors() {
+		t.Fatal("expected -refresh-only -refresh=smart to be rejected")
+	}
+	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -refresh-only") {
+		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
