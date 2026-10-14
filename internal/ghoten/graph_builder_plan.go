@@ -313,6 +313,7 @@ func (b *PlanGraphBuilder) initPlan() {
 		return &nodeExpandPlannableResource{
 			NodeAbstractResource: a,
 			skipRefresh:          b.skipRefresh && !b.smartRefresh,
+			smartRefresh:         b.smartRefresh && !b.skipRefresh,
 			skipPlanChanges:      b.skipPlanChanges,
 			preDestroyRefresh:    b.preDestroyRefresh,
 			forceReplace:         b.ForceReplace,
