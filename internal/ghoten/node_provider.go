@@ -251,7 +251,13 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 		return diags
 	}
 
-	configFingerprint, fingerprintErr := smartRefreshValueFingerprint(configVal)
+	var configFingerprint []byte
+	var fingerprintErr error
+	if smartRefreshSchemaContainsPersistUnsafeValue(configSchema, configVal) {
+		fingerprintErr = fmt.Errorf("provider configuration contains sensitive, ephemeral, or write-only values")
+	} else {
+		configFingerprint, fingerprintErr = smartRefreshValueFingerprint(configVal)
+	}
 	if fingerprintErr != nil {
 		// Fingerprinting is an optimization. If it cannot be produced, leave it
 		// unavailable so resource nodes conservatively perform a refresh.
