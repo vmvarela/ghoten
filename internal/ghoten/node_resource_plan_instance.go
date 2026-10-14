@@ -37,8 +37,12 @@ type NodePlannableResourceInstance struct {
 	*NodeAbstractResourceInstance
 	ForceCreateBeforeDestroy bool
 
-	// skipRefresh indicates that we should skip refreshing individual instances
+	// skipRefresh indicates that we should skip refreshing individual instances.
 	skipRefresh bool
+
+	// smartRefresh enables the evaluated per-instance fingerprint check before
+	// a graph-level skip is allowed to bypass ReadResource.
+	smartRefresh bool
 
 	// skipPlanChanges indicates we should skip trying to plan change actions
 	// for any instances.
