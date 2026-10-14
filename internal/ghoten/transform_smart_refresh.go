@@ -235,7 +235,15 @@ func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
 	// Compare against every instance's stored hash. If any instance has
 	// a nil hash (old state) or a different hash, mark as changed.
 	for _, rs := range t.State.Resources(addr) {
-		for _, is := range rs.Instances {
+		keys := make([]addrs.InstanceKey, 0, len(rs.Instances))
+		for key := range rs.Instances {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return addrs.InstanceKeyLess(keys[i], keys[j])
+		})
+		for _, key := range keys {
+			is := rs.Instances[key]
 			if is.Current == nil {
 				continue
 			}
