@@ -17,93 +17,48 @@ How this repository runs planning, delivery, and review. Adapted for a solo deve
 
 ---
 
-## Milestones = Sprints
+## Milestones = Releases
 
-Each sprint is a GitHub Milestone.
+Each planned release is a GitHub Milestone.
 
-**Naming:** `Sprint N` (e.g., `Sprint 1`, `Sprint 2`)
+**Naming:** `vX.Y.Z` (e.g., `v1.13.2`), matching OpenTofu-compatible releases. `Sprint 1`–`Sprint 4` remain as closed, historical milestones.
 
-**Sprint Goal format** (milestone description):
-```
-Sprint Goal: <one sentence describing the most valuable outcome of this sprint>
-```
-
-Example:
-```
-Sprint Goal: Establish a working Scrum loop in GitHub with labels, templates, and sprint hygiene.
-```
-
-The goal must be short enough to fit in the milestone description and answer: *"Why is this sprint worth running?"*
+An open version milestone holds the issues planned for that release; it closes when the release is published.
 
 ---
 
-## Labels in the development workflow
+## Labels
 
-### Type — what kind of work it is
+Issues use GitHub's default labels, plus `area/*` for the affected subsystem and `stale` (managed automatically):
 
 | Label | Use for |
 |---|---|
-| `type:feature` | New functionality |
-| `type:bug` | Something broken that needs fixing |
-| `type:chore` | Maintenance, refactoring, tooling |
-| `type:spike` | Timeboxed research or investigation |
-| `type:docs` | Documentation only |
+| `enhancement` | New functionality or improvements |
+| `bug` | Something broken that needs fixing |
+| `documentation` | Documentation only |
+| `area/*` | The affected subsystem |
 
-### Priority — when to pick it up
+`dependencies`, `github_actions`, `duplicate`, `good first issue`, `help wanted`, `invalid`, `question`, and `wontfix` are applied when relevant.
 
-| Label | Meaning |
-|---|---|
-| `priority:critical` | Must fix immediately — blocks everything |
-| `priority:high` | Must be in the next sprint |
-| `priority:medium` | Should be done soon |
-| `priority:low` | Nice to have; pick up when capacity allows |
-
-### Size — relative effort estimate
-
-| Label | Rough effort |
-|---|---|
-| `size:xs` | < 1 hour |
-| `size:s` | 1–4 hours |
-| `size:m` | 4–8 hours |
-| `size:l` | 1–2 days |
-| `size:xl` | > 2 days — **split before starting** |
-
-### Status — where the issue is right now
-
-Apply **one status label** at a time. Change it as the issue moves through the workflow:
-
-| Label | Apply when… |
-|---|---|
-| *(none)* | Issue is in the backlog, not yet refined |
-| `status:in-progress` | Work has started (branch created, actively coding) |
-
-**Workflow:**
-
-```
-Backlog → [assign to sprint] → status:in-progress → [PR merged / done] → closed
-```
-
-Remove the status label when closing. An issue with no open status label + closed state = done.
+No status labels: work in progress is tracked by the branch name (`issue-N/short-description`).
 
 ---
 
 ## Sprint Planning checklist
 
-1. Review the backlog — pick issues with `priority:high` or `priority:medium`
-2. Ensure every picked issue has acceptance criteria and a size label
-3. Set the Milestone on each selected issue
-4. Add `status:in-progress` as you start each issue during the sprint
+1. Review the backlog — pick `bug` fixes and valuable `enhancement`s
+2. Ensure every picked issue has acceptance criteria
+3. Assign each selected issue to the version milestone
 
 ## Sprint Review checklist
 
 1. Close all completed issues (reference commit or PR in the closing comment)
 2. Move incomplete issues back to the backlog (remove milestone)
 3. Publish a GitHub Release if there is a usable increment
-4. Close the milestone
 
 ## Sprint Retrospective
 
-Create an issue with label `type:docs` titled `Retrospective: Sprint N` and answer:
+Create an issue titled `Retrospective: Sprint N` and answer:
 
 - What went well?
 - What could be improved?
@@ -113,6 +68,6 @@ Create an issue with label `type:docs` titled `Retrospective: Sprint N` and answ
 
 ## Backlog rules
 
-- Every issue must have: `type:*`, `priority:*`, `size:*`
-- Issues labeled `size:xl` must be split before they can be assigned to a sprint
-- Acceptance criteria (checklist) are required before an issue is sprint-ready
+- Every issue needs a description and acceptance criteria before it becomes sprint-ready
+- Issues tied to a subsystem get an `area/*` label
+- Assign a version milestone only when the issue is planned for a release

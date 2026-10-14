@@ -5,18 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     labels:
-      - "type:chore"
-      - "priority:low"
-      - "tech-debt"
+      - "github_actions"
 
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
     labels:
-      - "type:chore"
-      - "priority:low"
-      - "tech-debt"
+      - "dependencies"
     groups:
       aws:
         patterns:
