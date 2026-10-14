@@ -45,3 +45,10 @@ updates:
           - "github.com/opentofu/*"
           - "github.com/opencontainers/*"
           - "oras.land/*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
