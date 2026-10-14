@@ -48,9 +48,9 @@ const (
 	// This corresponds to "-refresh=false".
 	RefreshNone
 
-	// RefreshSmart selectively refreshes only resources whose configuration
-	// has changed and their dependency subgraph. This is "-refresh=smart"
-	// and the new default behavior.
+	// RefreshSmart uses graph-level pruning plus evaluated per-instance
+	// fingerprints to skip fresh resources that are safe to reuse. This is
+	// the explicit "-refresh=smart" mode; RefreshAll remains the default.
 	RefreshSmart
 )
 
