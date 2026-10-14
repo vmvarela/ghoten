@@ -12,6 +12,7 @@ import (
 	"log"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -95,6 +96,46 @@ var (
 // GraphNodeSkipRefresh
 func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
 	n.skipRefresh = v
+}
+
+func (n *NodePlannableResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext) ([]byte, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	if n.Config == nil || n.Schema == nil {
+		return nil, diags
+	}
+	if n.ResolvedProvider.ConfigFingerprint == nil {
+		log.Printf("[DEBUG] SmartRefresh: provider fingerprint unavailable for %s", n.Addr)
+		return nil, diags
+	}
+
+	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.ResourceAddr())
+	diags = diags.Append(forEachDiags)
+	if forEachDiags.HasErrors() {
+		return nil, diags
+	}
+
+	keyData := EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	configVal, _, configDiags := evalCtx.EvaluateBlock(ctx, n.Config.Config, n.Schema, nil, keyData)
+	diags = diags.Append(configDiags.InConfigBody(n.Config.Config, n.Addr.String()))
+	if configDiags.HasErrors() {
+		return nil, diags
+	}
+
+	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
+	fingerprint, err := smartRefreshInstanceFingerprint(
+		configVal,
+		n.Addr,
+		n.ResolvedProvider.ProviderConfig,
+		n.ResolvedProviderKey,
+		providerFingerprint,
+		n.Dependencies,
+	)
+	if err != nil {
+		log.Printf("[DEBUG] SmartRefresh: cannot fingerprint %s: %s", n.Addr, err)
+		return nil, diags
+	}
+
+	return fingerprint, diags
 }
 
 // GraphNodeEvalable
@@ -348,24 +389,50 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			}
 			instanceRefreshState.SkipDestroy = skipDestroy
 
+			var currentRefreshFingerprint []byte
+			if n.smartRefresh && !importing {
+				var fingerprintDiags tfdiags.Diagnostics
+				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(ctx, evalCtx)
+				diags = diags.Append(fingerprintDiags)
+				if fingerprintDiags.HasErrors() {
+					return diags
+				}
+
+				if n.skipRefresh {
+					switch {
+					case len(currentRefreshFingerprint) == 0:
+						log.Printf("[DEBUG] SmartRefresh: refreshing %s because its evaluated fingerprint is unavailable", n.Addr)
+						n.skipRefresh = false
+					case len(instanceRefreshState.RefreshFingerprint) == 0:
+						log.Printf("[DEBUG] SmartRefresh: refreshing %s because state has no evaluated fingerprint", n.Addr)
+						n.skipRefresh = false
+					case !bytes.Equal(instanceRefreshState.RefreshFingerprint, currentRefreshFingerprint):
+						log.Printf("[DEBUG] SmartRefresh: refreshing %s because its evaluated fingerprint changed", n.Addr)
+						n.skipRefresh = false
+					case !smartRefreshMetadataFresh(instanceRefreshState.LastRefreshUnix, time.Now()):
+						log.Printf("[DEBUG] SmartRefresh: refreshing %s because cached remote state is stale", n.Addr)
+						n.skipRefresh = false
+					}
+				}
+			}
+
 			if n.skipRefresh {
-				// Notify hooks that this resource's refresh was intentionally skipped
-				// (e.g. smart refresh mode determined no config change).
+				// Notify hooks that this resource's refresh was intentionally skipped.
 				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
 					return h.PostSkipRefresh(n.Addr, states.CurrentGen)
 				}))
 				if diags.HasErrors() {
 					return diags
 				}
-				// Persist the structural fingerprint so future plans can detect
-				// config changes even for resources that were not refreshed.
+
+				// Update only metadata for the concrete instance that is actually
+				// participating in this plan. Never globally backfill untouched
+				// resources, which is unsafe with -target/-exclude.
 				hashChanged := false
-				if n.Config != nil && instanceRefreshState != nil {
-					newHash := configExprHash(n.Config)
-					if !bytes.Equal(instanceRefreshState.ConfigExprHash, newHash) {
-						instanceRefreshState.ConfigExprHash = newHash
-						hashChanged = true
-					}
+				newHash := configExprHash(n.Config)
+				if !bytes.Equal(instanceRefreshState.ConfigExprHash, newHash) {
+					instanceRefreshState.ConfigExprHash = newHash
+					hashChanged = true
 				}
 				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy || hashChanged {
 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
@@ -399,6 +466,10 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			// config changes even for resources that were not skipped.
 			if n.Config != nil {
 				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
+			}
+			if n.smartRefresh && len(currentRefreshFingerprint) > 0 {
+				instanceRefreshState.RefreshFingerprint = currentRefreshFingerprint
+				instanceRefreshState.LastRefreshUnix = time.Now().UTC().Unix()
 			}
 		}
 
