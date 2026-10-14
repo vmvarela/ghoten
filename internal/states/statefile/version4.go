@@ -184,6 +184,8 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 				CreateBeforeDestroy: isV4.CreateBeforeDestroy,
 				SkipDestroy:         isV4.SkipDestroy,
 				ConfigExprHash:      isV4.ConfigExprHash,
+				RefreshFingerprint:  isV4.RefreshFingerprint,
+				LastRefreshUnix:     isV4.LastRefreshUnix,
 			}
 
 			{
@@ -625,6 +627,8 @@ func appendInstanceObjectStateV4(rs *states.Resource, is *states.ResourceInstanc
 		CreateBeforeDestroy:     obj.CreateBeforeDestroy,
 		SkipDestroy:             obj.SkipDestroy,
 		ConfigExprHash:          obj.ConfigExprHash,
+		RefreshFingerprint:      obj.RefreshFingerprint,
+		LastRefreshUnix:         obj.LastRefreshUnix,
 	}), diags
 }
 
@@ -844,7 +848,9 @@ type instanceObjectStateV4 struct {
 	CreateBeforeDestroy bool `json:"create_before_destroy,omitempty"`
 	SkipDestroy         bool `json:"skip_destroy,omitempty"`
 
-	ConfigExprHash []byte `json:"config_expr_hash,omitempty"`
+	ConfigExprHash      []byte `json:"config_expr_hash,omitempty"`
+	RefreshFingerprint []byte `json:"refresh_fingerprint,omitempty"`
+	LastRefreshUnix     int64  `json:"last_refresh_unix,omitempty"`
 }
 
 type checkResultsV4 struct {
