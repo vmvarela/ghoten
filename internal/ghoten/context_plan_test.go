@@ -273,6 +273,113 @@ func TestContext2Plan_emptyDiff(t *testing.T) {
 	}
 }
 
+func TestContext2Plan_smartRefreshEvaluatedFingerprint(t *testing.T) {
+	m := testModule(t, "smart-refresh-evaluated")
+	p := testProvider("aws")
+	p.PlanResourceChangeFn = testDiffFn
+
+	var reads atomic.Int32
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		reads.Add(1)
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	schema := p.GetProviderSchemaResponse.ResourceTypes["aws_instance"].Block
+	ty := schema.ImpliedType()
+	obj := &states.ResourceInstanceObject{
+		Value: objectVal(t, schema, map[string]cty.Value{
+			"id":   cty.StringVal("i-smart"),
+			"ami":  cty.StringVal("ami-1"),
+			"type": cty.StringVal("aws_instance"),
+		}),
+		Status: states.ObjectReady,
+	}
+	src, err := obj.Encode(ty, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state := states.NewState()
+	state.RootModule().SetResourceInstanceCurrent(
+		mustResourceInstanceAddr("aws_instance.foo").Resource,
+		src,
+		mustProviderConfig(`provider["registry.opentofu.org/hashicorp/aws"]`),
+		addrs.NoKey,
+	)
+
+	planWith := func(inputState *states.State, region, ami string) *plans.Plan {
+		t.Helper()
+		plan, diags := ctx.Plan(context.Background(), m, inputState, &PlanOpts{
+			Mode:        plans.NormalMode,
+			RefreshMode: plans.RefreshSmart,
+			SetVariables: InputValues{
+				"region": &InputValue{Value: cty.StringVal(region), SourceType: ValueFromCaller},
+				"ami":    &InputValue{Value: cty.StringVal(ami), SourceType: ValueFromCaller},
+			},
+		})
+		if diags.HasErrors() {
+			t.Fatalf("unexpected plan errors: %s", diags.Err())
+		}
+		return plan
+	}
+
+	// Legacy state has no evaluated Smart Refresh metadata, so the first smart
+	// plan must perform a conservative remote read and seed the metadata.
+	first := planWith(state, "eu-west-1", "ami-1")
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("first smart plan performed %d ReadResource calls; want 1", got)
+	}
+	baseline := first.PriorState.DeepCopy()
+	current := baseline.RootModule().ResourceInstance(mustResourceInstanceAddr("aws_instance.foo").Resource)
+	if current == nil || current.Current == nil {
+		t.Fatal("refreshed resource missing from prior state")
+	}
+	if len(current.Current.RefreshFingerprint) == 0 || current.Current.LastRefreshUnix == 0 {
+		t.Fatal("first smart plan did not seed evaluated refresh metadata")
+	}
+
+	// Identical evaluated resource and provider configurations are eligible for
+	// the fast path and should not contact the provider.
+	reads.Store(0)
+	_ = planWith(baseline.DeepCopy(), "eu-west-1", "ami-1")
+	if got := reads.Load(); got != 0 {
+		t.Fatalf("unchanged smart plan performed %d ReadResource calls; want 0", got)
+	}
+
+	// A variable-only resource configuration change must invalidate the
+	// fingerprint even though the HCL source is unchanged.
+	reads.Store(0)
+	_ = planWith(baseline.DeepCopy(), "eu-west-1", "ami-2")
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("resource variable change performed %d ReadResource calls; want 1", got)
+	}
+
+	// A provider-only configuration change must also invalidate the resource's
+	// refresh fingerprint.
+	reads.Store(0)
+	_ = planWith(baseline.DeepCopy(), "eu-central-1", "ami-1")
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("provider configuration change performed %d ReadResource calls; want 1", got)
+	}
+
+	// A matching fingerprint cannot be trusted forever: stale cache metadata
+	// must force another remote read for drift detection.
+	stale := baseline.DeepCopy()
+	staleInstance := stale.RootModule().ResourceInstance(mustResourceInstanceAddr("aws_instance.foo").Resource)
+	staleInstance.Current.LastRefreshUnix = time.Now().Add(-smartRefreshMaxAge - time.Minute).Unix()
+	reads.Store(0)
+	_ = planWith(stale, "eu-west-1", "ami-1")
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("stale smart refresh metadata performed %d ReadResource calls; want 1", got)
+	}
+}
+
 func TestContext2Plan_escapedVar(t *testing.T) {
 	m := testModule(t, "plan-escaped-var")
 	p := testProvider("aws")
