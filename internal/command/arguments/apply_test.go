@@ -837,3 +837,13 @@ func TestParseApplyDestroy_invalid(t *testing.T) {
 		}
 	})
 }
+
+func TestParseApply_smartRefreshRejectsDestroy(t *testing.T) {
+	_, _, diags := ParseApply([]string{"-destroy", "-refresh=smart"})
+	if !diags.HasErrors() {
+		t.Fatal("expected -destroy -refresh=smart to be rejected")
+	}
+	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -destroy") {
+		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
