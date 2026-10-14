@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
 
@@ -153,6 +154,54 @@ func TestSmartRefreshInstanceFingerprint_IncludesSchemaVersion(t *testing.T) {
 	}
 	if bytes.Equal(fp1, fp2) {
 		t.Fatal("schema version change did not invalidate the resource fingerprint")
+	}
+}
+
+func TestSmartRefreshSchemaContainsPersistUnsafeValue(t *testing.T) {
+	schema := &configschema.Block{
+		Attributes: map[string]*configschema.Attribute{
+			"plain":     {Type: cty.String, Optional: true},
+			"sensitive": {Type: cty.String, Optional: true, Sensitive: true},
+			"write_only": {Type: cty.String, Optional: true, WriteOnly: true},
+		},
+	}
+
+	tests := map[string]struct {
+		value cty.Value
+		want  bool
+	}{
+		"only plain configured": {
+			value: cty.ObjectVal(map[string]cty.Value{
+				"plain":      cty.StringVal("ok"),
+				"sensitive":  cty.NullVal(cty.String),
+				"write_only": cty.NullVal(cty.String),
+			}),
+			want: false,
+		},
+		"sensitive configured": {
+			value: cty.ObjectVal(map[string]cty.Value{
+				"plain":      cty.NullVal(cty.String),
+				"sensitive":  cty.StringVal("secret"),
+				"write_only": cty.NullVal(cty.String),
+			}),
+			want: true,
+		},
+		"write-only configured": {
+			value: cty.ObjectVal(map[string]cty.Value{
+				"plain":      cty.NullVal(cty.String),
+				"sensitive":  cty.NullVal(cty.String),
+				"write_only": cty.StringVal("secret"),
+			}),
+			want: true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := smartRefreshSchemaContainsPersistUnsafeValue(schema, test.value); got != test.want {
+				t.Fatalf("got %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
