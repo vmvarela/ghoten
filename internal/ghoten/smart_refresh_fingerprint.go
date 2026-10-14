@@ -14,6 +14,7 @@ import (
 	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
 
@@ -21,6 +22,42 @@ import (
 // fingerprint without re-reading the remote object. This keeps the fast path
 // useful while still guaranteeing periodic drift detection.
 const smartRefreshMaxAge = 24 * time.Hour
+
+func smartRefreshPathHasConfiguredValue(v cty.Value, path cty.Path) bool {
+	if v == cty.NilVal || !v.IsWhollyKnown() {
+		return true
+	}
+	if len(path) == 0 {
+		return !v.IsNull()
+	}
+	pathVal, err := path.Apply(v)
+	if err != nil || pathVal == cty.NilVal || !pathVal.IsWhollyKnown() {
+		return true
+	}
+	return !pathVal.IsNull()
+}
+
+func smartRefreshSchemaContainsPersistUnsafeValue(schema *configschema.Block, v cty.Value) bool {
+	if schema == nil || v == cty.NilVal {
+		return true
+	}
+
+	for _, pvm := range schema.ValueMarks(v, nil) {
+		if _, sensitive := pvm.Marks[marks.Sensitive]; sensitive && smartRefreshPathHasConfiguredValue(v, pvm.Path) {
+			return true
+		}
+		if _, ephemeral := pvm.Marks[marks.Ephemeral]; ephemeral && smartRefreshPathHasConfiguredValue(v, pvm.Path) {
+			return true
+		}
+	}
+
+	for _, path := range schema.WriteOnlyPaths(v, nil) {
+		if smartRefreshPathHasConfiguredValue(v, path) {
+			return true
+		}
+	}
+	return false
+}
 
 func smartRefreshValueFingerprint(v cty.Value) ([]byte, error) {
 	if v == cty.NilVal {
