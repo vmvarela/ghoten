@@ -390,7 +390,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			}
 			instanceRefreshState.SkipDestroy = skipDestroy
 
-			if n.smartRefresh && !importing {
+			if !importing {
 				var fingerprintDiags tfdiags.Diagnostics
 				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(ctx, evalCtx)
 				diags = diags.Append(fingerprintDiags)
@@ -398,7 +398,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 					return diags
 				}
 
-				if n.skipRefresh {
+				if n.smartRefresh && n.skipRefresh {
 					switch {
 					case len(currentRefreshFingerprint) == 0:
 						log.Printf("[DEBUG] SmartRefresh: refreshing %s because its evaluated fingerprint is unavailable", n.Addr)
@@ -467,7 +467,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			if n.Config != nil {
 				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
 			}
-			if n.smartRefresh && len(currentRefreshFingerprint) > 0 {
+			if len(currentRefreshFingerprint) > 0 {
 				instanceRefreshState.RefreshFingerprint = currentRefreshFingerprint
 				instanceRefreshState.LastRefreshUnix = time.Now().UTC().Unix()
 			}
