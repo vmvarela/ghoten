@@ -298,6 +298,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 	addr := n.ResourceInstanceAddr()
 
 	var instanceRefreshState *states.ResourceInstanceObject
+	var currentRefreshFingerprint []byte
 
 	checkRuleSeverity := tfdiags.Error
 	if n.skipPlanChanges || n.preDestroyRefresh {
@@ -389,7 +390,6 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			}
 			instanceRefreshState.SkipDestroy = skipDestroy
 
-			var currentRefreshFingerprint []byte
 			if n.smartRefresh && !importing {
 				var fingerprintDiags tfdiags.Diagnostics
 				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(ctx, evalCtx)
