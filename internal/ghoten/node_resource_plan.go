@@ -154,8 +154,11 @@ func (n *nodeExpandPlannableResource) DynamicExpand(evalCtx EvalContext) (*Graph
 
 		return &NodePlannableResourceInstanceOrphan{
 			NodeAbstractResourceInstance: a,
-			skipRefresh:                  n.skipRefresh,
-			skipPlanChanges:              n.skipPlanChanges,
+			// An orphan has no desired instance configuration to fingerprint.
+			// In Smart Refresh mode it must therefore be refreshed conservatively
+			// before we plan its removal.
+			skipRefresh:     n.skipRefresh && !n.smartRefresh,
+			skipPlanChanges: n.skipPlanChanges,
 		}
 	}
 
