@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
 
 func TestSmartRefreshValueFingerprint_DeterministicAndValueSensitive(t *testing.T) {
@@ -152,6 +153,20 @@ func TestSmartRefreshInstanceFingerprint_IncludesSchemaVersion(t *testing.T) {
 	}
 	if bytes.Equal(fp1, fp2) {
 		t.Fatal("schema version change did not invalidate the resource fingerprint")
+	}
+}
+
+func TestSmartRefreshValueFingerprint_RejectsSensitiveAndEphemeralValues(t *testing.T) {
+	tests := map[string]cty.Value{
+		"sensitive": cty.StringVal("secret").Mark(marks.Sensitive),
+		"ephemeral": cty.StringVal("temporary").Mark(marks.Ephemeral),
+	}
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := smartRefreshValueFingerprint(value); err == nil {
+				t.Fatalf("%s value must force a conservative refresh", name)
+			}
+		})
 	}
 }
 
