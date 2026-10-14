@@ -6,6 +6,8 @@
 package cliconfig
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +42,9 @@ func TestLoadConfig_providerInstallation(t *testing.T) {
 								Retries: func() (int, bool) {
 									return 2, true
 								},
+								Trusted: func() bool {
+									return true
+								},
 							},
 							{
 								Location: ProviderInstallationFilesystemMirror("/tmp/example2"),
@@ -61,20 +66,126 @@ func TestLoadConfig_providerInstallation(t *testing.T) {
 				},
 			}
 
-			if diff := cmp.Diff(want, got, cmp.Comparer(func(a, b ProviderInstallationMethodRetries) bool {
-				if (a == nil && b != nil) || (a != nil && b == nil) {
-					return false
-				}
-				if a == nil && b == nil {
-					return true
-				}
-				ar, aok := a()
-				br, bok := b()
-				return ar == br && aok == bok
-			})); diff != "" {
+			if diff := cmp.Diff(want, got,
+				cmp.Comparer(func(a, b ProviderInstallationMethodRetries) bool {
+					if (a == nil && b != nil) || (a != nil && b == nil) {
+						return false
+					}
+					if a == nil && b == nil {
+						return true
+					}
+					ar, aok := a()
+					br, bok := b()
+					return ar == br && aok == bok
+				}),
+				cmp.Comparer(func(a, b ProviderInstallationMethodTrusted) bool {
+					if (a == nil && b != nil) || (a != nil && b == nil) {
+						return false
+					}
+					if a == nil && b == nil {
+						return true
+					}
+					return a() == b()
+				})); diff != "" {
 				t.Errorf("wrong result\n%s", diff)
 			}
 		})
+	}
+}
+
+// TestLoadConfig_providerInstallationTrustAllHashes checks the decoding of
+// trust_all_hashes for network_mirror blocks in both native HCL and JSON
+// syntax: true, false, and omitted all default to explicit behavior.
+func TestLoadConfig_providerInstallationTrustAllHashes(t *testing.T) {
+	hclTemplate := `provider_installation {
+  network_mirror {
+    url = "https://tf-Mirror.example.com/"
+%s
+  }
+}
+`
+	jsonTemplate := `{"provider_installation": {"network_mirror": [{"url": "https://tf-Mirror.example.com/"%s}]}}`
+	cases := map[string]struct {
+		attributeHCL  string // inserted verbatim into the HCL template ("" when omitted)
+		attributeJSON string // inserted verbatim into the JSON template ("" when omitted)
+		wantTrusted   bool
+		wantError     bool
+	}{
+		"omitted defaults to false": {
+			wantTrusted: false,
+		},
+		"explicit false": {
+			attributeHCL:  "    trust_all_hashes = false",
+			attributeJSON: `, "trust_all_hashes": false`,
+			wantTrusted:   false,
+		},
+		"explicit true": {
+			attributeHCL:  "    trust_all_hashes = true",
+			attributeJSON: `, "trust_all_hashes": true`,
+			wantTrusted:   true,
+		},
+		"non-boolean value is an error": {
+			attributeHCL:  `    trust_all_hashes = "yes"`,
+			attributeJSON: `, "trust_all_hashes": "yes"`,
+			wantTrusted:   false,
+			wantError:     true,
+		},
+	}
+	for name, tt := range cases {
+		for _, syntax := range []string{"native-syntax", "json"} {
+			t.Run(fmt.Sprintf("%s/%s", name, syntax), func(t *testing.T) {
+				tt := tt
+				syntax := syntax
+				var content string
+				var attribute string
+				if syntax == "json" {
+					attribute = tt.attributeJSON
+					content = fmt.Sprintf(jsonTemplate, attribute)
+				} else {
+					attribute = tt.attributeHCL
+					content = fmt.Sprintf(hclTemplate, attribute)
+				}
+				path := filepath.Join(t.TempDir(), "test.tfrc")
+				if err := os.WriteFile(path, []byte(content), 0666); err != nil {
+					t.Fatalf("unexpected error writing temp config file: %s", err)
+				}
+
+				got, diags := loadConfigFile(path)
+				if tt.wantError {
+					if !diags.HasErrors() {
+						t.Fatalf("unexpected success; want error")
+					}
+					if gotErr := diags.Err().Error(); !strings.Contains(gotErr, "trust_all_hashes") {
+						t.Errorf("expected diagnostic about trust_all_hashes, got:\n%s", gotErr)
+					}
+					return
+				}
+				if diags.HasErrors() {
+					t.Fatalf("unexpected diagnostics: %s", diags.Err().Error())
+				}
+
+				gotMethods := got.ProviderInstallation[0].Methods
+				if len(gotMethods) != 1 {
+					t.Fatalf("wrong number of provider installation methods %d; want 1", len(gotMethods))
+				}
+				gotMethod := gotMethods[0]
+				if _, ok := gotMethod.Location.(ProviderInstallationNetworkMirror); !ok {
+					t.Fatalf("wrong location type %T; want ProviderInstallationNetworkMirror", gotMethod.Location)
+				}
+				if gotMethod.Include != nil || gotMethod.Exclude != nil {
+					t.Errorf("unexpected include/exclude: %v / %v", gotMethod.Include, gotMethod.Exclude)
+				}
+				if r, ok := gotMethod.Retries(); r != 0 || ok {
+					t.Errorf("unexpected retries: got (%d, %t); want (0, false) [download_retry_count is not set by this test]", r, ok)
+				}
+				if gotMethod.Trusted == nil {
+					t.Fatalf("Trusted must be set for network_mirror methods, even when the argument is omitted")
+				}
+				if gotTrusted := gotMethod.Trusted(); gotTrusted != tt.wantTrusted {
+					t.Errorf("wrong Trusted result: got %t; want %t", gotTrusted, tt.wantTrusted)
+				}
+			})
+		}
 	}
 }
 

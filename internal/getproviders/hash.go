@@ -303,6 +303,11 @@ func HashesMatchingPackage(loc PackageLocation, toTest []Hash) iter.Seq2[Hash, e
 // format. If PreferredHash returns a non-empty string then it will be one
 // of the hash strings in "given", and that hash is the one that must pass
 // verification in order for a package to be considered valid.
+//
+// In practice, this function is used in a variety of locations with a broader
+// goal in mind. It is used to filter out any hashes that Ghoten does not
+// currently recognise. If this function is ever heavily modified, all call
+// sites should be checked carefully.
 func PreferredHashes(given []Hash) []Hash {
 	// For now this is just filtering for the two hash formats we support,
 	// both of which are considered equally "preferred". If we introduce
@@ -520,6 +525,15 @@ type HashDisposition struct {
 	// set by a source that interacts with any sort of "mirror".
 	ReportedByRegistry bool
 
+	// ReportedByTrustedMirror is set if this hash was reported by an
+	// explicitly-trusted mirror source (network_mirror with
+	// "trust_all_hashes"). Such a hash has not been verified locally and was
+	// not covered by any GPG signing key unless SignedByGPGKeyIDs is also
+	// set; it is trusted only because the user opted into trusting that
+	// mirror. Like ReportedByRegistry, it is not set by a source that merely
+	// passed the hash through without interpreting it.
+	ReportedByTrustedMirror bool
+
 	// VerifiedLocally is set for any hash that was calculated locally,
 	// directly from a package for the provider that the hash is intended
 	// to verify.
@@ -578,6 +592,7 @@ func MergeHashDisposition(a, b *HashDisposition) *HashDisposition {
 		}
 	}
 	ret.ReportedByRegistry = a.ReportedByRegistry || b.ReportedByRegistry
+	ret.ReportedByTrustedMirror = a.ReportedByTrustedMirror || b.ReportedByTrustedMirror
 	ret.VerifiedLocally = a.VerifiedLocally || b.VerifiedLocally
 	return ret
 }
@@ -618,6 +633,15 @@ func (ds HashDispositions) AllGPGSigningKeysString() string {
 func (ds HashDispositions) HasAnyReportedByRegistry() bool {
 	for _, disp := range ds {
 		if disp.ReportedByRegistry {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds HashDispositions) HasAnyReportedByTrustedMirror() bool {
+	for _, disp := range ds {
+		if disp.ReportedByTrustedMirror {
 			return true
 		}
 	}

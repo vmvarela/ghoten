@@ -74,6 +74,29 @@ func TestPackageAuthenticationResult(t *testing.T) {
 			"signing skipped",
 			"", false, true,
 		},
+		"ReportedByTrustedMirror": {
+			&PackageAuthenticationResult{
+				hashes: HashDispositions{
+					Hash("test:placeholder"): {
+						ReportedByTrustedMirror: true,
+					},
+				},
+			},
+			"signing skipped",
+			"", false, true,
+		},
+		"ReportedByTrustedMirror+VerifiedLocally": {
+			&PackageAuthenticationResult{
+				hashes: HashDispositions{
+					Hash("test:placeholder"): {
+						ReportedByTrustedMirror: true,
+						VerifiedLocally:         true,
+					},
+				},
+			},
+			"verified checksum",
+			"", false, true,
+		},
 		"SignedByGPGKeyIDs+VerifiedLocally": {
 			&PackageAuthenticationResult{
 				hashes: HashDispositions{
@@ -223,15 +246,52 @@ func TestPackageHashAuthentication_success(t *testing.T) {
 		Hash("h1:qjsREM4DqEWECD43FcPqddZ9oxCG+IaMTxvWPciS05g="),
 	}
 
-	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes)
-	result, err := auth.AuthenticatePackage(location)
-	if err != nil {
-		t.Fatalf("unexpected error: %s", err)
-	}
+	t.Run("single hash untrusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, false)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
 
-	if got, want := result.String(), "verified checksum"; got != want {
-		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
-	}
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+	})
+
+	// Add bogus hash reported by the source
+	wantHashes = append(wantHashes, Hash("zh:reportedhashvalue"))
+
+	t.Run("multiple hashes untrusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, false)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+
+		if len(result.hashes) != 1 {
+			t.Errorf("expected 1 hash, got %d hashes", len(result.hashes))
+		}
+	})
+
+	t.Run("multiple hashes trusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, true)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+
+		if len(result.hashes) != 2 {
+			t.Errorf("expected 2 hash, got %d hashes", len(result.hashes))
+		}
+	})
 }
 
 // Package has authentication can fail for various reasons.
@@ -258,7 +318,7 @@ func TestPackageHashAuthentication_failure(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Invalid expected hash, either because we'll error before we
 			// reach it, or we want to force a checksum mismatch.
-			auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{"h1:invalid"})
+			auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{"h1:invalid"}, false)
 			result, err := auth.AuthenticatePackage(test.location)
 
 			if result != nil {
@@ -268,6 +328,82 @@ func TestPackageHashAuthentication_failure(t *testing.T) {
 				t.Errorf("wrong err: got %q, want %q", gotErr, test.err)
 			}
 		})
+	}
+}
+
+// Trusting a mirror does not bypass verification: if none of the reported
+// hashes match the local package, authentication still fails.
+func TestPackageHashAuthentication_trustedButNoMatchingHash(t *testing.T) {
+	location := PackageLocalDir(filepath.FromSlash("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/2.0.0/linux_amd64"))
+
+	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{
+		Hash("h1:notthematch"),
+		Hash("h1:stillnotthething"),
+	}, true)
+	result, err := auth.AuthenticatePackage(location)
+
+	if result != nil {
+		t.Errorf("wrong result: got %#v, want nil", result)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got, want := err.Error(), "provider package doesn't match the any of the expected checksums"; got != want {
+		t.Errorf("wrong err: got %q, wanted %q", got, want)
+	}
+}
+
+// With trust_all_hashes enabled a mirror source records the verified hash as
+// VerifiedLocally and every additional reported hash as ReportedByTrustedMirror.
+// Only the verified hash is locally proven; the remaining hashes are eligible
+// for the dependency lock file only via the "signing skipped" reporting path,
+// which carries no GPG signing key information.
+func TestPackageHashAuthentication_trustedDispositions(t *testing.T) {
+	location := PackageLocalDir(filepath.FromSlash("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/2.0.0/linux_amd64"))
+	validHash := Hash("h1:qjsREM4DqEWECD43FcPqddZ9oxCG+IaMTxvWPciS05g=")
+	reportedHash := Hash("zh:reportedhashvalue")
+
+	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{validHash, reportedHash}, true)
+	result, err := auth.AuthenticatePackage(location)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Even though some hashes were only reported, the locally-verified
+	// checksum dominates the summary.
+	if got, want := result.String(), "verified checksum"; got != want {
+		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+	}
+
+	wantVerified := []Hash{validHash}
+	gotVerified := slices.Collect(result.HashesWithDisposition(func(disp *HashDisposition) bool {
+		return disp.VerifiedLocally
+	}))
+	if diff := cmp.Diff(wantVerified, gotVerified); diff != "" {
+		t.Errorf("wrong locally-verified hashes\n%s", diff)
+	}
+
+	wantReported := []Hash{reportedHash}
+	gotReported := slices.Collect(result.HashesWithDisposition(func(disp *HashDisposition) bool {
+		return disp.ReportedByTrustedMirror
+	}))
+	if diff := cmp.Diff(wantReported, gotReported); diff != "" {
+		t.Errorf("wrong trusted-mirror-reported hashes\n%s", diff)
+	}
+
+	// Lockfile eligibility: signing is skipped for the reported hashes
+	// (comparable to registry-reported hashes), and no signing key
+	// information is implied by the trusted-mirror path itself.
+	if result.Signed() {
+		t.Errorf("wrong Signed result: got true, want false")
+	}
+	if got, want := result.SigningSkipped(), true; got != want {
+		t.Errorf("wrong SigningSkipped result\ngot:  %t\nwant: %t", got, want)
+	}
+	for _, disp := range result.hashes {
+		if disp.SignedByAnyGPGKeys() {
+			t.Errorf("trusted-mirror hash should not claim GPG signatures, got %v", disp.GPGSigningKeysString())
+		}
 	}
 }
 

@@ -115,6 +115,15 @@ func TestMergeHashDisposition(t *testing.T) {
 				ReportedByRegistry: true,
 			},
 		},
+		"empty with ReportedByTrustedMirror": {
+			a: &HashDisposition{
+				ReportedByTrustedMirror: true,
+			},
+			b: &HashDisposition{},
+			want: &HashDisposition{
+				ReportedByTrustedMirror: true,
+			},
+		},
 		"empty with one GPG key": {
 			a: &HashDisposition{
 				SignedByGPGKeyIDs: collections.NewSet("abc123"),
@@ -181,6 +190,29 @@ func TestMergeHashDisposition(t *testing.T) {
 				SignedByGPGKeyIDs:  collections.NewSet("def456", "ghi789"),
 				ReportedByRegistry: true,
 				VerifiedLocally:    true,
+			},
+		},
+		"ReportedByTrustedMirror with VerifiedLocally": {
+			a: &HashDisposition{
+				ReportedByTrustedMirror: true,
+			},
+			b: &HashDisposition{
+				VerifiedLocally: true,
+			},
+			want: &HashDisposition{
+				ReportedByTrustedMirror: true,
+				VerifiedLocally:         true,
+			},
+		},
+		"ReportedByTrustedMirror with itself": {
+			a: &HashDisposition{
+				ReportedByTrustedMirror: true,
+			},
+			b: &HashDisposition{
+				ReportedByTrustedMirror: true,
+			},
+			want: &HashDisposition{
+				ReportedByTrustedMirror: true,
 			},
 		},
 	}

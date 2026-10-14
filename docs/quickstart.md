@@ -84,6 +84,31 @@ terraform {
 
 `lock_ttl` avoids manual cleanup after crashed jobs, and `max_versions` keeps history without unbounded growth.
 
+## Provider mirrors and checksum trust
+
+If you use a `network_mirror` in your `.tofurc` file, `ghoten` accepts hashes the mirror reports for the platform you are installing from, but by default it ignores anything else the mirror reports. If your teams install the same configuration on multiple platforms, you can opt in to the mirror's hashes for all platforms:
+
+```hcl
+provider_installation {
+  network_mirror {
+    url              = "https://mirrors.example.com/"
+    trust_all_hashes = true
+  }
+}
+```
+
+`trust_all_hashes` defaults to `false`. With it enabled, the lock file also gains hashes the mirror reports for other platforms — useful because mirrors can serve packages for platforms the current machine never installs from. Use it only for mirrors you control or explicitly trust: a compromised or mistyped mirror can report hashes for every platform it serves.
+
+Different lock file hashes have different grounds for trust, and it helps to keep them apart:
+
+- **Reported**: supplied by the origin registry or, with `trust_all_hashes = true`, by the network mirror. A reported hash alone does not establish local verification or a publisher signature.
+- **Verified**: calculated by `ghoten` directly from the downloaded package.
+- **Signed**: a hash covered by a GPG signature from a signing key reported by the provider's origin registry.
+
+`ghoten` verifies the downloaded package against its matching hash. Hashes reported for other platforms by a trusted mirror are not checked against those packages on your machine, and they are not publisher signatures. Enabling `trust_all_hashes` opts into trusting those reports; it does not create or verify a GPG signature.
+
+`GHOTEN_ENFORCE_GPG_VALIDATION` controls origin-registry signature policy and which newly reported hashes are eligible for inclusion in the lock file; it does not make `network_mirror` downloads require a GPG signature. When GPG signing is required, mirror-only hash reports are excluded from the lock file, while the hash verified against the package you downloaded can still be recorded. This setting does not remove hashes already present in the lock file.
+
 ## Next steps
 
 - For CI pipelines, continue with [GitHub Action guide](github-action.md).
