@@ -1,7 +1,7 @@
 name: "\U0001F41B Bug Report"
 description: Report a bug or unexpected behaviour in Ghoten.
 title: "[Bug]: "
-labels: ["type:bug"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:

@@ -6,35 +6,37 @@ template: |
   $CHANGES
 
   **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+autolabeler:
+  - label: "enhancement"
+    title:
+      - "/^feat(\\(.+\\))?:/i"
+  - label: "bug"
+    title:
+      - "/^fix(\\(.+\\))?:/i"
+  - label: "documentation"
+    title:
+      - "/^docs(\\(.+\\))?:/i"
+
 categories:
   - title: "🚀 Features"
     labels:
-      - "type:feature"
+      - "enhancement"
   - title: "🐛 Bug Fixes"
     labels:
-      - "type:bug"
-  - title: "🧰 Maintenance"
-    labels:
-      - "type:chore"
-      - "tech-debt"
+      - "bug"
   - title: "📝 Documentation"
     labels:
-      - "type:docs"
-  - title: "🔬 Spikes & Research"
+      - "documentation"
+  - title: "⬆️ Dependency Updates"
     labels:
-      - "type:spike"
+      - "dependencies"
+
 change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
-change-title-escapes: '\\<*_&'
+change-title-escapes: '\<*_&'
+
 version-resolver:
-  major:
-    labels:
-      - "type:breaking"
   minor:
-    labels: []
-  patch:
     labels:
-      - "type:feature"
-      - "type:bug"
-      - "type:chore"
-      - "type:docs"
+      - "enhancement"
   default: patch

@@ -20,5 +20,4 @@ jobs:
           stale-issue-label: "stale"
           days-before-stale: 30
           days-before-close: -1
-          exempt-issue-labels: "status:in-progress,status:blocked,mvp,priority:critical,priority:high"
           exempt-milestones: true

@@ -1,7 +1,7 @@
 name: "\U0001F680 Feature Request"
 description: Suggest a new feature or improvement for Ghoten.
 title: "[Feature]: "
-labels: ["type:feature"]
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
