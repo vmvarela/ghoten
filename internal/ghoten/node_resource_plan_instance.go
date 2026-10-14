@@ -128,6 +128,7 @@ func (n *NodePlannableResourceInstance) evaluatedSmartRefreshFingerprint(ctx con
 		n.ResolvedProvider.ProviderConfig,
 		n.ResolvedProviderKey,
 		providerFingerprint,
+		n.SchemaVersion,
 		n.Dependencies,
 	)
 	if err != nil {
