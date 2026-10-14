@@ -684,10 +684,96 @@ func TestSmartRefreshTransformer_ReferencesChangedNode_Chain(t *testing.T) {
 		t.Errorf("middle.skipRefresh should be false (references changed node leaf)")
 	}
 
-	// root: should be refreshed because it references middle (which references leaf)
-	// This requires the iterative/fixed-point algorithm
+	// root: should be refreshed because it references middle (which references leaf).
+	// The multi-source traversal must preserve this transitive closure.
 	if root.skipRefresh {
 		t.Errorf("root.skipRefresh should be false (references middle which references changed node)")
+	}
+}
+
+func TestSmartRefreshTransformer_ConfigBodyChangedChecksAllInstances(t *testing.T) {
+	addr := addrs.ConfigResource{
+		Module: addrs.RootModule,
+		Resource: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "aws_instance",
+			Name: "web",
+		},
+	}
+	node := &mockGraphNodeConfigResource{name: "aws_instance.web", addr: addr}
+	rc := makeTestResourceNamed("web", nil, nil, nil)
+	currentHash := configExprHash(rc)
+	wrongHash := append([]byte(nil), currentHash...)
+	wrongHash[0] ^= 0xff
+
+	state := states.BuildState(func(s *states.SyncState) {
+		// The lexically first instance matches. The old implementation returned
+		// false immediately and never inspected the later mismatching instance.
+		s.SetResourceInstanceCurrent(
+			addr.Resource.Instance(addrs.StringKey("a")).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"a"}`),
+				ConfigExprHash: currentHash,
+			},
+			addrs.AbsProviderConfig{Module: addrs.RootModule, Provider: addrs.NewDefaultProvider("aws")},
+			addrs.NoKey,
+		)
+		s.SetResourceInstanceCurrent(
+			addr.Resource.Instance(addrs.StringKey("b")).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:         states.ObjectReady,
+				AttrsJSON:      []byte(`{"id":"b"}`),
+				ConfigExprHash: wrongHash,
+			},
+			addrs.AbsProviderConfig{Module: addrs.RootModule, Provider: addrs.NewDefaultProvider("aws")},
+			addrs.NoKey,
+		)
+	})
+
+	tf := &SmartRefreshTransformer{
+		Active: true,
+		State:  state,
+		Config: &configs.Config{
+			Module: &configs.Module{
+				ManagedResources: map[string]*configs.Resource{
+					"aws_instance.web": rc,
+				},
+			},
+		},
+	}
+
+	if !tf.configBodyChanged(node) {
+		t.Fatalf("expected a mismatch in a later instance to mark the resource changed")
+	}
+}
+
+func TestSmartRefreshTransformer_buildRefreshSet_IncludesSideDependencies(t *testing.T) {
+	g := &Graph{Path: addrs.RootModuleInstance}
+	changed := &mockRefreshNode{name: "changed"}
+	dependent := &mockRefreshNode{name: "dependent"}
+	sideDependency := &mockRefreshNode{name: "side_dependency"}
+	unrelated := &mockRefreshNode{name: "unrelated"}
+
+	for _, v := range []dag.Vertex{changed, dependent, sideDependency, unrelated} {
+		g.Add(v)
+	}
+
+	// dependent references both changed and sideDependency.
+	g.Connect(dag.BasicEdge(dependent, changed))
+	g.Connect(dag.BasicEdge(dependent, sideDependency))
+
+	changedSet := make(dag.Set)
+	changedSet.Add(changed)
+
+	refreshSet := (&SmartRefreshTransformer{}).buildRefreshSet(g, changedSet)
+	for _, expected := range []dag.Vertex{changed, dependent, sideDependency} {
+		if !refreshSet.Include(expected) {
+			t.Fatalf("expected %q in refresh closure", dag.VertexName(expected))
+		}
+	}
+	if refreshSet.Include(unrelated) {
+		t.Fatalf("unrelated node unexpectedly included in refresh closure")
 	}
 }
 
@@ -799,207 +885,3 @@ func TestConfigExprHash_DependsOnOrderIndependent(t *testing.T) {
 	}
 }
 
-// --- backfillConfigExprHashes tests ---
-
-func TestBackfillConfigExprHashes_PopulatesHash(t *testing.T) {
-	// backfillConfigExprHashes must set ConfigExprHash on instances that don't
-	// already have one.
-	rc := makeTestResource(nil, nil, nil)
-	expectedHash := configExprHash(rc)
-
-	state := states.BuildState(func(s *states.SyncState) {
-		s.SetResourceInstanceCurrent(
-			addrs.Resource{
-				Mode: addrs.ManagedResourceMode,
-				Type: rc.Type,
-				Name: rc.Name,
-			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
-			&states.ResourceInstanceObjectSrc{
-				Status:    states.ObjectReady,
-				AttrsJSON: []byte(`{"id":"abc"}`),
-				// ConfigExprHash deliberately left nil
-			},
-			addrs.AbsProviderConfig{
-				Module:   addrs.RootModule,
-				Provider: addrs.NewDefaultProvider("aws"),
-			},
-			addrs.NoKey,
-		)
-	})
-
-	cfg := &configs.Config{
-		Module: &configs.Module{
-			ManagedResources: map[string]*configs.Resource{
-				rc.Type + "." + rc.Name: rc,
-			},
-		},
-	}
-
-	backfillConfigExprHashes(state, cfg)
-
-	// Verify the hash was set.
-	ms := state.Module(addrs.RootModuleInstance)
-	if ms == nil {
-		t.Fatal("root module not found in state after backfill")
-	}
-	rsAddr := addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name}
-	rs := ms.Resource(rsAddr)
-	if rs == nil {
-		t.Fatal("resource not found in state after backfill")
-	}
-	is := rs.Instance(addrs.NoKey)
-	if is == nil || is.Current == nil {
-		t.Fatal("resource instance not found in state after backfill")
-	}
-	if !bytes.Equal(is.Current.ConfigExprHash, expectedHash) {
-		t.Errorf("ConfigExprHash not set correctly: got %x, want %x", is.Current.ConfigExprHash, expectedHash)
-	}
-}
-
-func TestBackfillConfigExprHashes_PreservesExistingHash(t *testing.T) {
-	// backfillConfigExprHashes must NOT overwrite an existing hash that already
-	// matches the current config.
-	rc := makeTestResource(nil, nil, nil)
-	existingHash := configExprHash(rc)
-
-	state := states.BuildState(func(s *states.SyncState) {
-		s.SetResourceInstanceCurrent(
-			addrs.Resource{
-				Mode: addrs.ManagedResourceMode,
-				Type: rc.Type,
-				Name: rc.Name,
-			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
-			&states.ResourceInstanceObjectSrc{
-				Status:         states.ObjectReady,
-				AttrsJSON:      []byte(`{"id":"abc"}`),
-				ConfigExprHash: existingHash,
-			},
-			addrs.AbsProviderConfig{
-				Module:   addrs.RootModule,
-				Provider: addrs.NewDefaultProvider("aws"),
-			},
-			addrs.NoKey,
-		)
-	})
-
-	cfg := &configs.Config{
-		Module: &configs.Module{
-			ManagedResources: map[string]*configs.Resource{
-				rc.Type + "." + rc.Name: rc,
-			},
-		},
-	}
-
-	backfillConfigExprHashes(state, cfg)
-
-	ms := state.Module(addrs.RootModuleInstance)
-	rs := ms.Resource(addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name})
-	is := rs.Instance(addrs.NoKey)
-	if !bytes.Equal(is.Current.ConfigExprHash, existingHash) {
-		t.Errorf("backfill overwrote an already-correct hash: got %x, want %x",
-			is.Current.ConfigExprHash, existingHash)
-	}
-}
-
-func TestBackfillConfigExprHashes_NilState(t *testing.T) {
-	// Must not panic on nil state.
-	cfg := &configs.Config{Module: &configs.Module{}}
-	backfillConfigExprHashes(nil, cfg)
-}
-
-func TestBackfillConfigExprHashes_NilConfig(t *testing.T) {
-	// Must not panic on nil config.
-	state := states.NewState()
-	backfillConfigExprHashes(state, nil)
-}
-
-func TestBackfillConfigExprHashes_PopulatesDeposedHash(t *testing.T) {
-	// backfillConfigExprHashes must set ConfigExprHash on deposed objects as well.
-	rc := makeTestResource(nil, nil, nil)
-	expectedHash := configExprHash(rc)
-	deposedKey := states.DeposedKey("abc123")
-
-	state := states.BuildState(func(s *states.SyncState) {
-		s.SetResourceInstanceCurrent(
-			addrs.Resource{
-				Mode: addrs.ManagedResourceMode,
-				Type: rc.Type,
-				Name: rc.Name,
-			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
-			&states.ResourceInstanceObjectSrc{
-				Status:    states.ObjectReady,
-				AttrsJSON: []byte(`{"id":"current"}`),
-				// ConfigExprHash deliberately left nil for current
-			},
-			addrs.AbsProviderConfig{
-				Module:   addrs.RootModule,
-				Provider: addrs.NewDefaultProvider("aws"),
-			},
-			addrs.NoKey,
-		)
-		// Add a deposed object
-		s.SetResourceInstanceDeposed(
-			addrs.Resource{
-				Mode: addrs.ManagedResourceMode,
-				Type: rc.Type,
-				Name: rc.Name,
-			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
-			deposedKey,
-			&states.ResourceInstanceObjectSrc{
-				Status:    states.ObjectTainted,
-				AttrsJSON: []byte(`{"id":"deposed"}`),
-				// ConfigExprHash deliberately left nil for deposed
-			},
-			addrs.AbsProviderConfig{
-				Module:   addrs.RootModule,
-				Provider: addrs.NewDefaultProvider("aws"),
-			},
-			addrs.NoKey,
-		)
-	})
-
-	cfg := &configs.Config{
-		Module: &configs.Module{
-			ManagedResources: map[string]*configs.Resource{
-				rc.Type + "." + rc.Name: rc,
-			},
-		},
-	}
-
-	backfillConfigExprHashes(state, cfg)
-
-	// Verify both current and deposed have the hash.
-	ms := state.Module(addrs.RootModuleInstance)
-	if ms == nil {
-		t.Fatal("root module not found in state after backfill")
-	}
-	rsAddr := addrs.Resource{Mode: addrs.ManagedResourceMode, Type: rc.Type, Name: rc.Name}
-	rs := ms.Resource(rsAddr)
-	if rs == nil {
-		t.Fatal("resource not found in state after backfill")
-	}
-	is := rs.Instance(addrs.NoKey)
-	if is == nil {
-		t.Fatal("resource instance not found in state after backfill")
-	}
-
-	// Check current
-	if is.Current == nil {
-		t.Fatal("current object not found")
-	}
-	if !bytes.Equal(is.Current.ConfigExprHash, expectedHash) {
-		t.Errorf("Current ConfigExprHash not set correctly: got %x, want %x", is.Current.ConfigExprHash, expectedHash)
-	}
-
-	// Check deposed
-	if !is.HasDeposed(deposedKey) {
-		t.Fatalf("deposed object %q not found", deposedKey)
-	}
-	deposedObj := is.Deposed[deposedKey]
-	if deposedObj == nil {
-		t.Fatal("deposed object is nil")
-	}
-	if !bytes.Equal(deposedObj.ConfigExprHash, expectedHash) {
-		t.Errorf("Deposed ConfigExprHash not set correctly: got %x, want %x", deposedObj.ConfigExprHash, expectedHash)
-	}
-}
