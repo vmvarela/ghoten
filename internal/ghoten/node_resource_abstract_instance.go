@@ -162,6 +162,10 @@ func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx cont
 	if configDiags.HasErrors() {
 		return nil, diags
 	}
+	if smartRefreshSchemaContainsPersistUnsafeValue(n.Schema, configVal) {
+		log.Printf("[DEBUG] SmartRefresh: refusing to persist a fingerprint derived from sensitive, ephemeral, or write-only config for %s", n.Addr)
+		return nil, diags
+	}
 
 	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
 	fingerprint, err := smartRefreshInstanceFingerprint(
