@@ -6,9 +6,14 @@
 package initwd
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +30,8 @@ import (
 	"github.com/vmvarela/ghoten/internal/copy"
 	"github.com/vmvarela/ghoten/internal/getmodules"
 	"github.com/vmvarela/ghoten/internal/registry"
+	"github.com/vmvarela/ghoten/internal/registry/response"
+	"github.com/vmvarela/ghoten/internal/registry/test"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 
 	_ "github.com/vmvarela/ghoten/internal/logging"
@@ -586,7 +593,7 @@ func TestLoaderInstallModules_registry(t *testing.T) {
 	if _, ok := inst.registryPackageVersions[packageAddr]; !ok {
 		t.Errorf("module versions cache was not populated\ngot: %s\nwant: key hashicorp/module-installer-acctest/aws", spew.Sdump(inst.registryPackageVersions))
 	}
-	if _, ok := inst.registryPackageSources[moduleVersion{module: packageAddr, version: "0.0.1"}]; !ok {
+	if _, ok := inst.registryPackageSources[moduleVersion{module: packageAddr, version: "0.0.1", subdir: ""}]; !ok {
 		t.Errorf("module download url cache was not populated\ngot: %s", spew.Sdump(inst.registryPackageSources))
 	}
 
@@ -882,7 +889,7 @@ func TestLoadInstallModules_registryFromTest(t *testing.T) {
 	if _, ok := inst.registryPackageVersions[packageAddr]; !ok {
 		t.Errorf("module versions cache was not populated\ngot: %s\nwant: key hashicorp/module-installer-acctest/aws", spew.Sdump(inst.registryPackageVersions))
 	}
-	if _, ok := inst.registryPackageSources[moduleVersion{module: packageAddr, version: "0.0.1"}]; !ok {
+	if _, ok := inst.registryPackageSources[moduleVersion{module: packageAddr, version: "0.0.1", subdir: ""}]; !ok {
 		t.Errorf("module download url cache was not populated\ngot: %s", spew.Sdump(inst.registryPackageSources))
 	}
 
@@ -1124,4 +1131,177 @@ func assertResultDeepEqual(t *testing.T, got, want any) bool {
 		return true
 	}
 	return false
+}
+
+// TestLoaderInstallModules_registryLocationCacheKeysBySubdir verifies that
+// locations cached from the registry are keyed by the requested subdirectory
+// and that each module call therefore installs its own subdirectory's
+// contents, even for the same package and version. It runs against both
+// dispatch paths: indirect locations (with the use_registry_credentials
+// property absent) and direct locations (use_registry_credentials false and
+// true).
+func TestLoaderInstallModules_registryLocationCacheKeysBySubdir(t *testing.T) {
+	t.Parallel()
+
+	// Each subdirectory of the shared package has distinct content.
+	files := map[string]string{
+		"sub_a/main.tf": "# sub_a module\n",
+		"sub_b/main.tf": "# sub_b module\n",
+	}
+
+	cases := map[string]struct {
+		// downloadResponseJSON builds the registry's response body for the
+		// version's /download endpoint, given the package URL.
+		downloadResponseJSON func(pkgURL string) string
+		wantDirect           bool
+	}{
+		"indirect location with use_registry_credentials absent": {
+			// Hand-written body: a nil UseRegistryCredentials pointer would
+			// serialize as an explicit null rather than be truly absent.
+			downloadResponseJSON: func(pkgURL string) string {
+				return fmt.Sprintf(`{"location":%q}`, pkgURL)
+			},
+			wantDirect: false,
+		},
+		"direct location with use_registry_credentials false": {
+			downloadResponseJSON: func(pkgURL string) string {
+				return fmt.Sprintf(`{"location":%q,"use_registry_credentials":false}`, pkgURL)
+			},
+			wantDirect: true,
+		},
+		"direct location with use_registry_credentials true": {
+			downloadResponseJSON: func(pkgURL string) string {
+				return fmt.Sprintf(`{"location":%q,"use_registry_credentials":true}`, pkgURL)
+			},
+			wantDirect: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// Build a zip package whose two subdirectories have distinct
+			// content. Each subtest builds its own archive so the tests stay
+			// hermetic and independent of each other.
+			var pkgBuf bytes.Buffer
+			zipWriter := zip.NewWriter(&pkgBuf)
+			for name, content := range files {
+				w, err := zipWriter.Create(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := w.Write([]byte(content)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := zipWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			downloadEndpointHits := 0
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/pkg.zip"):
+					_, _ = w.Write(pkgBuf.Bytes())
+				case strings.HasSuffix(r.URL.Path, "/versions"):
+					_ = json.NewEncoder(w).Encode(response.ModuleVersions{
+						Modules: []*response.ModuleProviderVersions{{
+							Source: "test/subdir/acctest",
+							Versions: []*response.ModuleVersion{{
+								Version: "1.0.0",
+							}},
+						}},
+					})
+				case strings.HasSuffix(r.URL.Path, "/download"):
+					downloadEndpointHits++
+					_ = json.NewEncoder(w).Encode(json.RawMessage(tc.downloadResponseJSON(server.URL + "/pkg.zip")))
+				}
+			}))
+			defer server.Close()
+
+			rootDir := t.TempDir()
+			rootMainTf := `
+module "sub_a" {
+	source  = "registry.opentofu.org/test/subdir/acctest//sub_a"
+	version = "1.0.0"
+}
+
+module "sub_b" {
+	source  = "registry.opentofu.org/test/subdir/acctest//sub_b"
+	version = "1.0.0"
+}
+`
+			if err := os.WriteFile(filepath.Join(rootDir, "main.tf"), []byte(rootMainTf), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The installer expects a (possibly empty) tests directory to exist
+			// alongside the root module.
+			if err := os.MkdirAll(filepath.Join(rootDir, "tests"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			hooks := &testInstallHooks{}
+			modulesDir := filepath.Join(rootDir, ".terraform", "modules")
+
+			loader := configload.NewLoaderForTests(t)
+			reg := registry.NewClient(t.Context(), test.Disco(server), nil)
+			fetcher := getmodules.NewPackageFetcher(t.Context(), nil)
+			inst := NewModuleInstaller(modulesDir, loader, reg, fetcher)
+			_, diags := inst.InstallModules(context.Background(), rootDir, "tests", false, false, hooks, configs.RootModuleCallForTesting())
+			assertNoDiagnostics(t, diags)
+
+			// Each subdir must have been looked up separately, despite sharing
+			// the same package and version.
+			if downloadEndpointHits != 2 {
+				t.Errorf("wrong number of registry download lookups: want 2, got %d", downloadEndpointHits)
+			}
+
+			packageAddr := addrs.ModuleRegistryPackage{
+				Host:         svchost.Hostname("registry.opentofu.org"),
+				Namespace:    "test",
+				Name:         "subdir",
+				TargetSystem: "acctest",
+			}
+			for _, subdir := range []string{"sub_a", "sub_b"} {
+				location, ok := inst.registryPackageSources[moduleVersion{module: packageAddr, version: "1.0.0", subdir: subdir}]
+				if !ok {
+					t.Errorf("module location cache has no entry for subdir %q\ngot: %s", subdir, spew.Sdump(inst.registryPackageSources))
+					continue
+				}
+				if _, isDirect := location.(registry.PackageLocationDirect); isDirect != tc.wantDirect {
+					t.Errorf("module location for subdir %q has unexpected location type %T", subdir, location)
+				}
+			}
+
+			// Install events: exactly one per module call. Checking the count
+			// first keeps the content assertions below from being vacuous when
+			// an event is missing.
+			installedAt := map[string]string{}
+			installEvents := 0
+			for _, call := range hooks.Calls {
+				if call.Name != "Install" {
+					continue
+				}
+				if call.ModuleAddr == "sub_a" || call.ModuleAddr == "sub_b" {
+					installedAt[call.ModuleAddr] = call.LocalPath
+					installEvents++
+				}
+			}
+			if installEvents != 2 {
+				t.Fatalf("expected exactly 2 install events for sub_a and sub_b, got %d\nall hook calls: %s", installEvents, spew.Sdump(hooks.Calls))
+			}
+
+			// Each installed module must contain its own subdirectory's content.
+			for _, addr := range []string{"sub_a", "sub_b"} {
+				content := files[addr+"/main.tf"]
+				targetContent, err := os.ReadFile(filepath.Join(installedAt[addr], "main.tf"))
+				if err != nil {
+					t.Fatalf("failed to read installed module %q: %v", addr, err)
+				}
+				if string(targetContent) != content {
+					t.Errorf("module %q has unexpected content: %q", addr, targetContent)
+				}
+			}
+		})
+	}
 }
