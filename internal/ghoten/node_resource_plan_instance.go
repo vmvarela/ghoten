@@ -98,47 +98,6 @@ func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
 	n.skipRefresh = v
 }
 
-func (n *NodePlannableResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext) ([]byte, tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-	if n.Config == nil || n.Schema == nil {
-		return nil, diags
-	}
-	if n.ResolvedProvider.ConfigFingerprint == nil {
-		log.Printf("[DEBUG] SmartRefresh: provider fingerprint unavailable for %s", n.Addr)
-		return nil, diags
-	}
-
-	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.ResourceAddr())
-	diags = diags.Append(forEachDiags)
-	if forEachDiags.HasErrors() {
-		return nil, diags
-	}
-
-	keyData := EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
-	configVal, _, configDiags := evalCtx.EvaluateBlock(ctx, n.Config.Config, n.Schema, nil, keyData)
-	diags = diags.Append(configDiags.InConfigBody(n.Config.Config, n.Addr.String()))
-	if configDiags.HasErrors() {
-		return nil, diags
-	}
-
-	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
-	fingerprint, err := smartRefreshInstanceFingerprint(
-		configVal,
-		n.Addr,
-		n.ResolvedProvider.ProviderConfig,
-		n.ResolvedProviderKey,
-		providerFingerprint,
-		n.SchemaVersion,
-		n.Dependencies,
-	)
-	if err != nil {
-		log.Printf("[DEBUG] SmartRefresh: cannot fingerprint %s: %s", n.Addr, err)
-		return nil, diags
-	}
-
-	return fingerprint, diags
-}
-
 // GraphNodeEvalable
 func (n *NodePlannableResourceInstance) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {
 	addr := n.ResourceInstanceAddr()
