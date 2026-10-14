@@ -57,13 +57,13 @@ func TestSmartRefreshInstanceFingerprint_IncludesProviderConfig(t *testing.T) {
 	})
 
 	fpA, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider-a"), nil,
+		config, addr, providerAddr, addrs.NoKey, []byte("provider-a"), 1, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fpB, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider-b"), nil,
+		config, addr, providerAddr, addrs.NoKey, []byte("provider-b"), 1, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -89,13 +89,13 @@ func TestSmartRefreshInstanceFingerprint_IncludesDependencies(t *testing.T) {
 	depB := addrs.RootModule.Resource(addrs.ManagedResourceMode, "test_instance", "b")
 
 	fpA, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider"), []addrs.ConfigResource{depA},
+		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fpB, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider"), []addrs.ConfigResource{depA, depB},
+		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA, depB},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +130,37 @@ func TestSmartRefreshMetadataFresh(t *testing.T) {
 	}
 }
 
+func TestSmartRefreshInstanceFingerprint_IncludesSchemaVersion(t *testing.T) {
+	addr := addrs.RootModuleInstance.ResourceInstance(
+		addrs.ManagedResourceMode, "test_instance", "example", addrs.NoKey,
+	)
+	providerAddr := addrs.AbsProviderConfig{
+		Module:   addrs.RootModule,
+		Provider: addrs.NewDefaultProvider("test"),
+	}
+	fp1, err := smartRefreshInstanceFingerprint(
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp2, err := smartRefreshInstanceFingerprint(
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 2, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(fp1, fp2) {
+		t.Fatal("schema version change did not invalidate the resource fingerprint")
+	}
+}
+
+func TestSmartRefreshValueFingerprint_RejectsUnknownValues(t *testing.T) {
+	if _, err := smartRefreshValueFingerprint(cty.UnknownVal(cty.String)); err == nil {
+		t.Fatal("unknown values must force a conservative refresh")
+	}
+}
+
 func TestSmartRefreshInstanceFingerprint_RequiresProviderFingerprint(t *testing.T) {
 	addr := addrs.RootModuleInstance.ResourceInstance(
 		addrs.ManagedResourceMode, "test_instance", "example", addrs.NoKey,
@@ -139,7 +170,7 @@ func TestSmartRefreshInstanceFingerprint_RequiresProviderFingerprint(t *testing.
 		Provider: addrs.NewDefaultProvider("test"),
 	}
 	_, err := smartRefreshInstanceFingerprint(
-		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, nil, nil,
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, nil, 1, nil,
 	)
 	if err == nil {
 		t.Fatalf("expected missing provider fingerprint to force conservative fallback")
