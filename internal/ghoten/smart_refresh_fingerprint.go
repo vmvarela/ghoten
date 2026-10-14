@@ -14,6 +14,7 @@ import (
 	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
 
 // smartRefreshMaxAge bounds how long Smart Refresh can trust a matching
@@ -24,6 +25,9 @@ const smartRefreshMaxAge = 24 * time.Hour
 func smartRefreshValueFingerprint(v cty.Value) ([]byte, error) {
 	if v == cty.NilVal {
 		return nil, fmt.Errorf("cannot fingerprint cty.NilVal")
+	}
+	if marks.ContainsAnyMark(v, marks.Sensitive, marks.Ephemeral) {
+		return nil, fmt.Errorf("cannot persist a fingerprint derived from sensitive or ephemeral values")
 	}
 
 	unmarked, _ := v.UnmarkDeep()
