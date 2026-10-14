@@ -400,10 +400,41 @@ func TestPackageHashAuthentication_trustedDispositions(t *testing.T) {
 	if got, want := result.SigningSkipped(), true; got != want {
 		t.Errorf("wrong SigningSkipped result\ngot:  %t\nwant: %t", got, want)
 	}
-	for _, disp := range result.hashes {
+	for hash, disp := range result.hashes {
 		if disp.SignedByAnyGPGKeys() {
 			t.Errorf("trusted-mirror hash should not claim GPG signatures, got %v", disp.GPGSigningKeysString())
 		}
+		if disp.VerifiedLocally {
+			// Locally-verified hashes are tagged with the authenticator's
+			// target platform.
+			if diff := cmp.Diff(collections.NewSet(Platform{"linux", "amd64"}), disp.Platforms); diff != "" {
+				t.Errorf("wrong platform association for locally-verified hash %s\n%s", hash, diff)
+			}
+		} else if len(disp.Platforms) != 0 {
+			// B1 flattens a trusted mirror's per-platform hashes into one
+			// set, so reported hashes are platformless.
+			t.Errorf("trusted-mirror-reported hash %s must be platformless, got %v", hash, disp.Platforms)
+		}
+	}
+
+	// A trusted mirror may also report an extra h1 hash (e.g. for another
+	// platform) that never matches the local package; it must be recorded
+	// as reported-only and platformless.
+	extraH1 := Hash("h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	auth = NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{validHash, reportedHash, extraH1}, true)
+	result, err = auth.AuthenticatePackage(location)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	extraDisp, ok := result.hashes[extraH1]
+	if !ok {
+		t.Fatalf("extra reported h1 hash is missing from the result")
+	}
+	if !extraDisp.ReportedByTrustedMirror || extraDisp.VerifiedLocally {
+		t.Errorf("wrong disposition for extra reported h1: %+v", extraDisp)
+	}
+	if len(extraDisp.Platforms) != 0 {
+		t.Errorf("extra reported h1 must be platformless, got %v", extraDisp.Platforms)
 	}
 }
 
@@ -429,6 +460,15 @@ func TestArchiveChecksumAuthentication_success(t *testing.T) {
 
 	if got, want := result.String(), "verified checksum"; got != want {
 		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+	}
+
+	// The locally-verified archive hash is tagged with the target platform.
+	wantDisp := &HashDisposition{
+		VerifiedLocally: true,
+		Platforms:       collections.NewSet(Platform{"linux", "amd64"}),
+	}
+	if diff := cmp.Diff(wantDisp, result.hashes[HashLegacyZipSHAFromSHA(wantSHA256Sum)]); diff != "" {
+		t.Errorf("wrong archive hash disposition\n%s", diff)
 	}
 }
 
@@ -612,8 +652,8 @@ func TestRegistryPackageAuthentication(t *testing.T) {
 			},
 		},
 		result: &PackageAuthenticationResult{hashes: HashDispositions{
-			h1: &HashDisposition{ReportedByRegistry: true},
-			zh: &HashDisposition{ReportedByRegistry: true},
+			h1: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			zh: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
 		}},
 	}, {
 		name:     "multi_platform_dispositions",
@@ -630,10 +670,31 @@ func TestRegistryPackageAuthentication(t *testing.T) {
 			},
 		},
 		result: &PackageAuthenticationResult{hashes: HashDispositions{
-			h1:      &HashDisposition{ReportedByRegistry: true},
-			zh:      &HashDisposition{ReportedByRegistry: true},
-			h1Other: &HashDisposition{ReportedByRegistry: true},
-			zhOther: &HashDisposition{ReportedByRegistry: true},
+			h1:      &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			zh:      &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			h1Other: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(Platform{"linux", "arm64"})},
+			zhOther: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(Platform{"linux", "arm64"})},
+		}},
+	}, {
+		name:     "same_hash_reported_for_multiple_platforms",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+			Platform{"linux", "arm64"}: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 100,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			// A hash reported by more than one platform keeps every
+			// platform association; it must not be attributed to only
+			// whichever platform the map iteration happens to reach last.
+			h1: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform, Platform{"linux", "arm64"})},
+			zh: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform, Platform{"linux", "arm64"})},
 		}},
 	}, {
 		name:        "missing_platform",

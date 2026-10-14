@@ -109,6 +109,14 @@ Different lock file hashes have different grounds for trust, and it helps to kee
 
 `GHOTEN_ENFORCE_GPG_VALIDATION` controls origin-registry signature policy and which newly reported hashes are eligible for inclusion in the lock file; it does not make `network_mirror` downloads require a GPG signature. When GPG signing is required, mirror-only hash reports are excluded from the lock file, while the hash verified against the package you downloaded can still be recorded. This setting does not remove hashes already present in the lock file.
 
+### Updating an existing mirror directory
+
+When `ghoten providers mirror` runs against a directory you have mirrored into before, each rebuilt version index entry starts from the local `h1` hash of the archive on disk plus the hashes admitted for that exact provider, version, and platform during this run — the hashes reported by the origin registry and the hash verified against the downloaded package. Hashes from the prior version index are carried forward per platform, and only when the prior entry's URL points to the same archive file that is now on disk; a prior entry referring to a different archive is dropped with a warning. If an existing index file is invalid, `ghoten` reports an error, leaves that file untouched, and omits the version from the main index rather than advertising an index it cannot parse.
+
+Carrying forward these hashes trusts the prior index data — as recorded by a previous run or as hand-authored — without re-verifying it against the local archive, and it is not covered by any signing key.
+
+This update is not transactional: to replace an existing archive, `ghoten` removes the old file before renaming the new download into place (required on Windows), so a rename failure leaves the mirror without the old archive. Invalid index files are never overwritten, but do not assume every failure mode preserves every byte.
+
 ## Next steps
 
 - For CI pipelines, continue with [GitHub Action guide](github-action.md).

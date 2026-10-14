@@ -215,6 +215,69 @@ func TestMergeHashDisposition(t *testing.T) {
 				ReportedByTrustedMirror: true,
 			},
 		},
+		"Platforms in one input": {
+			a: &HashDisposition{
+				Platforms: collections.NewSet(Platform{"linux", "amd64"}),
+			},
+			b: &HashDisposition{},
+			want: &HashDisposition{
+				Platforms: collections.NewSet(Platform{"linux", "amd64"}),
+			},
+		},
+		"disjoint platforms": {
+			a: &HashDisposition{
+				Platforms: collections.NewSet(Platform{"linux", "amd64"}),
+			},
+			b: &HashDisposition{
+				Platforms: collections.NewSet(Platform{"darwin", "arm64"}),
+			},
+			want: &HashDisposition{
+				Platforms: collections.NewSet(
+					Platform{"linux", "amd64"},
+					Platform{"darwin", "arm64"},
+				),
+			},
+		},
+		"overlapping platforms": {
+			a: &HashDisposition{
+				VerifiedLocally: true,
+				Platforms:       collections.NewSet(Platform{"linux", "amd64"}),
+			},
+			b: &HashDisposition{
+				VerifiedLocally: true,
+				Platforms: collections.NewSet(
+					Platform{"linux", "amd64"},
+					Platform{"darwin", "arm64"},
+				),
+			},
+			want: &HashDisposition{
+				VerifiedLocally: true,
+				Platforms: collections.NewSet(
+					Platform{"linux", "amd64"},
+					Platform{"darwin", "arm64"},
+				),
+			},
+		},
+		"conflicting dispositions with different platforms": {
+			// Conflicting flags must not panic or lose the platform
+			// association of either input.
+			a: &HashDisposition{
+				VerifiedLocally: true,
+				Platforms:       collections.NewSet(Platform{"linux", "amd64"}),
+			},
+			b: &HashDisposition{
+				ReportedByRegistry: true,
+				Platforms:          collections.NewSet(Platform{"darwin", "arm64"}),
+			},
+			want: &HashDisposition{
+				VerifiedLocally:    true,
+				ReportedByRegistry: true,
+				Platforms: collections.NewSet(
+					Platform{"linux", "amd64"},
+					Platform{"darwin", "arm64"},
+				),
+			},
+		},
 	}
 
 	for name, test := range tests {
@@ -363,6 +426,90 @@ func TestHashDispositionsMerge(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// TestHashDispositionsMergePlatformUnionProperties checks properties of the
+// platform-set union behavior that the table-driven merge tests above cannot
+// express as individual cases: associativity across three dispositions,
+// idempotence, and that merged results never alias (share storage with) the
+// input platform sets.
+func TestHashDispositionsMergePlatformUnionProperties(t *testing.T) {
+	pLinux := Platform{"linux", "amd64"}
+	pDarwin := Platform{"darwin", "arm64"}
+	pWindows := Platform{"windows", "amd64"}
+
+	// Three dispositions that would merge onto the same hash in practice:
+	// locally-verified, registry-reported, and trusted-mirror-reported.
+	a := &HashDisposition{
+		VerifiedLocally: true,
+		Platforms:       collections.NewSet(pLinux),
+	}
+	b := &HashDisposition{
+		ReportedByRegistry: true,
+		Platforms:          collections.NewSet(pLinux, pDarwin),
+	}
+	c := &HashDisposition{
+		ReportedByTrustedMirror: true,
+		Platforms:               collections.NewSet(pDarwin, pWindows),
+	}
+
+	want := &HashDisposition{
+		VerifiedLocally:         true,
+		ReportedByRegistry:      true,
+		ReportedByTrustedMirror: true,
+		Platforms:               collections.NewSet(pLinux, pDarwin, pWindows),
+	}
+
+	// Associativity and commutativity: any grouping or ordering of the
+	// three-way merge yields the same result.
+	variants := []*HashDisposition{
+		MergeHashDisposition(MergeHashDisposition(a, b), c),
+		MergeHashDisposition(a, MergeHashDisposition(b, c)),
+		MergeHashDisposition(MergeHashDisposition(b, c), a),
+		MergeHashDisposition(MergeHashDisposition(c, a), b),
+		MergeHashDisposition(MergeHashDisposition(c, b), a),
+		MergeHashDisposition(MergeHashDisposition(a, c), b),
+	}
+	for i, got := range variants {
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("three-way merge variant %d produced a different result\n%s", i, diff)
+		}
+	}
+
+	// Idempotence: merging again with any input adds nothing new.
+	idempotent := MergeHashDisposition(MergeHashDisposition(a, b), c)
+	for _, extra := range []*HashDisposition{a, b, c} {
+		idempotent = MergeHashDisposition(idempotent, extra)
+	}
+	if diff := cmp.Diff(want, idempotent); diff != "" {
+		t.Errorf("repeated merges changed the result\n%s", diff)
+	}
+
+	// No aliasing: the merged result must not share storage with the
+	// inputs, so later mutation of an input set cannot leak into the
+	// merged result (and vice versa).
+	preMergeA := MergeHashDisposition(a, b)
+	a.Platforms[pWindows] = struct{}{} // mutate a's set after merging
+	if preMergeA.Platforms.Has(pWindows) {
+		t.Errorf("merged result aliases an input platform set")
+	}
+	a.Platforms = collections.NewSet(pLinux) // restore for later use
+	b.Platforms = collections.NewSet(pLinux, pDarwin)
+
+	// Merged into a disposition map, the result set must also be
+	// independent of the input disposition's set.
+	result, err := PackageAuthenticationAll(
+		&mockAuthentication{hashes: HashDispositions{Hash("test:a"): a}},
+		&mockAuthentication{hashes: HashDispositions{Hash("test:a"): b}},
+	).AuthenticatePackage(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	gotDisp := result.hashes[Hash("test:a")]
+	a.Platforms[pWindows] = struct{}{} // mutate an input after the merge
+	if diff := cmp.Diff(collections.NewSet(pLinux, pDarwin), gotDisp.Platforms); diff != "" {
+		t.Errorf("platform set is aliased with a merge input\n%s", diff)
 	}
 }
 

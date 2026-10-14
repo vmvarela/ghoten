@@ -26,6 +26,7 @@ import (
 	"github.com/opentofu/svchost/disco"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/collections"
 	"github.com/vmvarela/ghoten/internal/depsfile"
 	"github.com/vmvarela/ghoten/internal/getproviders"
 )
@@ -332,6 +333,7 @@ func TestEnsureProviderVersions(t *testing.T) {
 								beepProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
 									beepProviderZipHash: {
 										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
 									},
 								}),
 							},
@@ -467,6 +469,7 @@ func TestEnsureProviderVersions(t *testing.T) {
 								defaultRegistryProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
 									beepProviderZipHash: {
 										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
 									},
 									unrelatedHash: {
 										ReportedByTrustedMirror: true,
@@ -600,6 +603,7 @@ func TestEnsureProviderVersions(t *testing.T) {
 								beepProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
 									beepProviderZipHash: {
 										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
 									},
 									unrelatedHash: {
 										ReportedByTrustedMirror: true,

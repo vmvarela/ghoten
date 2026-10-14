@@ -544,6 +544,17 @@ type HashDisposition struct {
 	// unless the provider developer's signing key also appears in
 	// SignedByGPGKeyIDs.
 	VerifiedLocally bool
+
+	// Platforms is the set of target platforms the associated hash is
+	// actually associated with: the target platform of a locally-verified
+	// archive, or the platform(s) for which the origin registry reported
+	// the hash. A single hash (typically an "h1" content hash) can be
+	// valid for multiple platforms at once.
+	//
+	// An empty (or nil) set means that the hash is not tied to any
+	// specific platform, such as the hashes a trusted mirror reports in a
+	// single flattened set covering all platforms of a provider release.
+	Platforms collections.Set[Platform]
 }
 
 // SignedByAnyGPGKeys returns true if the reciever has at least one GPG key
@@ -577,6 +588,24 @@ func (d HashDisposition) GPGSigningKeysString() string {
 	return strings.Join(keyIDs, ", ")
 }
 
+// unionPlatformSets returns the union of the two given platform sets, or
+// nil if both are empty. The result never shares storage with either input,
+// so later mutation of the union cannot affect the inputs.
+func unionPlatformSets(a, b collections.Set[Platform]) collections.Set[Platform] {
+	total := len(a) + len(b)
+	if total == 0 {
+		return nil
+	}
+	set := make(collections.Set[Platform], total)
+	for platform := range a {
+		set[platform] = struct{}{}
+	}
+	for platform := range b {
+		set[platform] = struct{}{}
+	}
+	return set
+}
+
 // MergeHashDisposition takes two [HashDisposition] objects and returns a
 // new object that represents the union of the information from both.
 func MergeHashDisposition(a, b *HashDisposition) *HashDisposition {
@@ -591,6 +620,7 @@ func MergeHashDisposition(a, b *HashDisposition) *HashDisposition {
 			ret.SignedByGPGKeyIDs[key] = struct{}{}
 		}
 	}
+	ret.Platforms = unionPlatformSets(a.Platforms, b.Platforms)
 	ret.ReportedByRegistry = a.ReportedByRegistry || b.ReportedByRegistry
 	ret.ReportedByTrustedMirror = a.ReportedByTrustedMirror || b.ReportedByTrustedMirror
 	ret.VerifiedLocally = a.VerifiedLocally || b.VerifiedLocally

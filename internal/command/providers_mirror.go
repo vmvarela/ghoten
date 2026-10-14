@@ -6,11 +6,17 @@
 package command
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 
 	"github.com/apparentlymart/go-versions/versions"
 	"github.com/hashicorp/go-getter"
@@ -139,6 +145,13 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 	//   that the configuration requires. This is a command intended to be run
 	//   infrequently to update a mirror, so it doesn't need to optimize away
 	//   fetches of packages that might already be present.
+	//
+	// trustedHashes records the hashes admitted for each exact
+	// provider/version/platform identity that was successfully installed
+	// during this run. They are merged into the JSON indexes later, so that
+	// a trusted hash never gets attributed to a neighboring version or
+	// platform.
+	trustedHashes := map[mirrorHashKey][]getproviders.Hash{}
 
 	for provider, constraints := range reqs {
 		if provider.IsBuiltIn() {
@@ -231,6 +244,7 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 				))
 				continue
 			}
+			var platformTrusted []getproviders.Hash
 			if meta.Authentication != nil {
 				result, err := meta.Authentication.AuthenticatePackage(getproviders.PackageLocalArchive(stagingPath))
 				if err != nil {
@@ -241,8 +255,23 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 					))
 					continue
 				}
+				// Collect the hashes that the authentication admits for
+				// exactly this target platform, including hashes reported
+				// by the origin registry and locally-verified hashes. We
+				// record them only after the package has been successfully
+				// placed into the mirror, below.
+				for hash := range result.HashesWithDisposition(func(d *getproviders.HashDisposition) bool {
+					isTrusted := d.VerifiedLocally || d.ReportedByRegistry || d.ReportedByTrustedMirror
+					return isTrusted && d.Platforms.Has(platform)
+				}) {
+					platformTrusted = append(platformTrusted, hash)
+				}
 				c.Ui.Output(fmt.Sprintf("  - Package authenticated: %s", result))
 			}
+			// Note that this remove-before-rename ordering means a rename
+			// failure has already deleted the prior archive: there is no
+			// transaction or rollback here. The remove-before-rename is
+			// needed on Windows, where renaming over an existing file fails.
 			os.Remove(targetPath) // okay if it fails because we're going to try to rename over it next anyway
 			err = os.Rename(stagingPath, targetPath)
 			if err != nil {
@@ -253,6 +282,13 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 				))
 				continue
 			}
+			// The new package is now in place, so its admitted hashes are
+			// trusted for exactly this provider, version, and platform.
+			trustedHashes[mirrorHashKey{
+				provider: provider.String(),
+				version:  selected.String(),
+				platform: platform.String(),
+			}] = platformTrusted
 		}
 	}
 
@@ -261,6 +297,20 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 	// by relying on the selections we made above, because we want to still
 	// include in the indices any packages that were already present and
 	// not affected by the changes we just made.
+	//
+	// Each version's index entry combines:
+	// - the local "h1" hash of the archive file present in the directory,
+	// - the trusted hashes recorded during this run for exactly that
+	//   provider/version/platform identity (including hashes reported by
+	//   the origin registry), and
+	// - the hashes from the prior index file for that version, but only for
+	//   platform entries whose URL maps to the same local archive; a prior
+	//   entry referring to a different archive file is dropped with a
+	//   warning rather than inherited.
+	//
+	// The carried-forward prior hashes are trusted local data recorded by a
+	// previous successful run (or hand-authored); they are neither re-verified
+	// against the local archive nor covered by any signing key here.
 	available, err := getproviders.SearchLocalDirectory(outputDir)
 	if err != nil {
 		diags = diags.Append(tfdiags.Sourceless(
@@ -281,61 +331,109 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 		indexDir := filepath.Dir(getproviders.PackedFilePathForPackage(
 			outputDir, provider, versions.Unspecified, getproviders.CurrentPlatform,
 		))
-		indexVersions := map[string]interface{}{}
-		indexArchives := map[getproviders.Version]map[string]interface{}{}
+		// Group the archive files by version, in deterministic order.
+		versionMetas := map[string][]getproviders.PackageMeta{}
+		var versionOrder []string
 		for _, meta := range metas {
-			archivePath, ok := meta.Location.(getproviders.PackageLocalArchive)
-			if !ok {
+			if _, ok := meta.Location.(getproviders.PackageLocalArchive); !ok {
 				// only archive files are eligible to be included in JSON
 				// indices for a network mirror.
 				continue
 			}
-			archiveFilename := filepath.Base(string(archivePath))
-			version := meta.Version
-			platform := meta.TargetPlatform
-			hash, err := meta.Hash()
+			versionStr := meta.Version.String()
+			if _, exists := versionMetas[versionStr]; !exists {
+				versionOrder = append(versionOrder, versionStr)
+			}
+			versionMetas[versionStr] = append(versionMetas[versionStr], meta)
+		}
+		sort.Strings(versionOrder)
+
+		indexVersions := map[string]interface{}{}
+		for _, versionStr := range versionOrder {
+			indexPath := filepath.Join(indexDir, versionStr+".json")
+
+			// Read the prior index, if any, so its hashes can be carried
+			// forward where they still apply. A missing file is normal.
+			prior, priorBytes, err := readMirrorVersionIndex(indexPath)
 			if err != nil {
+				// We cannot tell whether the prior hashes were valid, so we
+				// leave the file untouched rather than overwriting unknown
+				// content, and we do not advertise the version in the main
+				// index until its index file is valid again.
 				diags = diags.Append(tfdiags.Sourceless(
 					tfdiags.Error,
-					"Failed to update indexes",
-					fmt.Sprintf("Failed to determine a hash value for %s v%s on %s: %s.", provider, version, platform, err),
+					"Invalid existing version index",
+					fmt.Sprintf("Cannot update the JSON index for %s v%s because %s is not valid: %s.", provider.String(), versionStr, filepath.Base(indexPath), err),
 				))
 				continue
 			}
-			indexVersions[meta.Version.String()] = map[string]interface{}{}
-			if _, ok := indexArchives[version]; !ok {
-				indexArchives[version] = map[string]interface{}{}
+
+			// Collect the archive metas for this version by platform, in
+			// deterministic order.
+			platformMetas := make(map[string]getproviders.PackageMeta, len(versionMetas[versionStr]))
+			var platformOrder []string
+			for _, meta := range versionMetas[versionStr] {
+				platformStr := meta.TargetPlatform.String()
+				if _, exists := platformMetas[platformStr]; !exists {
+					platformOrder = append(platformOrder, platformStr)
+				}
+				platformMetas[platformStr] = meta
 			}
-			indexArchives[version][platform.String()] = map[string]interface{}{
-				"url":    archiveFilename,         // a relative URL from the index file's URL
-				"hashes": []string{hash.String()}, // an array to allow for additional hash formats in future
+			slices.Sort(platformOrder)
+
+			archiveIndex := map[string]interface{}{}
+			for _, platformStr := range platformOrder {
+				meta := platformMetas[platformStr]
+				archivePath, ok := meta.Location.(getproviders.PackageLocalArchive)
+				if !ok {
+					continue // filtered out above; resilient anyway
+				}
+				archiveFilename := filepath.Base(string(archivePath))
+
+				localHash, err := meta.Hash()
+				if err != nil {
+					diags = diags.Append(tfdiags.Sourceless(
+						tfdiags.Error,
+						"Failed to update indexes",
+						fmt.Sprintf("Failed to determine a hash value for %s v%s on %s: %s.", provider, versionStr, platformStr, err),
+					))
+					continue
+				}
+				hashes := map[getproviders.Hash]struct{}{
+					localHash: {},
+				}
+				for _, hash := range trustedHashes[mirrorHashKey{
+					provider: provider.String(),
+					version:  versionStr,
+					platform: platformStr,
+				}] {
+					hashes[hash] = struct{}{}
+				}
+				// Carry forward the prior hashes for this platform only if
+				// they referred to the same archive file identity.
+				if priorArchive, ok := prior[platformStr]; ok {
+					if priorArchive.URL == archiveFilename {
+						for _, hashStr := range priorArchive.Hashes {
+							hashes[getproviders.Hash(hashStr)] = struct{}{}
+						}
+					} else {
+						diags = diags.Append(tfdiags.Sourceless(
+							tfdiags.Warning,
+							"Ignored existing index hashes",
+							fmt.Sprintf("The existing index for %s v%s on %s refers to a different archive file (%q), so its hashes were not carried over.", provider.String(), versionStr, platformStr, priorArchive.URL),
+						))
+					}
+				}
+				hashList := make([]string, 0, len(hashes))
+				for _, hash := range slices.Sorted(maps.Keys(hashes)) {
+					hashList = append(hashList, hash.String())
+				}
+				archiveIndex[platformStr] = map[string]interface{}{
+					"url":    archiveFilename, // a relative URL from the index file's URL
+					"hashes": hashList,        // an array to allow for additional hash formats in future
+				}
 			}
-		}
-		mainIndex := map[string]interface{}{
-			"versions": indexVersions,
-		}
-		mainIndexJSON, err := json.MarshalIndent(mainIndex, "", "  ")
-		if err != nil {
-			// Should never happen because the input here is entirely under
-			// our control.
-			panic(fmt.Sprintf("failed to encode main index: %s", err))
-		}
-		// TODO: Ideally we would do these updates as atomic swap operations by
-		// creating a new file and then renaming it over the old one, in case
-		// this directory is the docroot of a live mirror. An atomic swap
-		// requires platform-specific code though: os.Rename alone can't do it
-		// when running on Windows as of Go 1.13. We should revisit this once
-		// we're supporting network mirrors, to avoid having them briefly
-		// become corrupted during updates.
-		err = os.WriteFile(filepath.Join(indexDir, "index.json"), mainIndexJSON, 0644)
-		if err != nil {
-			diags = diags.Append(tfdiags.Sourceless(
-				tfdiags.Error,
-				"Failed to update indexes",
-				fmt.Sprintf("Failed to write an updated JSON index for %s: %s.", provider, err),
-			))
-		}
-		for version, archiveIndex := range indexArchives {
+
 			versionIndex := map[string]interface{}{
 				"archives": archiveIndex,
 			}
@@ -345,12 +443,63 @@ func (c *ProvidersMirrorCommand) Run(args []string) int {
 				// our control.
 				panic(fmt.Sprintf("failed to encode version index: %s", err))
 			}
-			err = os.WriteFile(filepath.Join(indexDir, version.String()+".json"), versionIndexJSON, 0644)
+			if bytes.Equal(priorBytes, versionIndexJSON) {
+				// Nothing changed, so the file on disk already advertises
+				// exactly what we'd write; treat it as updated without
+				// rewriting it.
+				indexVersions[versionStr] = map[string]interface{}{}
+				continue
+			}
+			// TODO: Ideally we would do these updates as atomic swap operations by
+			// creating a new file and then renaming it over the old one, in case
+			// this directory is the docroot of a live mirror. An atomic swap
+			// requires platform-specific code though: os.Rename alone can't do it
+			// when running on Windows as of Go 1.13. We should revisit this once
+			// we're supporting network mirrors, to avoid having them briefly
+			// become corrupted during updates.
+			err = os.WriteFile(indexPath, versionIndexJSON, 0644)
+			if err != nil {
+				// The version index didn't get updated, so we don't advertise
+				// the version in the main index file: a mirror must not
+				// advertise an archive version before its index succeeds.
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Failed to update indexes",
+					fmt.Sprintf("Failed to write an updated JSON index for %s v%s: %s.", provider, versionStr, err),
+				))
+				continue
+			}
+			indexVersions[versionStr] = map[string]interface{}{}
+		}
+
+		mainIndex := map[string]interface{}{
+			"versions": indexVersions,
+		}
+		mainIndexJSON, err := json.MarshalIndent(mainIndex, "", "  ")
+		if err != nil {
+			// Should never happen because the input here is entirely under
+			// our control.
+			panic(fmt.Sprintf("failed to encode main index: %s", err))
+		}
+		mainIndexPath := filepath.Join(indexDir, "index.json")
+		priorMainBytes, err := readMirrorModelIndex(mainIndexPath)
+		if err != nil {
+			// As with a version index, we leave content we cannot parse
+			// untouched rather than overwriting it.
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Invalid existing main index",
+				fmt.Sprintf("Cannot update the main JSON index for %s because index.json is not valid: %s.", provider.String(), err),
+			))
+			continue // leave the affected file untouched
+		}
+		if !bytes.Equal(priorMainBytes, mainIndexJSON) {
+			err = os.WriteFile(mainIndexPath, mainIndexJSON, 0644)
 			if err != nil {
 				diags = diags.Append(tfdiags.Sourceless(
 					tfdiags.Error,
 					"Failed to update indexes",
-					fmt.Sprintf("Failed to write an updated JSON index for %s v%s: %s.", provider, version, err),
+					fmt.Sprintf("Failed to write an updated JSON index for %s: %s.", provider, err),
 				))
 			}
 		}
@@ -400,4 +549,77 @@ Options:
                      Use this option more than once to include more than one
                      variables file.
 `
+}
+
+// mirrorHashKey identifies the exact provider/version/platform identity
+// whose hashes are installed into (or indexed for) a mirror directory.
+type mirrorHashKey struct {
+	provider string
+	version  string
+	platform string
+}
+
+// mirrorArchiveMeta is one platform entry in a generated version index
+// file, matching the JSON shape read by HTTPMirrorSource.
+type mirrorArchiveMeta struct {
+	// URL is the archive file name relative to the index file's directory.
+	URL string `json:"url"`
+	// Hashes are the hashes previously recorded for that archive file.
+	Hashes []string `json:"hashes"`
+}
+
+// readMirrorVersionIndex reads the version index file at the given path.
+//
+// A missing file is normal and returns no prior data. Any other read error
+// or malformed JSON is returned as an error so the caller can leave the
+// file untouched instead of overwriting unknown content.
+func readMirrorVersionIndex(path string) (map[string]mirrorArchiveMeta, []byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// No prior index at all: the normal case for a fresh mirror.
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	var prior struct {
+		Archives map[string]mirrorArchiveMeta `json:"archives"`
+	}
+	if err := json.Unmarshal(data, &prior); err != nil {
+		return nil, nil, err
+	}
+	ret := make(map[string]mirrorArchiveMeta, len(prior.Archives))
+	for platform, archive := range prior.Archives {
+		// The carried-forward hashes must all be syntactically valid hash
+		// strings; anything else means the prior index cannot be trusted
+		// for merging and must be treated as invalid.
+		for _, hashStr := range archive.Hashes {
+			if _, err := getproviders.ParseHash(hashStr); err != nil {
+				return nil, nil, fmt.Errorf("invalid hash %q in the %q entry: %w", hashStr, platform, err)
+			}
+		}
+		ret[platform] = archive
+	}
+	return ret, data, nil
+}
+
+// readMirrorModelIndex reads the main index.json file at the given path,
+// validating that it is JSON we can safely overwrite. A missing file is
+// normal and returns no prior bytes. Any other read error or malformed
+// JSON is returned as an error so the caller can leave the file untouched.
+func readMirrorModelIndex(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var parsed struct {
+		Versions map[string]interface{} `json:"versions"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil, err
+	}
+	return data, nil
 }

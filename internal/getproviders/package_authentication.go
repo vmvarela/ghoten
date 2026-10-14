@@ -255,6 +255,9 @@ func (a packageHashAuthentication) AuthenticatePackage(localLocation PackageLoca
 		}
 		hashes[verifiedHash] = &HashDisposition{
 			VerifiedLocally: true,
+			// A hash that was verified against the local package is
+			// tied to this authenticator's target platform.
+			Platforms: collections.NewSet(a.Platform),
 		}
 	}
 
@@ -330,6 +333,8 @@ func (a archiveHashAuthentication) AuthenticatePackage(localLocation PackageLoca
 		hashes: HashDispositions{
 			gotHash: &HashDisposition{
 				VerifiedLocally: true,
+				// Verified against this archive's target platform.
+				Platforms: collections.NewSet(a.Platform),
 			},
 		},
 	}, nil
@@ -468,15 +473,27 @@ func (a *registryPackageAuthentication) AuthenticatePackage(localLocation Packag
 
 	// Parse and record all applicable package hashes
 	hashes := HashDispositions{}
-	for _, meta := range a.PackageData {
+	for platform, meta := range a.PackageData {
 		for _, hash := range meta.Hashes {
 			// Some of these will overlap with entries from the other Authenticators.
 			// The dispositions will be merged. In practice the zh's will be merged
 			// with SignedByGPGKeyIDs (if provided) and one of the h1's will be
 			// VerifiedLocally.
-			hashes[hash] = &HashDisposition{
-				ReportedByRegistry: true,
+			disp, ok := hashes[hash]
+			if !ok {
+				disp = &HashDisposition{
+					ReportedByRegistry: true,
+				}
+				hashes[hash] = disp
 			}
+			// The same hash can be reported for multiple platforms; union
+			// the associations rather than overwriting them, so that a
+			// shared hash stays associated with every platform that
+			// reported it.
+			if disp.Platforms == nil {
+				disp.Platforms = make(collections.Set[Platform])
+			}
+			disp.Platforms[platform] = struct{}{}
 		}
 	}
 
