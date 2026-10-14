@@ -27,6 +27,9 @@ func smartRefreshValueFingerprint(v cty.Value) ([]byte, error) {
 	}
 
 	unmarked, _ := v.UnmarkDeep()
+	if !unmarked.IsWhollyKnown() {
+		return nil, fmt.Errorf("cannot safely fingerprint an unknown cty value")
+	}
 
 	typeSrc, err := ctyjson.MarshalType(unmarked.Type())
 	if err != nil {
@@ -50,6 +53,7 @@ func smartRefreshInstanceFingerprint(
 	providerAddr addrs.AbsProviderConfig,
 	providerKey addrs.InstanceKey,
 	providerFingerprint []byte,
+	schemaVersion uint64,
 	dependencies []addrs.ConfigResource,
 ) ([]byte, error) {
 	if len(providerFingerprint) == 0 {
@@ -64,6 +68,7 @@ func smartRefreshInstanceFingerprint(
 	h := sha256.New()
 	fmt.Fprintf(h, "resource:%s\n", addr.String())
 	fmt.Fprintf(h, "provider:%s\n", providerAddr.String())
+	fmt.Fprintf(h, "schema-version:%d\n", schemaVersion)
 	if providerKey != addrs.NoKey {
 		fmt.Fprintf(h, "provider-key:%s\n", providerKey.String())
 	}
