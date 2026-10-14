@@ -8,6 +8,7 @@ package getproviders
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -433,6 +434,212 @@ func TestMatchingChecksumAuthentication_failure(t *testing.T) {
 				t.Errorf("wrong err: got %q, want %q", gotErr, test.err)
 			}
 		})
+	}
+}
+
+func TestRegistryPackageAuthentication(t *testing.T) {
+	location := PackageLocalArchive("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/terraform-provider-null_2.1.0_linux_amd64.zip")
+	platform := Platform{"linux", "amd64"}
+	meta := PackageMeta{
+		Provider:       addrs.MustParseProviderSourceString("registry.opentofu.org/hashicorp/null"),
+		Version:        MustParseVersion("2.1.0"),
+		TargetPlatform: platform,
+	}
+	validSha := "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b"
+	validH1 := "tru5tm3br0"
+	zh := Hash("zh:" + validSha)
+	h1 := Hash("h1:" + validH1)
+	otherSha := "22a8b31dd100000000000000000000000000000000000000000000000000000b"
+	otherH1 := "7ru5tm0re"
+	zhOther := Hash("zh:" + otherSha)
+	h1Other := Hash("h1:" + otherH1)
+
+	tests := []struct {
+		name        string
+		sha         string
+		packageData map[Platform]RegistryPlatformData
+		location    PackageLocation
+		result      *PackageAuthenticationResult
+		err         string
+	}{{
+		name:     "fallback",
+		location: location,
+		sha:      validSha,
+	}, {
+		name:     "success",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			h1: &HashDisposition{ReportedByRegistry: true},
+			zh: &HashDisposition{ReportedByRegistry: true},
+		}},
+	}, {
+		name:     "multi_platform_dispositions",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+			Platform{"linux", "arm64"}: {
+				Hashes:      []Hash{zhOther, h1Other},
+				PackageSize: 100,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			h1:      &HashDisposition{ReportedByRegistry: true},
+			zh:      &HashDisposition{ReportedByRegistry: true},
+			h1Other: &HashDisposition{ReportedByRegistry: true},
+			zhOther: &HashDisposition{ReportedByRegistry: true},
+		}},
+	}, {
+		name:        "missing_platform",
+		location:    location,
+		sha:         validSha,
+		packageData: map[Platform]RegistryPlatformData{Platform{}: {}},
+		err:         `registry response missing package with platform "linux_amd64"`,
+	}, {
+		name:     "zero_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 0,
+			},
+		},
+		err: `registry response has invalid package size 0`,
+	}, {
+		name:     "invalid_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: -200,
+			},
+		},
+		err: `registry response has invalid package size -200`,
+	}, {
+		name:     "wrong_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 295,
+			},
+		},
+		err: `registry response indicates a package of size 295, but recieved a package of size 294`,
+	}, {
+		name:     "incorrect_platform_hash",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{"zh:superduperincorrect", h1},
+				PackageSize: 294,
+			},
+		},
+		err: `registry response expected sha256sum is "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b", which does not match the platform's value of "superduperincorrect"`,
+	}, {
+		name:     "missing_platform_hash",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{h1},
+				PackageSize: 294,
+			},
+		},
+		err: "registry response does not contain matching sha256sum package entry and is invalid",
+	}}
+
+	for _, tc := range tests {
+		auth := NewRegistryPackageAuthentication(meta, tc.sha, tc.packageData)
+		result, err := auth.AuthenticatePackage(tc.location)
+
+		if tc.err != "" {
+			if err == nil {
+				t.Errorf("wrong err: got nil, wanted %q", tc.err)
+			} else if err.Error() != tc.err {
+				t.Errorf("wrong err: got %q, wanted %q", err.Error(), tc.err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("wrong err: got %q, wanted nil", err.Error())
+			}
+		}
+
+		if tc.result != nil {
+			if result == nil {
+				t.Errorf("wrong result: got nil, wanted %#v", tc.result)
+			} else if diff := cmp.Diff(result.hashes, tc.result.hashes); diff != "" {
+				t.Errorf("wrong results: %s", diff)
+			}
+		} else {
+			if result != nil {
+				t.Errorf("wrong result: got %#v, wanted nil", result)
+			}
+		}
+	}
+}
+
+func TestRegistryPackageAuthenticationPackageAuthenticationAllFailureIsFatal(t *testing.T) {
+	location := PackageLocalArchive("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/terraform-provider-null_2.1.0_linux_amd64.zip")
+	platform := Platform{"linux", "amd64"}
+	meta := PackageMeta{
+		Provider:       addrs.MustParseProviderSourceString("registry.opentofu.org/hashicorp/null"),
+		Version:        MustParseVersion("2.1.0"),
+		TargetPlatform: platform,
+	}
+	validSha := "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b"
+	checksum := [sha256.Size]byte{}
+	if _, err := hex.Decode(checksum[:], []byte(validSha)); err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(validSha + " terraform-provider-null_2.1.0_linux_amd64.zip\n")
+	matchingChecksum := NewMatchingChecksumAuthentication(
+		document, "terraform-provider-null_2.1.0_linux_amd64.zip", checksum,
+	)
+
+	// Sanity check: with no packages metadata the registry authenticator is a
+	// no-op and the rest of the chain succeeds.
+	chain := PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(meta, validSha, nil),
+		matchingChecksum,
+	)
+	if _, err := chain.AuthenticatePackage(location); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// A malformed requested-platform registry entry must abort the whole
+	// chain, even though the remaining authenticator would succeed.
+	chain = PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(meta, validSha, map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{Hash("h1:tru5tm3br0")},
+				PackageSize: 294,
+			},
+		}),
+		matchingChecksum,
+	)
+	result, err := chain.AuthenticatePackage(location)
+	if err == nil {
+		t.Fatal("wanted error, got nil")
+	}
+	if got, want := err.Error(), "registry response does not contain matching sha256sum package entry and is invalid"; got != want {
+		t.Errorf("wrong err: got %q, wanted %q", got, want)
+	}
+	if result != nil {
+		t.Errorf("wrong result: got %#v, wanted nil", result)
 	}
 }
 

@@ -8,6 +8,9 @@ package getproviders
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -131,6 +134,11 @@ func TestSourcePackageMeta(t *testing.T) {
 		}},
 	}
 	validMeta.Authentication = PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(
+			validMeta,
+			"000000000000000000000000000000000000000000000000000000000000f00d",
+			map[Platform]RegistryPlatformData{},
+		),
 		NewMatchingChecksumAuthentication(
 			[]byte("000000000000000000000000000000000000000000000000000000000000f00d happycloud_1.2.0.zip\n000000000000000000000000000000000000000000000000000000000000face happycloud_1.2.0_face.zip\n"),
 			"happycloud_1.2.0.zip",
@@ -244,4 +252,171 @@ func TestSourcePackageMeta(t *testing.T) {
 		})
 	}
 
+}
+
+// TestRegistryClientPackageMetaPackages checks the parsing of the optional
+// registry `packages` metadata in registryClient.PackageMeta, including
+// backward compatibility with registries that omit it (or send null or an
+// empty map).
+func TestRegistryClientPackageMetaPackages(t *testing.T) {
+	provider := addrs.MustParseProviderSourceString("example.com/awesomesauce/happycloud")
+	version := versions.MustParseVersion("1.2.0")
+	platform := Platform{"linux", "amd64"}
+	validPackageSize := 1234
+
+	// validRegPackageData is the expected parse of the `packages` payload used
+	// in the "valid" and "empty_package_size" cases.
+	validRegPackageData := map[Platform]RegistryPlatformData{
+		Platform{"linux", "amd64"}: {
+			Hashes:      []Hash{Hash("zh:000000000000000000000000000000000000000000000000000000000000f00d"), Hash("h1:aaaa")},
+			PackageSize: int64(validPackageSize),
+		},
+		Platform{"linux", "arm64"}: {
+			Hashes:      []Hash{Hash("h1:bbbb")},
+			PackageSize: int64(validPackageSize + 1),
+		},
+	}
+	validPackagesJSON := fmt.Sprintf(`,
+		"packages": {
+			"linux_amd64": {
+				"hashes": ["zh:000000000000000000000000000000000000000000000000000000000000f00d", "h1:aaaa"],
+				"package_size": %d
+			},
+			"linux_arm64": {
+				"hashes": ["h1:bbbb"],
+				"package_size": %d
+			}
+		}`, validPackageSize, validPackageSize+1)
+
+	tests := []struct {
+		name         string
+		packagesJSON string
+		shasum       string
+		wantErr      string
+		wantPackage  map[Platform]RegistryPlatformData
+	}{
+		{
+			name: "omitted",
+		},
+		{
+			name:         "empty map",
+			packagesJSON: `,"packages": {}`,
+			wantPackage:  map[Platform]RegistryPlatformData{},
+		},
+		{
+			name:         "null",
+			packagesJSON: `,"packages": null`,
+		},
+		{
+			name:         "valid",
+			packagesJSON: validPackagesJSON,
+			wantPackage:  validRegPackageData,
+		},
+		{
+			name:         "malformed json",
+			packagesJSON: `,"packages": "wrong-type"`,
+			wantErr:      "could not query provider registry for example.com/awesomesauce/happycloud",
+		},
+		{
+			name:         "malformed platform name",
+			packagesJSON: `,"packages": {"bogus": {"hashes": [], "package_size": 1}}`,
+			wantErr:      "invalid package platform",
+		},
+		{
+			name:         "malformed hash",
+			packagesJSON: fmt.Sprintf(`,"packages": {"linux_amd64": {"hashes": ["not-a-hash"], "package_size": %d}}`, validPackageSize),
+			wantErr:      "invalid package hash",
+		},
+		{
+			name:    "invalid SHA256 length",
+			shasum:  "too-short",
+			wantErr: "invalid SHA256 hash",
+		},
+		{
+			name:    "invalid SHA256 hex",
+			shasum:  strings.Repeat("g", 64),
+			wantErr: "invalid SHA256 hash",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := testRegistryClientWithPackages(t, tc.packagesJSON, tc.shasum)
+
+			got, err := client.PackageMeta(context.Background(), provider, version, platform)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("wrong error\ngot:  <nil>\nwant: %s", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("wrong error\ngot:  %s\nwant: %s", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %s", err.Error())
+			}
+
+			// The registry authenticator must be first in the auth chain.
+			chain, ok := got.Authentication.(packageAuthenticationAll)
+			if !ok {
+				t.Fatalf("meta.Authentication is not packageAuthenticationAll: %#v", got.Authentication)
+			}
+			if len(chain) == 0 {
+				t.Fatalf("empty authentication chain")
+			}
+			registryAuth, ok := chain[0].(*registryPackageAuthentication)
+			if !ok {
+				t.Fatalf("first authentication is %T, wanted *registryPackageAuthentication", chain[0])
+			}
+
+			if tc.wantPackage == nil && len(registryAuth.PackageData) != 0 {
+				t.Fatalf("wrong PackageData for %q case: got %#v, wanted empty", tc.name, registryAuth.PackageData)
+			}
+			if diff := cmp.Diff(registryAuth.PackageData, tc.wantPackage); diff != "" && tc.wantPackage != nil {
+				t.Errorf("wrong PackageData\n%s", diff)
+			}
+		})
+	}
+}
+
+// testRegistryClientWithPackages starts a fake registry server (in-package,
+// independent of the fake server in registry_client_test.go) that serves the
+// download metadata for the example.com/awesomesauce/happycloud 1.2.0
+// linux_amd64 version, with the given raw `packages` JSON and optional `shasum`.
+func testRegistryClientWithPackages(t *testing.T, packagesJSON, shasum string) *registryClient {
+	t.Helper()
+	if shasum == "" {
+		shasum = "000000000000000000000000000000000000000000000000000000000000f00d"
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS.sig", func(resp http.ResponseWriter, req *http.Request) {
+		_, _ = resp.Write([]byte("GPG signature"))
+	})
+	mux.HandleFunc("/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS", func(resp http.ResponseWriter, req *http.Request) {
+		_, _ = resp.Write([]byte("000000000000000000000000000000000000000000000000000000000000f00d happycloud_1.2.0.zip\n"))
+	})
+	mux.HandleFunc("/awesomesauce/happycloud/1.2.0/download/", func(resp http.ResponseWriter, req *http.Request) {
+		resp.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(resp, `{
+			"protocols": ["5.0"],
+			"os": "linux",
+			"arch": "amd64",
+			"filename": "happycloud_1.2.0.zip",
+			"shasum": %q,
+			"download_url": "/pkg/awesomesauce/happycloud_1.2.0.zip",
+			"shasums_url": "/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS",
+			"shasums_signature_url": "/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS.sig",
+			"signing_keys": {"gpg_public_keys": []}%s
+		}`, shasum, packagesJSON)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	parsed, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newRegistryClient(t.Context(), parsed, nil, retryablehttp.NewClient(), LocationConfig{})
 }
