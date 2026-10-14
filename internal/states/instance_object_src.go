@@ -74,14 +74,10 @@ type ResourceInstanceObjectSrc struct {
 	CreateBeforeDestroy bool
 	SkipDestroy         bool
 
-	// ConfigExprHash is a SHA-256 fingerprint of the syntactic structure of
-	// the resource's count, for_each, and depends_on expressions. It is used
-	// by the SmartRefreshTransformer to detect configuration changes between
-	// runs without requiring expression evaluation.
-	//
-	// This field is optional: states written by older versions of Ghoten will
-	// not have it, in which case the smart-refresh heuristic falls back to
-	// conservative behavior (assuming the body changed).
+	// ConfigExprHash is the legacy coarse-grained structural fingerprint used
+	// only by the SmartRefreshTransformer's graph prefilter. The authoritative
+	// skip decision uses RefreshFingerprint below. This field is optional for
+	// backward compatibility.
 	ConfigExprHash []byte
 
 	// RefreshFingerprint is the authoritative Smart Refresh fingerprint for
