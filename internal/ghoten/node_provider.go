@@ -51,13 +51,28 @@ const traceAttrProviderInstanceAddr = "opentofu.provider_instance.address"
 type NodeApplyableProvider struct {
 	*NodeAbstractProvider
 
-	instances map[addrs.InstanceKey]providers.Configured
+	instances          map[addrs.InstanceKey]providers.Configured
+	configFingerprints map[addrs.InstanceKey][]byte
 }
 
 var (
 	_ GraphNodeExecutable = (*NodeApplyableProvider)(nil)
 	_ GraphNodeProvider   = (*NodeApplyableProvider)(nil) // Partial, see NodeAbstractProvider
 )
+
+// GraphNodeProvider
+func (n *NodeApplyableProvider) ProviderConfigFingerprint(key addrs.InstanceKey) []byte {
+	if n.configFingerprints == nil {
+		return nil
+	}
+	fp := n.configFingerprints[key]
+	if fp == nil {
+		return nil
+	}
+	ret := make([]byte, len(fp))
+	copy(ret, fp)
+	return ret
+}
 
 // GraphNodeProvider
 func (n *NodeApplyableProvider) Instance(key addrs.InstanceKey) (providers.Configured, error) {
@@ -91,6 +106,7 @@ func (n *NodeApplyableProvider) Execute(ctx context.Context, evalCtx EvalContext
 	var diags tfdiags.Diagnostics
 
 	n.instances = map[addrs.InstanceKey]providers.Configured{}
+	n.configFingerprints = map[addrs.InstanceKey][]byte{}
 
 	var instanceData map[addrs.InstanceKey]instances.RepetitionData
 	if n.Config == nil || n.Config.Instances == nil {
@@ -205,6 +221,12 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 		// Mocked for testing
 		instance, diags := evalCtx.Providers().NewProvider(ctx, n.Addr.Provider)
 		n.instances[providerKey] = instance
+		if fp, err := smartRefreshValueFingerprint(cty.EmptyObjectVal); err == nil {
+			if n.configFingerprints == nil {
+				n.configFingerprints = map[addrs.InstanceKey][]byte{}
+			}
+			n.configFingerprints[providerKey] = fp
+		}
 		return diags
 	}
 
@@ -226,6 +248,13 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 	if evalDiags.HasErrors() {
 		tracing.SetSpanError(span, diags)
 		return diags
+	}
+
+	configFingerprint, fingerprintErr := smartRefreshValueFingerprint(configVal)
+	if fingerprintErr != nil {
+		// Fingerprinting is an optimization. If it cannot be produced, leave it
+		// unavailable so resource nodes conservatively perform a refresh.
+		log.Printf("[WARN] ConfigureProvider: cannot fingerprint %s: %s", n.Addr.InstanceString(providerKey), fingerprintErr)
 	}
 
 	if verifyConfigIsKnown && !configVal.IsWhollyKnown() {
@@ -258,6 +287,13 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 	if diags.HasErrors() {
 		tracing.SetSpanError(span, diags)
 		return diags
+	}
+
+	if len(configFingerprint) > 0 {
+		if n.configFingerprints == nil {
+			n.configFingerprints = map[addrs.InstanceKey][]byte{}
+		}
+		n.configFingerprints[providerKey] = configFingerprint
 	}
 
 	return diags
