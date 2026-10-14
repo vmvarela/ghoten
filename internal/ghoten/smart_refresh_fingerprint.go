@@ -42,17 +42,21 @@ func smartRefreshSchemaContainsPersistUnsafeValue(schema *configschema.Block, v 
 		return true
 	}
 
-	for _, pvm := range schema.ValueMarks(v, nil) {
-		if _, sensitive := pvm.Marks[marks.Sensitive]; sensitive && smartRefreshPathHasConfiguredValue(v, pvm.Path) {
+	// Schema traversal operates on the shape/value only. Marks from variables
+	// and expressions are checked separately by smartRefreshValueFingerprint.
+	unmarked, _ := v.UnmarkDeep()
+
+	for _, pvm := range schema.ValueMarks(unmarked, nil) {
+		if _, sensitive := pvm.Marks[marks.Sensitive]; sensitive && smartRefreshPathHasConfiguredValue(unmarked, pvm.Path) {
 			return true
 		}
-		if _, ephemeral := pvm.Marks[marks.Ephemeral]; ephemeral && smartRefreshPathHasConfiguredValue(v, pvm.Path) {
+		if _, ephemeral := pvm.Marks[marks.Ephemeral]; ephemeral && smartRefreshPathHasConfiguredValue(unmarked, pvm.Path) {
 			return true
 		}
 	}
 
-	for _, path := range schema.WriteOnlyPaths(v, nil) {
-		if smartRefreshPathHasConfiguredValue(v, path) {
+	for _, path := range schema.WriteOnlyPaths(unmarked, nil) {
+		if smartRefreshPathHasConfiguredValue(unmarked, path) {
 			return true
 		}
 	}
