@@ -31,3 +31,11 @@ const (
 func (a Action) IsReplace() bool {
 	return a == DeleteThenCreate || a == CreateThenDelete
 }
+
+// CanTriggerDownstreamReplace indica si la acción puede activar el reemplazo de
+// recursos que la referencian mediante replace_triggered_by. Incluye acciones
+// que crean o modifican significativamente el objeto, como ForgetThenCreate
+// cuando lifecycle.destroy = false.
+func (a Action) CanTriggerDownstreamReplace() bool {
+	return a == Create || a == Update || a.IsReplace() || a == ForgetThenCreate
+}

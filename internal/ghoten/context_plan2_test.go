@@ -4654,6 +4654,76 @@ resource "test_object" "b" {
 	}
 }
 
+// TestContext2Plan_triggeredByRecreate verifica que replace_triggered_by actúe
+// cuando el recurso referenciado se crea desde cero (por ejemplo, tras
+// "ghoten state rm"), no solo cuando se actualiza o reemplaza.
+func TestContext2Plan_triggeredByRecreate(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+  test_string = "hello"
+}
+resource "test_object" "b" {
+  test_string = "world"
+  lifecycle {
+    replace_triggered_by = [test_object.a]
+  }
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	// Solo test_object.b está en el estado; test_object.a se quitó con "state rm".
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.b"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"world"}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+	})
+
+	plan, diags := ctx.Plan(context.Background(), m, state, &PlanOpts{
+		Mode: plans.NormalMode,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors\n%s", diags.Err().Error())
+	}
+
+	var gotCreate, gotReplace bool
+	for _, c := range plan.Changes.Resources {
+		switch c.Addr.String() {
+		case "test_object.a":
+			if c.Action != plans.Create {
+				t.Fatalf("unexpected %s change for %s; want Create", c.Action, c.Addr)
+			}
+			gotCreate = true
+		case "test_object.b":
+			if c.Action != plans.DeleteThenCreate {
+				t.Fatalf("unexpected %s change for %s; want DeleteThenCreate", c.Action, c.Addr)
+			}
+			if c.ActionReason != plans.ResourceInstanceReplaceByTriggers {
+				t.Fatalf("incorrect reason for change: %s; want ResourceInstanceReplaceByTriggers", c.ActionReason)
+			}
+			gotReplace = true
+		default:
+			t.Fatal("unexpected change", c.Addr, c.Action)
+		}
+	}
+	if !gotCreate || !gotReplace {
+		t.Fatalf("missing expected plan changes: test_object.a create=%t, test_object.b replace=%t", gotCreate, gotReplace)
+	}
+}
+
 func TestContext2Plan_dataSchemaChange(t *testing.T) {
 	// We can't decode the prior state when a data source upgrades the schema
 	// in an incompatible way. Since prior state for data sources is purely
