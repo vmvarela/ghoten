@@ -151,6 +151,10 @@ func (c *Context) Plan(ctx context.Context, config *configs.Config, prevRunState
 			Mode: plans.NormalMode,
 		}
 	}
+	// Normalize plan options locally so API callers get the same Smart Refresh
+	// semantics as the CLI without mutating their input structure.
+	optsCopy := *opts
+	opts = &optsCopy
 
 	ctx, span := tracing.Tracer().Start(
 		ctx, "Plan phase",
@@ -177,8 +181,17 @@ func (c *Context) Plan(ctx context.Context, config *configs.Config, prevRunState
 	}
 
 	switch opts.Mode {
-	case plans.NormalMode, plans.DestroyMode:
+	case plans.NormalMode:
 		// OK
+	case plans.DestroyMode:
+		if opts.RefreshMode == plans.RefreshSmart {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Incompatible plan options",
+				"Smart refresh is not supported in destroy mode. Use a full refresh before destroying resources.",
+			))
+			return nil, diags
+		}
 	case plans.RefreshOnlyMode:
 		if opts.SkipRefresh {
 			// The CLI layer (and other similar callers) should prevent this
@@ -189,6 +202,10 @@ func (c *Context) Plan(ctx context.Context, config *configs.Config, prevRunState
 				"Cannot skip refreshing in refresh-only mode. This is a bug in Ghoten.",
 			))
 			return nil, diags
+		}
+		// Refresh-only is explicitly a full reconciliation operation.
+		if opts.RefreshMode == plans.RefreshSmart {
+			opts.RefreshMode = plans.RefreshAll
 		}
 	default:
 		// The CLI layer (and other similar callers) should not try to
