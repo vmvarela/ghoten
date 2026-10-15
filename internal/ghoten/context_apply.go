@@ -156,15 +156,10 @@ func (c *Context) Apply(ctx context.Context, plan *plans.Plan, config *configs.C
 
 	newState := walker.State.Close()
 
-	// Backfill config expression hashes for all resource instances that were
-	// not visited by the apply graph (i.e. NoOp resources). This ensures that
-	// subsequent plans can use the hash for smart refresh decisions.
-	// Only do this if there were no errors, to avoid polluting state with
-	// incorrect hashes from a partial/failed apply.
-	if !diags.HasErrors() {
-		backfillConfigExprHashes(newState, config)
-	}
-
+ 	// Smart Refresh metadata is updated only by resource instances that were
+	// actually planned/refreshed. Never globally backfill it here: doing so
+	// would incorrectly advance metadata for resources omitted by -target or
+	// -exclude.
 	if plan.UIMode == plans.DestroyMode && !diags.HasErrors() {
 		// NOTE: This is a vestigial violation of the rule that we mustn't
 		// use plan.UIMode to affect apply-time behavior.
