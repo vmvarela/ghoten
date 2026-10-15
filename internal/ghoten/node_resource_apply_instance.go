@@ -6,7 +6,6 @@
 package ghoten
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -364,21 +363,18 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 		return diags
 	}
 
-	// If there is no change, there was nothing to apply, and we don't need to
-	// re-write the state, but we do need to re-evaluate postconditions.
-	// We do however persist the structural fingerprint so that subsequent plans
-	// can detect config changes for resources with no planned changes.
+	// If there is no change, there was nothing to apply. The working state
+	// already came from the refreshed plan state, including Smart Refresh
+	// metadata, so there is nothing to backfill globally.
 	if diffApply.Action == plans.NoOp {
-		if n.Config != nil && state != nil {
-			newHash := configExprHash(n.Config)
-			if !bytes.Equal(state.ConfigExprHash, newHash) {
-				state.ConfigExprHash = newHash
-				if err := n.writeResourceInstanceState(ctx, evalCtx, state, workingState); err != nil {
-					return diags.Append(err)
-				}
-			}
-		}
 		return diags.Append(n.managedResourcePostconditions(ctx, evalCtx, repeatData))
+	}
+
+	var priorRefreshFingerprint []byte
+	var priorLastRefreshTime int64
+	if state != nil {
+		priorRefreshFingerprint = cloneBytes(state.RefreshFingerprint)
+		priorLastRefreshTime = state.LastRefreshTime
 	}
 
 	state, applyDiags := n.apply(ctx, evalCtx, state, diffApply, n.Config, repeatData, n.CreateBeforeDestroy())
@@ -394,13 +390,17 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 	state = maybeTainted(addr.Absolute(evalCtx.Path()), state, diffApply, diags.Err())
 
 	if state != nil {
-		// dependencies are always updated to match the configuration during apply
+		// Dependencies are always updated to match the configuration during apply.
 		state.Dependencies = n.Dependencies
-		// Persist the structural fingerprint of the config block so that
-		// subsequent plans can detect whether the meta-arguments (count,
-		// for_each, depends_on) have changed without evaluating expressions.
-		if n.Config != nil {
-			state.ConfigExprHash = configExprHash(n.Config)
+		// Preserve the evaluated Smart Refresh metadata produced by the plan
+		// refresh. Provider ApplyResourceChange returns a new object and therefore
+		// cannot be expected to carry Core-only metadata forward.
+		if applyDiags.HasErrors() {
+			state.RefreshFingerprint = nil
+			state.LastRefreshTime = 0
+		} else {
+			state.RefreshFingerprint = cloneBytes(priorRefreshFingerprint)
+			state.LastRefreshTime = priorLastRefreshTime
 		}
 	}
 	err = n.writeResourceInstanceState(ctx, evalCtx, state, workingState)
