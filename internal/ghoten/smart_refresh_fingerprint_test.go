@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 )
 
@@ -84,6 +85,15 @@ func TestResourceRefreshFingerprintDependencyOrderIndependent(t *testing.T) {
 func TestFingerprintRejectsUnknownValues(t *testing.T) {
 	if _, ok := fingerprintCtyValue(cty.UnknownVal(cty.String)); ok {
 		t.Fatal("unknown values must force conservative refresh")
+	}
+}
+
+func TestFingerprintRejectsEphemeralValues(t *testing.T) {
+	val := cty.ObjectVal(map[string]cty.Value{
+		"secret": cty.StringVal("do-not-persist").Mark(marks.Ephemeral),
+	})
+	if _, ok := fingerprintCtyValue(val); ok {
+		t.Fatal("ephemeral values must never be persisted through Smart Refresh fingerprints")
 	}
 }
 
