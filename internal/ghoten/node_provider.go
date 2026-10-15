@@ -51,7 +51,8 @@ const traceAttrProviderInstanceAddr = "opentofu.provider_instance.address"
 type NodeApplyableProvider struct {
 	*NodeAbstractProvider
 
-	instances map[addrs.InstanceKey]providers.Configured
+	instances    map[addrs.InstanceKey]providers.Configured
+	fingerprints map[addrs.InstanceKey][]byte
 }
 
 var (
@@ -60,6 +61,13 @@ var (
 )
 
 // GraphNodeProvider
+func (n *NodeApplyableProvider) ProviderConfigFingerprint(key addrs.InstanceKey) []byte {
+	if n.fingerprints == nil {
+		return nil
+	}
+	return cloneBytes(n.fingerprints[key])
+}
+
 func (n *NodeApplyableProvider) Instance(key addrs.InstanceKey) (providers.Configured, error) {
 	if n.instances == nil {
 		// Should never happen
@@ -91,6 +99,7 @@ func (n *NodeApplyableProvider) Execute(ctx context.Context, evalCtx EvalContext
 	var diags tfdiags.Diagnostics
 
 	n.instances = map[addrs.InstanceKey]providers.Configured{}
+	n.fingerprints = map[addrs.InstanceKey][]byte{}
 
 	var instanceData map[addrs.InstanceKey]instances.RepetitionData
 	if n.Config == nil || n.Config.Instances == nil {
@@ -202,9 +211,13 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 	defer span.End()
 
 	if n.Config != nil && n.Config.IsMocked {
-		// Mocked for testing
+		// Mocked for testing. Use an empty evaluated config so Smart Refresh can
+		// still exercise the provider-fingerprint path deterministically.
 		instance, diags := evalCtx.Providers().NewProvider(ctx, n.Addr.Provider)
 		n.instances[providerKey] = instance
+		if fingerprint, ok := providerConfigFingerprint(n.Addr, providerKey, cty.EmptyObjectVal); ok {
+			n.fingerprints[providerKey] = fingerprint
+		}
 		return diags
 	}
 
@@ -226,6 +239,12 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
 	if evalDiags.HasErrors() {
 		tracing.SetSpanError(span, diags)
 		return diags
+	}
+
+	if fingerprint, ok := providerConfigFingerprint(n.Addr, providerKey, configVal); ok {
+		n.fingerprints[providerKey] = fingerprint
+	} else {
+		delete(n.fingerprints, providerKey)
 	}
 
 	if verifyConfigIsKnown && !configVal.IsWhollyKnown() {
