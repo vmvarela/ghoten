@@ -3,7 +3,7 @@
 # Copyright (c) 2023 HashiCorp, Inc.
 # SPDX-License-Identifier: MPL-2.0
 
-FROM alpine:3.20
+FROM alpine:3.24
 
 ARG TARGETARCH
 
