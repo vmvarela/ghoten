@@ -27,6 +27,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
@@ -377,6 +378,154 @@ func TestContext2Plan_smartRefreshEvaluatedFingerprint(t *testing.T) {
 	_ = planWith(stale, "eu-west-1", "ami-1")
 	if got := reads.Load(); got != 1 {
 		t.Fatalf("stale smart refresh metadata performed %d ReadResource calls; want 1", got)
+	}
+}
+
+func TestContext2Plan_smartRefreshDropsMetadataWhenUnfingerprintable(t *testing.T) {
+	addr := mustResourceInstanceAddr("aws_instance.foo")
+	fingerprinted := testModuleInline(t, map[string]string{
+		"main.tf": `
+			locals { ami = "ami-1" }
+			resource "aws_instance" "foo" {
+				ami = local.ami
+			}
+		`,
+	})
+	// ignore_changes makes the resource ineligible for the evaluated fingerprint.
+	unfingerprintable := testModuleInline(t, map[string]string{
+		"main.tf": `
+			locals { ami = "ami-1" }
+			resource "aws_instance" "foo" {
+				ami = local.ami
+				lifecycle {
+					ignore_changes = [ami]
+				}
+			}
+		`,
+	})
+
+	p := testProvider("aws")
+	p.PlanResourceChangeFn = testDiffFn
+	var reads atomic.Int32
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		reads.Add(1)
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	schema := p.GetProviderSchemaResponse.ResourceTypes["aws_instance"].Block
+	obj := &states.ResourceInstanceObject{
+		Value: objectVal(t, schema, map[string]cty.Value{
+			"id":   cty.StringVal("i-smart"),
+			"ami":  cty.StringVal("ami-1"),
+			"type": cty.StringVal("aws_instance"),
+		}),
+		Status: states.ObjectReady,
+	}
+	src, err := obj.Encode(schema.ImpliedType(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := states.NewState()
+	state.RootModule().SetResourceInstanceCurrent(addr.Resource, src,
+		mustProviderConfig(`provider["registry.opentofu.org/hashicorp/aws"]`), addrs.NoKey)
+
+	planWith := func(inputState *states.State, m *configs.Config) *plans.Plan {
+		t.Helper()
+		plan, diags := ctx.Plan(context.Background(), m, inputState, &PlanOpts{
+			Mode:        plans.NormalMode,
+			RefreshMode: plans.RefreshSmart,
+		})
+		if diags.HasErrors() {
+			t.Fatalf("unexpected plan errors: %s", diags.Err())
+		}
+		return plan
+	}
+
+	// Seed metadata with the fingerprintable configuration.
+	seeded := planWith(state, fingerprinted)
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("seeding plan performed %d ReadResource calls; want 1", got)
+	}
+
+	// The unfingerprintable refresh must replace, not keep, the old metadata.
+	reads.Store(0)
+	cleared := planWith(seeded.PriorState.DeepCopy(), unfingerprintable)
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("unfingerprintable plan performed %d ReadResource calls; want 1", got)
+	}
+	res := cleared.PriorState.RootModule().ResourceInstance(addr.Resource)
+	if res == nil || res.Current == nil {
+		t.Fatal("refreshed resource missing from prior state")
+	}
+	if len(res.Current.RefreshFingerprint) != 0 || res.Current.LastRefreshUnix != 0 {
+		t.Fatal("unfingerprintable refresh kept stale smart refresh metadata")
+	}
+
+	// Going back to the fingerprintable configuration must not trust the
+	// metadata from before the unfingerprintable refresh.
+	reads.Store(0)
+	_ = planWith(cleared.PriorState.DeepCopy(), fingerprinted)
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("return to fingerprintable config performed %d ReadResource calls; want 1", got)
+	}
+}
+
+func TestContext2Plan_refreshOnlyIgnoresFingerprintError(t *testing.T) {
+	addr := mustResourceInstanceAddr("aws_instance.foo")
+	// The index fails to evaluate, so the evaluated fingerprint cannot be built.
+	// Refresh-only must still refresh the resource from its prior state.
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			locals { amis = {} }
+			resource "aws_instance" "foo" {
+				ami = local.amis["missing"]
+			}
+		`,
+	})
+
+	p := testProvider("aws")
+	var reads atomic.Int32
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		reads.Add(1)
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	schema := p.GetProviderSchemaResponse.ResourceTypes["aws_instance"].Block
+	obj := &states.ResourceInstanceObject{
+		Value: objectVal(t, schema, map[string]cty.Value{
+			"id":   cty.StringVal("i-refresh"),
+			"ami":  cty.StringVal("ami-1"),
+			"type": cty.StringVal("aws_instance"),
+		}),
+		Status: states.ObjectReady,
+	}
+	src, err := obj.Encode(schema.ImpliedType(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := states.NewState()
+	state.RootModule().SetResourceInstanceCurrent(addr.Resource, src,
+		mustProviderConfig(`provider["registry.opentofu.org/hashicorp/aws"]`), addrs.NoKey)
+
+	_, diags := ctx.Plan(context.Background(), m, state, &PlanOpts{
+		Mode:        plans.RefreshOnlyMode,
+		RefreshMode: plans.RefreshSmart,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("refresh-only plan failed on fingerprint evaluation: %s", diags.Err())
+	}
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("refresh-only plan performed %d ReadResource calls; want 1", got)
 	}
 }
 

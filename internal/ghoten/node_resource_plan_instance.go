@@ -351,14 +351,12 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			instanceRefreshState.SkipDestroy = skipDestroy
 
 			if !importing {
-				var fingerprintDiags tfdiags.Diagnostics
-				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(
+				// Best effort: a failed fingerprint only disables the cache for this
+				// resource. Real config errors are reported by n.plan, and refresh-only
+				// plans must not fail on them.
+				currentRefreshFingerprint, _ = n.evaluatedSmartRefreshFingerprint(
 					ctx, evalCtx, instanceRefreshState.CreateBeforeDestroy, instanceRefreshState.SkipDestroy,
 				)
-				diags = diags.Append(fingerprintDiags)
-				if fingerprintDiags.HasErrors() {
-					return diags
-				}
 
 				if n.smartRefresh && n.skipRefresh {
 					switch {
@@ -429,8 +427,11 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			if n.Config != nil {
 				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
 			}
+			// Always replace the cache metadata: a refresh that cannot be fingerprinted
+			// must not keep the fingerprint of a previous provider context.
+			instanceRefreshState.RefreshFingerprint = currentRefreshFingerprint
+			instanceRefreshState.LastRefreshUnix = 0
 			if len(currentRefreshFingerprint) > 0 {
-				instanceRefreshState.RefreshFingerprint = currentRefreshFingerprint
 				instanceRefreshState.LastRefreshUnix = time.Now().UTC().Unix()
 			}
 		}
