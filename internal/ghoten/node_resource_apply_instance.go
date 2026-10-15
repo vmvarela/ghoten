@@ -371,10 +371,8 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 	}
 
 	var priorRefreshFingerprint []byte
-	var priorLastRefreshTime int64
 	if state != nil {
 		priorRefreshFingerprint = cloneBytes(state.RefreshFingerprint)
-		priorLastRefreshTime = state.LastRefreshTime
 	}
 
 	state, applyDiags := n.apply(ctx, evalCtx, state, diffApply, n.Config, repeatData, n.CreateBeforeDestroy())
@@ -400,7 +398,7 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 			state.LastRefreshTime = 0
 		} else if len(priorRefreshFingerprint) != 0 {
 			state.RefreshFingerprint = cloneBytes(priorRefreshFingerprint)
-			state.LastRefreshTime = priorLastRefreshTime
+			state.LastRefreshTime = smartRefreshNow().Unix()
 		} else if n.Config != nil && n.Config.Managed != nil {
 			// New objects have no refreshed prior object to inherit metadata from.
 			// A successful create/update is itself a synchronization point, so seed
