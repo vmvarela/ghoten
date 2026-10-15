@@ -97,6 +97,15 @@ func TestFingerprintRejectsEphemeralValues(t *testing.T) {
 	}
 }
 
+func TestFingerprintRejectsSensitiveValues(t *testing.T) {
+	val := cty.ObjectVal(map[string]cty.Value{
+		"secret": cty.StringVal("do-not-persist").Mark(marks.Sensitive),
+	})
+	if _, ok := fingerprintCtyValue(val); ok {
+		t.Fatal("sensitive values must never be persisted through Smart Refresh fingerprints")
+	}
+}
+
 func TestSmartRefreshCanSkipHonorsFingerprintAndFreshness(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	fingerprint := []byte{1, 2, 3, 4}
