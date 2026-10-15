@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/zclconf/go-cty/cty"
 )
 

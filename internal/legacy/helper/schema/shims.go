@@ -12,8 +12,8 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
-	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
+	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 )
 
 // DiffFromValues takes the current state and desired state as cty.Values and

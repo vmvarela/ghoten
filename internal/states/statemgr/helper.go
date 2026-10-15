@@ -11,9 +11,9 @@ package statemgr
 import (
 	"context"
 
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/version"
 )
 

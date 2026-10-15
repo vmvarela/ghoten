@@ -19,10 +19,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/jsonformat"
 	"github.com/vmvarela/ghoten/internal/command/jsonprovider"
 	"github.com/vmvarela/ghoten/internal/command/jsonstate"
+	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 )
 
 // StateShowCommand is a Command implementation that shows a single resource.
@@ -115,7 +115,9 @@ func (c *StateShowCommand) Run(args []string) int {
 	}
 
 	// Get the context (required to get the schemas)
-	lr, _, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	if ctxDiags.HasErrors() {
 		c.View.Diagnostics(ctxDiags)
 		return 1

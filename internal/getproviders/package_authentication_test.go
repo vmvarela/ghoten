@@ -8,6 +8,7 @@ package getproviders
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -71,6 +72,29 @@ func TestPackageAuthenticationResult(t *testing.T) {
 				},
 			},
 			"signing skipped",
+			"", false, true,
+		},
+		"ReportedByTrustedMirror": {
+			&PackageAuthenticationResult{
+				hashes: HashDispositions{
+					Hash("test:placeholder"): {
+						ReportedByTrustedMirror: true,
+					},
+				},
+			},
+			"signing skipped",
+			"", false, true,
+		},
+		"ReportedByTrustedMirror+VerifiedLocally": {
+			&PackageAuthenticationResult{
+				hashes: HashDispositions{
+					Hash("test:placeholder"): {
+						ReportedByTrustedMirror: true,
+						VerifiedLocally:         true,
+					},
+				},
+			},
+			"verified checksum",
 			"", false, true,
 		},
 		"SignedByGPGKeyIDs+VerifiedLocally": {
@@ -222,15 +246,52 @@ func TestPackageHashAuthentication_success(t *testing.T) {
 		Hash("h1:qjsREM4DqEWECD43FcPqddZ9oxCG+IaMTxvWPciS05g="),
 	}
 
-	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes)
-	result, err := auth.AuthenticatePackage(location)
-	if err != nil {
-		t.Fatalf("unexpected error: %s", err)
-	}
+	t.Run("single hash untrusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, false)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
 
-	if got, want := result.String(), "verified checksum"; got != want {
-		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
-	}
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+	})
+
+	// Add bogus hash reported by the source
+	wantHashes = append(wantHashes, Hash("zh:reportedhashvalue"))
+
+	t.Run("multiple hashes untrusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, false)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+
+		if len(result.hashes) != 1 {
+			t.Errorf("expected 1 hash, got %d hashes", len(result.hashes))
+		}
+	})
+
+	t.Run("multiple hashes trusted", func(t *testing.T) {
+		auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, wantHashes, true)
+		result, err := auth.AuthenticatePackage(location)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
+		}
+
+		if got, want := result.String(), "verified checksum"; got != want {
+			t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+		}
+
+		if len(result.hashes) != 2 {
+			t.Errorf("expected 2 hash, got %d hashes", len(result.hashes))
+		}
+	})
 }
 
 // Package has authentication can fail for various reasons.
@@ -257,7 +318,7 @@ func TestPackageHashAuthentication_failure(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Invalid expected hash, either because we'll error before we
 			// reach it, or we want to force a checksum mismatch.
-			auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{"h1:invalid"})
+			auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{"h1:invalid"}, false)
 			result, err := auth.AuthenticatePackage(test.location)
 
 			if result != nil {
@@ -267,6 +328,113 @@ func TestPackageHashAuthentication_failure(t *testing.T) {
 				t.Errorf("wrong err: got %q, want %q", gotErr, test.err)
 			}
 		})
+	}
+}
+
+// Trusting a mirror does not bypass verification: if none of the reported
+// hashes match the local package, authentication still fails.
+func TestPackageHashAuthentication_trustedButNoMatchingHash(t *testing.T) {
+	location := PackageLocalDir(filepath.FromSlash("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/2.0.0/linux_amd64"))
+
+	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{
+		Hash("h1:notthematch"),
+		Hash("h1:stillnotthething"),
+	}, true)
+	result, err := auth.AuthenticatePackage(location)
+
+	if result != nil {
+		t.Errorf("wrong result: got %#v, want nil", result)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got, want := err.Error(), "provider package doesn't match the any of the expected checksums"; got != want {
+		t.Errorf("wrong err: got %q, wanted %q", got, want)
+	}
+}
+
+// With trust_all_hashes enabled a mirror source records the verified hash as
+// VerifiedLocally and every additional reported hash as ReportedByTrustedMirror.
+// Only the verified hash is locally proven; the remaining hashes are eligible
+// for the dependency lock file only via the "signing skipped" reporting path,
+// which carries no GPG signing key information.
+func TestPackageHashAuthentication_trustedDispositions(t *testing.T) {
+	location := PackageLocalDir(filepath.FromSlash("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/2.0.0/linux_amd64"))
+	validHash := Hash("h1:qjsREM4DqEWECD43FcPqddZ9oxCG+IaMTxvWPciS05g=")
+	reportedHash := Hash("zh:reportedhashvalue")
+
+	auth := NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{validHash, reportedHash}, true)
+	result, err := auth.AuthenticatePackage(location)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Even though some hashes were only reported, the locally-verified
+	// checksum dominates the summary.
+	if got, want := result.String(), "verified checksum"; got != want {
+		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+	}
+
+	wantVerified := []Hash{validHash}
+	gotVerified := slices.Collect(result.HashesWithDisposition(func(disp *HashDisposition) bool {
+		return disp.VerifiedLocally
+	}))
+	if diff := cmp.Diff(wantVerified, gotVerified); diff != "" {
+		t.Errorf("wrong locally-verified hashes\n%s", diff)
+	}
+
+	wantReported := []Hash{reportedHash}
+	gotReported := slices.Collect(result.HashesWithDisposition(func(disp *HashDisposition) bool {
+		return disp.ReportedByTrustedMirror
+	}))
+	if diff := cmp.Diff(wantReported, gotReported); diff != "" {
+		t.Errorf("wrong trusted-mirror-reported hashes\n%s", diff)
+	}
+
+	// Lockfile eligibility: signing is skipped for the reported hashes
+	// (comparable to registry-reported hashes), and no signing key
+	// information is implied by the trusted-mirror path itself.
+	if result.Signed() {
+		t.Errorf("wrong Signed result: got true, want false")
+	}
+	if got, want := result.SigningSkipped(), true; got != want {
+		t.Errorf("wrong SigningSkipped result\ngot:  %t\nwant: %t", got, want)
+	}
+	for hash, disp := range result.hashes {
+		if disp.SignedByAnyGPGKeys() {
+			t.Errorf("trusted-mirror hash should not claim GPG signatures, got %v", disp.GPGSigningKeysString())
+		}
+		if disp.VerifiedLocally {
+			// Locally-verified hashes are tagged with the authenticator's
+			// target platform.
+			if diff := cmp.Diff(collections.NewSet(Platform{"linux", "amd64"}), disp.Platforms); diff != "" {
+				t.Errorf("wrong platform association for locally-verified hash %s\n%s", hash, diff)
+			}
+		} else if len(disp.Platforms) != 0 {
+			// B1 flattens a trusted mirror's per-platform hashes into one
+			// set, so reported hashes are platformless.
+			t.Errorf("trusted-mirror-reported hash %s must be platformless, got %v", hash, disp.Platforms)
+		}
+	}
+
+	// A trusted mirror may also report an extra h1 hash (e.g. for another
+	// platform) that never matches the local package; it must be recorded
+	// as reported-only and platformless.
+	extraH1 := Hash("h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	auth = NewPackageHashAuthentication(Platform{"linux", "amd64"}, []Hash{validHash, reportedHash, extraH1}, true)
+	result, err = auth.AuthenticatePackage(location)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	extraDisp, ok := result.hashes[extraH1]
+	if !ok {
+		t.Fatalf("extra reported h1 hash is missing from the result")
+	}
+	if !extraDisp.ReportedByTrustedMirror || extraDisp.VerifiedLocally {
+		t.Errorf("wrong disposition for extra reported h1: %+v", extraDisp)
+	}
+	if len(extraDisp.Platforms) != 0 {
+		t.Errorf("extra reported h1 must be platformless, got %v", extraDisp.Platforms)
 	}
 }
 
@@ -292,6 +460,15 @@ func TestArchiveChecksumAuthentication_success(t *testing.T) {
 
 	if got, want := result.String(), "verified checksum"; got != want {
 		t.Errorf("wrong result summary\ngot:  %s\nwant: %s", got, want)
+	}
+
+	// The locally-verified archive hash is tagged with the target platform.
+	wantDisp := &HashDisposition{
+		VerifiedLocally: true,
+		Platforms:       collections.NewSet(Platform{"linux", "amd64"}),
+	}
+	if diff := cmp.Diff(wantDisp, result.hashes[HashLegacyZipSHAFromSHA(wantSHA256Sum)]); diff != "" {
+		t.Errorf("wrong archive hash disposition\n%s", diff)
 	}
 }
 
@@ -433,6 +610,233 @@ func TestMatchingChecksumAuthentication_failure(t *testing.T) {
 				t.Errorf("wrong err: got %q, want %q", gotErr, test.err)
 			}
 		})
+	}
+}
+
+func TestRegistryPackageAuthentication(t *testing.T) {
+	location := PackageLocalArchive("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/terraform-provider-null_2.1.0_linux_amd64.zip")
+	platform := Platform{"linux", "amd64"}
+	meta := PackageMeta{
+		Provider:       addrs.MustParseProviderSourceString("registry.opentofu.org/hashicorp/null"),
+		Version:        MustParseVersion("2.1.0"),
+		TargetPlatform: platform,
+	}
+	validSha := "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b"
+	validH1 := "tru5tm3br0"
+	zh := Hash("zh:" + validSha)
+	h1 := Hash("h1:" + validH1)
+	otherSha := "22a8b31dd100000000000000000000000000000000000000000000000000000b"
+	otherH1 := "7ru5tm0re"
+	zhOther := Hash("zh:" + otherSha)
+	h1Other := Hash("h1:" + otherH1)
+
+	tests := []struct {
+		name        string
+		sha         string
+		packageData map[Platform]RegistryPlatformData
+		location    PackageLocation
+		result      *PackageAuthenticationResult
+		err         string
+	}{{
+		name:     "fallback",
+		location: location,
+		sha:      validSha,
+	}, {
+		name:     "success",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			h1: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			zh: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+		}},
+	}, {
+		name:     "multi_platform_dispositions",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+			Platform{"linux", "arm64"}: {
+				Hashes:      []Hash{zhOther, h1Other},
+				PackageSize: 100,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			h1:      &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			zh:      &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform)},
+			h1Other: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(Platform{"linux", "arm64"})},
+			zhOther: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(Platform{"linux", "arm64"})},
+		}},
+	}, {
+		name:     "same_hash_reported_for_multiple_platforms",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 294,
+			},
+			Platform{"linux", "arm64"}: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 100,
+			},
+		},
+		result: &PackageAuthenticationResult{hashes: HashDispositions{
+			// A hash reported by more than one platform keeps every
+			// platform association; it must not be attributed to only
+			// whichever platform the map iteration happens to reach last.
+			h1: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform, Platform{"linux", "arm64"})},
+			zh: &HashDisposition{ReportedByRegistry: true, Platforms: collections.NewSet(platform, Platform{"linux", "arm64"})},
+		}},
+	}, {
+		name:        "missing_platform",
+		location:    location,
+		sha:         validSha,
+		packageData: map[Platform]RegistryPlatformData{Platform{}: {}},
+		err:         `registry response missing package with platform "linux_amd64"`,
+	}, {
+		name:     "zero_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 0,
+			},
+		},
+		err: `registry response has invalid package size 0`,
+	}, {
+		name:     "invalid_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: -200,
+			},
+		},
+		err: `registry response has invalid package size -200`,
+	}, {
+		name:     "wrong_package_size",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{zh, h1},
+				PackageSize: 295,
+			},
+		},
+		err: `registry response indicates a package of size 295, but recieved a package of size 294`,
+	}, {
+		name:     "incorrect_platform_hash",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{"zh:superduperincorrect", h1},
+				PackageSize: 294,
+			},
+		},
+		err: `registry response expected sha256sum is "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b", which does not match the platform's value of "superduperincorrect"`,
+	}, {
+		name:     "missing_platform_hash",
+		location: location,
+		sha:      validSha,
+		packageData: map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{h1},
+				PackageSize: 294,
+			},
+		},
+		err: "registry response does not contain matching sha256sum package entry and is invalid",
+	}}
+
+	for _, tc := range tests {
+		auth := NewRegistryPackageAuthentication(meta, tc.sha, tc.packageData)
+		result, err := auth.AuthenticatePackage(tc.location)
+
+		if tc.err != "" {
+			if err == nil {
+				t.Errorf("wrong err: got nil, wanted %q", tc.err)
+			} else if err.Error() != tc.err {
+				t.Errorf("wrong err: got %q, wanted %q", err.Error(), tc.err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("wrong err: got %q, wanted nil", err.Error())
+			}
+		}
+
+		if tc.result != nil {
+			if result == nil {
+				t.Errorf("wrong result: got nil, wanted %#v", tc.result)
+			} else if diff := cmp.Diff(result.hashes, tc.result.hashes); diff != "" {
+				t.Errorf("wrong results: %s", diff)
+			}
+		} else {
+			if result != nil {
+				t.Errorf("wrong result: got %#v, wanted nil", result)
+			}
+		}
+	}
+}
+
+func TestRegistryPackageAuthenticationPackageAuthenticationAllFailureIsFatal(t *testing.T) {
+	location := PackageLocalArchive("testdata/filesystem-mirror/registry.opentofu.org/hashicorp/null/terraform-provider-null_2.1.0_linux_amd64.zip")
+	platform := Platform{"linux", "amd64"}
+	meta := PackageMeta{
+		Provider:       addrs.MustParseProviderSourceString("registry.opentofu.org/hashicorp/null"),
+		Version:        MustParseVersion("2.1.0"),
+		TargetPlatform: platform,
+	}
+	validSha := "086119a26576d06b8281a97e8644380da89ce16197cd955f74ea5ee664e9358b"
+	checksum := [sha256.Size]byte{}
+	if _, err := hex.Decode(checksum[:], []byte(validSha)); err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(validSha + " terraform-provider-null_2.1.0_linux_amd64.zip\n")
+	matchingChecksum := NewMatchingChecksumAuthentication(
+		document, "terraform-provider-null_2.1.0_linux_amd64.zip", checksum,
+	)
+
+	// Sanity check: with no packages metadata the registry authenticator is a
+	// no-op and the rest of the chain succeeds.
+	chain := PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(meta, validSha, nil),
+		matchingChecksum,
+	)
+	if _, err := chain.AuthenticatePackage(location); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// A malformed requested-platform registry entry must abort the whole
+	// chain, even though the remaining authenticator would succeed.
+	chain = PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(meta, validSha, map[Platform]RegistryPlatformData{
+			platform: {
+				Hashes:      []Hash{Hash("h1:tru5tm3br0")},
+				PackageSize: 294,
+			},
+		}),
+		matchingChecksum,
+	)
+	result, err := chain.AuthenticatePackage(location)
+	if err == nil {
+		t.Fatal("wanted error, got nil")
+	}
+	if got, want := err.Error(), "registry response does not contain matching sha256sum package entry and is invalid"; got != want {
+		t.Errorf("wrong err: got %q, wanted %q", got, want)
+	}
+	if result != nil {
+		t.Errorf("wrong result: got %#v, wanted nil", result)
 	}
 }
 

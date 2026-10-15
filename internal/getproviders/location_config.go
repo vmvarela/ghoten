@@ -16,4 +16,11 @@ type LocationConfig struct {
 
 	// TODO - use this when we'll introduce per installation method configuration
 	ProviderDownloadTimeout time.Duration
+
+	// TrustAllHashes is set if the user has explicitly opted into trusting
+	// that this source reports accurate hashes for every platform for which
+	// it provides packages, not just the platform that is currently being
+	// installed. Opt-in only, via network_mirror `trust_all_hashes`; the
+	// zero value preserves the pre-existing behavior.
+	TrustAllHashes bool
 }

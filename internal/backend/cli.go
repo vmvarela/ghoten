@@ -9,8 +9,8 @@ import (
 	"github.com/mitchellh/cli"
 	"github.com/mitchellh/colorstring"
 
-	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/terminal"
 )
 
 // CLI is an optional interface that can be implemented to be initialized

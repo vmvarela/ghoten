@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/mitchellh/cli"
-	"github.com/vmvarela/ghoten/internal/command/workdir"
 	"github.com/posener/complete"
+	"github.com/vmvarela/ghoten/internal/command/workdir"
 )
 
 func TestMetaCompletePredictWorkspaceName(t *testing.T) {

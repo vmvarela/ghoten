@@ -303,6 +303,11 @@ func HashesMatchingPackage(loc PackageLocation, toTest []Hash) iter.Seq2[Hash, e
 // format. If PreferredHash returns a non-empty string then it will be one
 // of the hash strings in "given", and that hash is the one that must pass
 // verification in order for a package to be considered valid.
+//
+// In practice, this function is used in a variety of locations with a broader
+// goal in mind. It is used to filter out any hashes that Ghoten does not
+// currently recognise. If this function is ever heavily modified, all call
+// sites should be checked carefully.
 func PreferredHashes(given []Hash) []Hash {
 	// For now this is just filtering for the two hash formats we support,
 	// both of which are considered equally "preferred". If we introduce
@@ -365,6 +370,10 @@ func PackageHashLegacyZipSHA(loc PackageLocalArchive) (Hash, error) {
 func HashLegacyZipSHAFromSHA(sum [sha256.Size]byte) Hash {
 	return HashSchemeZip.New(fmt.Sprintf("%x", sum[:]))
 }
+
+// emptyPackageHashV1 is the representation of a completely empty package using
+// the V1 hashing scheme.
+const emptyPackageHashV1 = Hash("h1:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=")
 
 // PackageHashV1 computes a hash of the contents of the package at the given
 // location using hash algorithm 1. The resulting Hash is guaranteed to have
@@ -516,6 +525,15 @@ type HashDisposition struct {
 	// set by a source that interacts with any sort of "mirror".
 	ReportedByRegistry bool
 
+	// ReportedByTrustedMirror is set if this hash was reported by an
+	// explicitly-trusted mirror source (network_mirror with
+	// "trust_all_hashes"). Such a hash has not been verified locally and was
+	// not covered by any GPG signing key unless SignedByGPGKeyIDs is also
+	// set; it is trusted only because the user opted into trusting that
+	// mirror. Like ReportedByRegistry, it is not set by a source that merely
+	// passed the hash through without interpreting it.
+	ReportedByTrustedMirror bool
+
 	// VerifiedLocally is set for any hash that was calculated locally,
 	// directly from a package for the provider that the hash is intended
 	// to verify.
@@ -526,6 +544,17 @@ type HashDisposition struct {
 	// unless the provider developer's signing key also appears in
 	// SignedByGPGKeyIDs.
 	VerifiedLocally bool
+
+	// Platforms is the set of target platforms the associated hash is
+	// actually associated with: the target platform of a locally-verified
+	// archive, or the platform(s) for which the origin registry reported
+	// the hash. A single hash (typically an "h1" content hash) can be
+	// valid for multiple platforms at once.
+	//
+	// An empty (or nil) set means that the hash is not tied to any
+	// specific platform, such as the hashes a trusted mirror reports in a
+	// single flattened set covering all platforms of a provider release.
+	Platforms collections.Set[Platform]
 }
 
 // SignedByAnyGPGKeys returns true if the reciever has at least one GPG key
@@ -559,6 +588,24 @@ func (d HashDisposition) GPGSigningKeysString() string {
 	return strings.Join(keyIDs, ", ")
 }
 
+// unionPlatformSets returns the union of the two given platform sets, or
+// nil if both are empty. The result never shares storage with either input,
+// so later mutation of the union cannot affect the inputs.
+func unionPlatformSets(a, b collections.Set[Platform]) collections.Set[Platform] {
+	total := len(a) + len(b)
+	if total == 0 {
+		return nil
+	}
+	set := make(collections.Set[Platform], total)
+	for platform := range a {
+		set[platform] = struct{}{}
+	}
+	for platform := range b {
+		set[platform] = struct{}{}
+	}
+	return set
+}
+
 // MergeHashDisposition takes two [HashDisposition] objects and returns a
 // new object that represents the union of the information from both.
 func MergeHashDisposition(a, b *HashDisposition) *HashDisposition {
@@ -573,7 +620,9 @@ func MergeHashDisposition(a, b *HashDisposition) *HashDisposition {
 			ret.SignedByGPGKeyIDs[key] = struct{}{}
 		}
 	}
+	ret.Platforms = unionPlatformSets(a.Platforms, b.Platforms)
 	ret.ReportedByRegistry = a.ReportedByRegistry || b.ReportedByRegistry
+	ret.ReportedByTrustedMirror = a.ReportedByTrustedMirror || b.ReportedByTrustedMirror
 	ret.VerifiedLocally = a.VerifiedLocally || b.VerifiedLocally
 	return ret
 }
@@ -614,6 +663,15 @@ func (ds HashDispositions) AllGPGSigningKeysString() string {
 func (ds HashDispositions) HasAnyReportedByRegistry() bool {
 	for _, disp := range ds {
 		if disp.ReportedByRegistry {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds HashDispositions) HasAnyReportedByTrustedMirror() bool {
+	for _, disp := range ds {
+		if disp.ReportedByTrustedMirror {
 			return true
 		}
 	}

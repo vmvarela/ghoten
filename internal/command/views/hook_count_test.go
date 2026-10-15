@@ -12,9 +12,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 
 	legacy "github.com/vmvarela/ghoten/internal/legacy/ghoten"
 )

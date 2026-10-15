@@ -18,11 +18,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/depsfile"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/initwd"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 
 	"github.com/zclconf/go-cty/cty"
 )

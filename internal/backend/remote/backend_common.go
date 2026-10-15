@@ -19,9 +19,9 @@ import (
 	tfe "github.com/hashicorp/go-tfe"
 
 	"github.com/vmvarela/ghoten/internal/backend"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/plans"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 var (

@@ -351,12 +351,13 @@ func (n *NodeDestroyDeposedResourceInstanceObject) Execute(ctx context.Context, 
 	// was successfully destroyed it will be pruned. If it was not, it will
 	// be caught on the next run.
 	writeDiags := n.writeResourceInstanceState(ctx, evalCtx, state)
-	diags.Append(writeDiags)
+	diags = diags.Append(writeDiags)
+	// The post-apply hook closes the apply heartbeat started by the pre-apply
+	// hook (e.g. in the JSON output hook), so it must run on every path.
+	diags = diags.Append(n.postApplyHook(evalCtx, state, diags.Err()))
 	if diags.HasErrors() {
 		return diags
 	}
-
-	diags = diags.Append(n.postApplyHook(evalCtx, state, diags.Err()))
 
 	return diags.Append(updateStateHook(evalCtx, n.Addr))
 }
@@ -414,6 +415,9 @@ func (n *NodeDestroyDeposedResourceInstanceObject) writeResourceInstanceState(ct
 	}
 
 	obj.Value = schema.RemoveEphemeralFromWriteOnly(obj.Value)
+	if err := n.rejectLeakedEphemeralMarks(obj.Value); err != nil {
+		return err
+	}
 	src, err := obj.Encode(schema.ImpliedType(), currentVersion)
 	if err != nil {
 		return fmt.Errorf("failed to encode %s in state: %w", absAddr, err)

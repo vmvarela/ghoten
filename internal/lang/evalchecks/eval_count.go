@@ -6,16 +6,20 @@ package evalchecks
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/gocty"
 )
 
 type EvaluateFunc func(expr hcl.Expression) (cty.Value, tfdiags.Diagnostics)
+
+const maxCount = int64(math.MaxInt32)
 
 // EvaluateCountExpression is our standard mechanism for interpreting an
 // expression given for a "count" argument on a resource or a module. This
@@ -80,7 +84,20 @@ func EvaluateCountExpressionValue(expr hcl.Expression, ctx EvaluateFunc) (cty.Va
 
 	// Unmark the count value, sensitive values are allowed in count but not for_each,
 	// as using it here will not disclose the sensitive value
-	countVal, _ = countVal.Unmark()
+	countVal, valMarks := countVal.Unmark()
+
+	// We do not allow ephemeral values in the count value
+	if _, ok := valMarks[marks.Ephemeral]; ok {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity:   hcl.DiagError,
+			Summary:    "Invalid count argument",
+			Detail:     "Ephemeral values, or values derived from ephemeral values, cannot be used as count arguments. If used, the ephemeral value could be exposed as a resource instance key.",
+			Subject:    expr.Range().Ptr(),
+			Expression: expr,
+			Extra:      DiagnosticCausedByConfidentialValues(true),
+		})
+		return nullCount, diags
+	}
 
 	switch {
 	case countVal.IsNull():
@@ -94,6 +111,18 @@ func EvaluateCountExpressionValue(expr hcl.Expression, ctx EvaluateFunc) (cty.Va
 
 	case !countVal.IsKnown():
 		return cty.UnknownVal(cty.Number), diags
+	}
+
+	// Enforce a consistent upper bound across platforms before converting to
+	// the machine's native int, which may be narrower than the number provided.
+	if countVal.Type() == cty.Number && countVal.GreaterThan(cty.NumberIntVal(maxCount)).True() {
+		diags = diags.Append(&hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid count argument",
+			Detail:   fmt.Sprintf(`The given "count" argument value is unsuitable: must be less than or equal to %d.`, maxCount),
+			Subject:  expr.Range().Ptr(),
+		})
+		return nullCount, diags
 	}
 
 	var count int

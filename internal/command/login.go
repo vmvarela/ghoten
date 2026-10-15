@@ -22,19 +22,19 @@ import (
 	"strings"
 
 	tfe "github.com/hashicorp/go-tfe"
-	"github.com/vmvarela/ghoten/internal/command/arguments"
-	"github.com/vmvarela/ghoten/internal/command/views"
-	"github.com/vmvarela/ghoten/internal/tracing"
 	"github.com/opentofu/svchost"
 	"github.com/opentofu/svchost/disco"
 	"github.com/opentofu/svchost/svcauth"
+	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/command/views"
+	"github.com/vmvarela/ghoten/internal/tracing"
 
 	"github.com/vmvarela/ghoten/internal/command/cliconfig"
 	"github.com/vmvarela/ghoten/internal/command/format"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/httpclient"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/version"
 
 	uuid "github.com/hashicorp/go-uuid"
@@ -57,6 +57,13 @@ func (c *LoginCommand) Run(rawArgs []string) int {
 	ctx := c.CommandContext()
 	ctx, span := tracing.Tracer().Start(ctx, "Login")
 	defer span.End()
+
+	// One interruptible context for the whole command: a single consumer of
+	// ShutdownCh cancels it, and every interactive prompt and the OAuth
+	// wait below derive from it, so one Ctrl+C aborts whichever step is
+	// currently waiting without the steps competing for the signal.
+	ctx, done := c.InterruptibleContext(ctx)
+	defer done()
 
 	common, rawArgs := arguments.ParseView(rawArgs)
 	c.View.Configure(common)
@@ -515,7 +522,8 @@ func (c *LoginCommand) interactiveGetTokenByCode(ctx context.Context, hostname s
 	var code string
 	var ok bool
 	select {
-	case <-c.ShutdownCh:
+	case <-ctx.Done():
+		// The command was interrupted.
 		diags = diags.Append(
 			tfdiags.Sourceless(
 				tfdiags.Error,

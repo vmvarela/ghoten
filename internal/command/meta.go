@@ -17,14 +17,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"runtime"
 
 	"github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/mitchellh/cli"
 	"github.com/mitchellh/colorstring"
-	"github.com/vmvarela/ghoten/internal/command/flags"
 	"github.com/opentofu/svchost/disco"
+	"github.com/vmvarela/ghoten/internal/command/flags"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/backend"
@@ -38,6 +41,7 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs/configload"
 	"github.com/vmvarela/ghoten/internal/getmodules"
 	"github.com/vmvarela/ghoten/internal/getproviders"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	legacy "github.com/vmvarela/ghoten/internal/legacy/ghoten"
 	"github.com/vmvarela/ghoten/internal/plugins"
 	"github.com/vmvarela/ghoten/internal/providers"
@@ -45,7 +49,6 @@ import (
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // Meta are the meta-options that are available on all or most commands.
@@ -166,6 +169,18 @@ type Meta struct {
 
 	// When this channel is closed, the command will be cancelled.
 	ShutdownCh <-chan struct{}
+
+	// interrupt is the command's interrupt coordinator, created lazily on
+	// the first use of the interrupt machinery via
+	// [Meta.interruptCoordinator]. It is a pointer so that Meta values
+	// copied after the coordinator exists (e.g. embedded in a command that
+	// re-shares the Meta partway through its Run) keep sharing the same
+	// ShutdownCh consumer; copies made before that lazily create their own
+	// when needed.
+	//
+	// Set this field only via [Meta.interruptCoordinator]; it must not be
+	// manipulated directly.
+	interrupt *interruptCoordinator
 
 	// ProviderDevOverrides are providers where we ignore the lock file, the
 	// configured version constraints, and the local cache directory and just
@@ -427,7 +442,12 @@ func (m *Meta) StdinPiped() bool {
 }
 
 // InterruptibleContext returns a context.Context that will be cancelled
-// if the process is interrupted by a platform-specific interrupt signal.
+// when the process is interrupted by a platform-specific interrupt signal.
+//
+// Every interruptible context derives from this Meta's interrupt
+// coordinator, which has a single consumer of m.ShutdownCh, so one
+// interrupt signal cancels every active interruptible context without the
+// contexts competing for the signal.
 //
 // The typical way to use this is to pass the result of [Meta.CommandContext]
 // as the base context, but that's appropriate only if the interruptible
@@ -446,22 +466,145 @@ func (m *Meta) StdinPiped() bool {
 //	ctx, done := c.InterruptibleContext(c.CommandContext())
 //	defer done()
 func (m *Meta) InterruptibleContext(base context.Context) (context.Context, context.CancelFunc) {
-	if m.ShutdownCh == nil {
+	graceful, _ := m.interruptBroadcasts()
+	if graceful == nil {
 		// If we're running in a unit testing context without a shutdown
-		// channel populated then we'll return an uncancelable channel.
+		// channel populated then we'll return an uncancelable context.
 		return base, func() {}
 	}
 
 	ctx, cancel := context.WithCancel(base)
 	go func() {
 		select {
-		case <-m.ShutdownCh:
+		case <-graceful:
 			cancel()
 		case <-ctx.Done():
 			// finished without being interrupted
 		}
 	}()
 	return ctx, cancel
+}
+
+// interruptCoordinator converts the interrupt events delivered to a command's
+// ShutdownCh into cancellation of two pre-created broadcast channels: the
+// first event closes graceful (used by prompts, the login wait, and
+// [Meta.RunOperation]'s graceful stop), the second event closes fatal (used
+// by [Meta.RunOperation]'s hard cancel).
+//
+// Both broadcasts exist for the whole command lifetime, so a waiter can
+// never be created in a window where an event would go unconsumed: it
+// always observes either a present or a future cancellation.
+//
+// The coordinator has exactly one goroutine, created with the coordinator
+// itself, which consumes ShutdownCh until the command finishes (its Meta
+// becomes unreachable, closing done).
+type interruptCoordinator struct {
+	sig      <-chan struct{}
+	graceful chan struct{} // closed by the first interrupt event
+	fatal    chan struct{} // closed by the second interrupt event
+	done     chan struct{} // closed when the command finishes
+	exited   chan struct{} // closed when the watch goroutine exits
+}
+
+// interruptMu serializes the lazy creation of each command's interrupt
+// coordinator and all reads of the Meta.interrupt pointer, without storing
+// a lock inside the copyable Meta struct.
+var interruptMu sync.Mutex
+
+// interruptCoordinator returns this command's interrupt coordinator,
+// creating it on the first call along with its single watch goroutine.
+// It returns nil when ShutdownCh is nil; use [Meta.interruptBroadcasts]
+// for the nil-safe accessor.
+//
+// All access to m.interrupt is serialized by a package-level mutex because
+// Meta values are copied freely and must stay copyable (no lock inside
+// Meta); copies made before the first creation each lazily create their
+// own coordinator bound to the same ShutdownCh.
+func (m *Meta) interruptCoordinator() *interruptCoordinator {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	if m.interrupt == nil {
+		if m.ShutdownCh == nil {
+			return nil
+		}
+		c := &interruptCoordinator{
+			sig:      m.ShutdownCh,
+			graceful: make(chan struct{}),
+			fatal:    make(chan struct{}),
+			done:     make(chan struct{}),
+			exited:   make(chan struct{}),
+		}
+		// The command finishing is signalled by its Meta (and every copy
+		// sharing the coordinator) becoming unreachable, which is
+		// implemented with a cleanup that closes done. The watch
+		// goroutine receives only the individual channels, so it never
+		// keeps the coordinator itself reachable.
+		runtime.AddCleanup(c, func(done chan struct{}) { close(done) }, c.done)
+		go interruptWatch(c.sig, c.graceful, c.fatal, c.done, c.exited)
+		m.interrupt = c
+	}
+	return m.interrupt
+}
+
+// interruptWatch is the single consumer of the command's ShutdownCh. The
+// first event closes the graceful broadcast; the second (or the channel
+// closing, which counts as an interrupt at every level) closes the fatal
+// broadcast. The coordinator's done channel makes it exit when the command
+// finishes with no pending event. The channels are parameters, not a
+// pointer receiver, precisely so no goroutine keeps the coordinator alive.
+func interruptWatch(
+	sig <-chan struct{},
+	graceful, fatal, done, exited chan struct{},
+) {
+	defer close(exited)
+	select {
+	case _, ok := <-sig:
+		close(graceful)
+		if !ok {
+			// ShutdownCh was closed: interrupt at every level.
+			close(fatal)
+			return
+		}
+		select {
+		case <-sig:
+			// A second event (or the channel closing, which counts as an
+			// interrupt at every level) fires the fatal broadcast.
+			close(fatal)
+		case <-done:
+			// The command finished after only one interrupt.
+		}
+	case <-done:
+		// The command finished without being interrupted.
+	}
+}
+
+// interruptBroadcasts returns the graceful and fatal broadcast channels of
+// this command's interrupt coordinator, creating the coordinator if this is
+// the first use of the command's interrupt machinery. Both are nil when
+// ShutdownCh is nil; receiving from a nil channel blocks forever, which
+// preserves the uncancelable behavior of Meta without shutdown plumbing.
+func (m *Meta) interruptBroadcasts() (<-chan struct{}, <-chan struct{}) {
+	c := m.interruptCoordinator()
+	if c == nil {
+		return nil, nil
+	}
+	return c.graceful, c.fatal
+}
+
+// InitInterruptCoordinator eagerly creates this Meta's interrupt coordinator,
+// starting its single ShutdownCh consumer.
+//
+// This exists for the "package main" defaults path, which creates one Meta
+// value and then copies it into every command's scaffolding before any
+// command runs. Calling this once there (before the copies are made) means
+// every copy shares the coordinator and its ShutdownCh consumer, rather than
+// each lazily starting a consumer of its own when it first needs the
+// interrupt machinery.
+//
+// Test code that constructs Meta values directly does not need this: the
+// coordinator is still created lazily on first use.
+func (m *Meta) InitInterruptCoordinator() {
+	m.interruptCoordinator()
 }
 
 // CommandContext returns the "root context" to use in the main Run function
@@ -516,9 +659,13 @@ func (m *Meta) RunOperation(ctx context.Context, b backend.Enhanced, opReq *back
 		return nil, diags.Append(fmt.Errorf("error starting operation: %w", err))
 	}
 
-	// Wait for the operation to complete or an interrupt to occur
+	// Wait for the operation to complete or an interrupt to occur. The
+	// graceful and fatal broadcasts are pre-created by the command's
+	// interrupt coordinator, so the fatal phase can never miss an event
+	// that arrives while the graceful phase is being registered.
+	graceful, fatal := m.interruptBroadcasts()
 	select {
-	case <-m.ShutdownCh:
+	case <-graceful:
 		// gracefully stop the operation
 		op.Stop()
 
@@ -527,7 +674,7 @@ func (m *Meta) RunOperation(ctx context.Context, b backend.Enhanced, opReq *back
 
 		// Still get the result, since there is still one
 		select {
-		case <-m.ShutdownCh:
+		case <-fatal:
 			opReq.View.FatalInterrupt()
 
 			// cancel the operation completely
@@ -740,8 +887,10 @@ func (m *Meta) confirm(opts *ghoten.InputOpts) (bool, error) {
 		return false, errors.New("input is disabled")
 	}
 
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
 	for i := 0; i < 2; i++ {
-		v, err := m.UIInput().Input(context.Background(), opts)
+		v, err := m.UIInput().Input(ctx, opts)
 		if err != nil {
 			return false, fmt.Errorf(
 				"Error asking for confirmation: %w", err)

@@ -14,10 +14,10 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestMarshalAttributeValues(t *testing.T) {

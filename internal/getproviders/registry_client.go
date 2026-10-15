@@ -220,10 +220,16 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 		DownloadURL string   `json:"download_url"`
 		SHA256Sum   string   `json:"shasum"`
 
+		// Information that should be IDENTICAL between all platform downloads of a given version
 		SHA256SumsURL          string `json:"shasums_url"`
 		SHA256SumsSignatureURL string `json:"shasums_signature_url"`
 
 		SigningKeys SigningKeyList `json:"signing_keys"`
+
+		Packages map[string]struct {
+			Hashes      []string `json:"hashes"`
+			PackageSize int64    `json:"package_size"`
+		} `json:"packages"`
 	}
 	var body ResponseBody
 
@@ -277,7 +283,9 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 
 	downloadURL, err := url.Parse(body.DownloadURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid download URL: %w", err)
+		// Don't wrap the parse error here: *url.Error embeds the raw
+		// server-supplied DownloadURL, which may carry secrets.
+		return PackageMeta{}, errors.New("registry response includes invalid download URL")
 	}
 	downloadURL = resp.Request.URL.ResolveReference(downloadURL)
 	if downloadURL.Scheme != "http" && downloadURL.Scheme != "https" {
@@ -299,6 +307,33 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 		// "Authentication" is populated below
 	}
 
+	packageData := make(map[Platform]RegistryPlatformData)
+	for platformStr, packageMeta := range body.Packages {
+		platform, err := ParsePlatform(platformStr)
+		if err != nil {
+			return PackageMeta{}, c.errQueryFailed(
+				provider,
+				fmt.Errorf("registry response includes invalid package platform %q: %w", platformStr, err),
+			)
+		}
+
+		platformData := RegistryPlatformData{
+			PackageSize: packageMeta.PackageSize,
+		}
+		for _, raw := range packageMeta.Hashes {
+			hash, err := ParseHash(raw)
+			if err != nil {
+				return PackageMeta{}, c.errQueryFailed(
+					provider,
+					fmt.Errorf("registry response includes invalid package hash %q: %w", raw, err),
+				)
+			}
+			platformData.Hashes = append(platformData.Hashes, hash)
+		}
+
+		packageData[platform] = platformData
+	}
+
 	if len(body.SHA256Sum) != sha256.Size*2 { // *2 because it's hex-encoded
 		return PackageMeta{}, c.errQueryFailed(
 			provider,
@@ -317,7 +352,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 
 	shasumsURL, err := url.Parse(body.SHA256SumsURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid SHASUMS URL: %w", err)
+		return PackageMeta{}, errors.New("registry response includes invalid SHASUMS URL")
 	}
 	shasumsURL = resp.Request.URL.ResolveReference(shasumsURL)
 	if shasumsURL.Scheme != "http" && shasumsURL.Scheme != "https" {
@@ -332,7 +367,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 	}
 	signatureURL, err := url.Parse(body.SHA256SumsSignatureURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid SHASUMS signature URL: %w", err)
+		return PackageMeta{}, errors.New("registry response includes invalid SHASUMS signature URL")
 	}
 	signatureURL = resp.Request.URL.ResolveReference(signatureURL)
 	if signatureURL.Scheme != "http" && signatureURL.Scheme != "https" {
@@ -352,6 +387,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 	}
 
 	ret.Authentication = PackageAuthenticationAll(
+		NewRegistryPackageAuthentication(ret, body.SHA256Sum, packageData),
 		NewMatchingChecksumAuthentication(document, body.Filename, checksum),
 		NewArchiveChecksumAuthentication(ret.TargetPlatform, checksum),
 		NewSignatureAuthentication(ret, document, signature, keys, provider),

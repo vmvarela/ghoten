@@ -28,7 +28,9 @@ func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	if _, ok := req.Header["User-Agent"]; !ok {
 		req.Header.Set("User-Agent", rt.userAgent)
 	}
-	log.Printf("[TRACE] HTTP client %s request to %s", req.Method, req.URL.String())
+	// Drop userinfo, query string, and fragment from the log: they can
+	// carry credentials (e.g. for "presigned" URLs).
+	log.Printf("[TRACE] HTTP client %s request to %s", req.Method, RedactedURLString(req.URL))
 	return rt.inner.RoundTrip(req)
 }
 

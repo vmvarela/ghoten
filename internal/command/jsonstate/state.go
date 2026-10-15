@@ -15,10 +15,10 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/jsonchecks"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 const (

@@ -16,11 +16,11 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opentofu/svchost/disco"
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/cliconfig"
 	"github.com/vmvarela/ghoten/internal/command/cliconfig/ociauthconfig"
 	"github.com/vmvarela/ghoten/internal/getproviders"
-	"github.com/opentofu/svchost/disco"
 )
 
 func TestProviderSource(t *testing.T) {
@@ -190,10 +190,11 @@ func TestInitProviderSourceForCLIConfigLocationWithRetries(t *testing.T) {
 	cases := map[string]struct {
 		methodType     cliconfig.ProviderInstallationLocation
 		tofurcRetries  cliconfig.ProviderInstallationMethodRetries
+		tofurcTrusted  cliconfig.ProviderInstallationMethodTrusted
 		envVars        map[string]string
 		expectedErrMsg string
 	}{
-		"no tofurc.direct.download_retry_count configured, no TF_PROVIDER_DOWNLOAD_RETRY, default TF_PROVIDER_DOWNLOAD_RETRY used": {
+		"no tofurc.direct.download_retry_count configured, no TF_PROVIDER_DOWNLOAD_RETRY, default TF_PROVIDER_DOWNLOAD_RETRY used, no trust_all_hashes": {
 			methodType: cliconfig.ProviderInstallationDirect,
 			tofurcRetries: func() (int, bool) {
 				return 0, false
@@ -201,10 +202,13 @@ func TestInitProviderSourceForCLIConfigLocationWithRetries(t *testing.T) {
 			envVars:        nil,
 			expectedErrMsg: "/providers/v1/test/exists_0.0.0.zip giving up after 3 attempt(s)",
 		},
-		"no tofurc.direct.download_retry_count, TF_PROVIDER_DOWNLOAD_RETRY defined, TF_PROVIDER_DOWNLOAD_RETRY used": {
+		"no tofurc.direct.download_retry_count, TF_PROVIDER_DOWNLOAD_RETRY defined, TF_PROVIDER_DOWNLOAD_RETRY used, trust_all_hashes true": {
 			methodType: cliconfig.ProviderInstallationDirect,
 			tofurcRetries: func() (int, bool) {
 				return 0, false
+			},
+			tofurcTrusted: func() bool {
+				return true
 			},
 			envVars: map[string]string{
 				"TF_PROVIDER_DOWNLOAD_RETRY": "1",
@@ -242,6 +246,7 @@ func TestInitProviderSourceForCLIConfigLocationWithRetries(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			methodType := tt.methodType
 			retries := tt.tofurcRetries // This is what simulates the configuration of .tofurc
+			trusted := tt.tofurcTrusted // This is what simulates the trust_all_hashes configuration of .tofurc
 			for k, v := range tt.envVars {
 				t.Setenv(k, v)
 			}
@@ -253,7 +258,7 @@ func TestInitProviderSourceForCLIConfigLocationWithRetries(t *testing.T) {
 				"providers.v1": server.URL + "/providers/v1/",
 			})
 
-			providerSrc, diags := providerSourceForCLIConfigLocation(t.Context(), methodType, retries, &cliconfig.RegistryProtocolsConfig{}, disco, nil)
+			providerSrc, diags := providerSourceForCLIConfigLocation(t.Context(), methodType, retries, trusted, &cliconfig.RegistryProtocolsConfig{}, disco, nil)
 			if diags.HasErrors() {
 				t.Fatalf("unexpected error creating the provider source: %s", diags)
 			}
@@ -280,13 +285,13 @@ func TestInitProviderSourceForCLIConfigLocationWithRetries(t *testing.T) {
 
 func TestConfigureProviderDownloadRetry(t *testing.T) {
 	tests := []struct {
-		name    string
-		envVars map[string]string
-
+		name           string
+		envVars        map[string]string
+		tofurcTrusted  cliconfig.ProviderInstallationMethodTrusted
 		expectedConfig getproviders.LocationConfig
 	}{
 		{
-			name: "when no TF_PROVIDER_DOWNLOAD_RETRY env var, default retry attempts used for provider download",
+			name: "when no TF_PROVIDER_DOWNLOAD_RETRY env var, default retry attempts used for provider download, no trust_all_hashes",
 			expectedConfig: getproviders.LocationConfig{
 				ProviderDownloadRetries: 2,
 			},
@@ -300,6 +305,26 @@ func TestConfigureProviderDownloadRetry(t *testing.T) {
 				ProviderDownloadRetries: 7,
 			},
 		},
+		{
+			name: "when trust_all_hashes is false, checksum verification is not relaxed",
+			tofurcTrusted: func() bool {
+				return false
+			},
+			expectedConfig: getproviders.LocationConfig{
+				ProviderDownloadRetries: 2,
+				TrustAllHashes:          false,
+			},
+		},
+		{
+			name: "when trust_all_hashes is true, it is propagated to the location config",
+			tofurcTrusted: func() bool {
+				return true
+			},
+			expectedConfig: getproviders.LocationConfig{
+				ProviderDownloadRetries: 2,
+				TrustAllHashes:          true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -311,7 +336,7 @@ func TestConfigureProviderDownloadRetry(t *testing.T) {
 			// Call the function under test
 			got := providerSourceLocationConfig(func() (int, bool) {
 				return 0, false
-			})
+			}, tt.tofurcTrusted)
 
 			if diff := cmp.Diff(tt.expectedConfig, got); diff != "" {
 				t.Fatalf("expected no diff. got:\n%s", diff)

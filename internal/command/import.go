@@ -20,8 +20,8 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs"
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 // ImportCommand is a cli.Command implementation that imports resources
@@ -237,7 +237,9 @@ func (c *ImportCommand) Run(args []string) int {
 	}
 
 	// Get the context
-	lr, state, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, state, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	diags = diags.Append(ctxDiags)
 	if ctxDiags.HasErrors() {
 		c.showDiagnostics(diags)

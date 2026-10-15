@@ -16,9 +16,9 @@ import (
 	version "github.com/hashicorp/go-version"
 
 	"github.com/vmvarela/ghoten/internal/backend"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func (b *Remote) opApply(ctx context.Context, stopCtx, cancelCtx context.Context, op *backend.Operation, w *tfe.Workspace) (*tfe.Run, error) {

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,6 +35,165 @@ import (
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
+
+// promptEntrySignalWriter wraps an io.Writer and closes the `entered`
+// channel the first time any prompt output is written, providing a
+// deterministic handshake proving that the command actually reached an
+// interactive prompt.
+type promptEntrySignalWriter struct {
+	w       io.Writer
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (s *promptEntrySignalWriter) Write(p []byte) (int, error) {
+	s.once.Do(func() { close(s.entered) })
+	return s.w.Write(p)
+}
+
+// TestImport_shutdownInterruptiblePrompt proves the public-command
+// InterruptibleContext plumbing: closing the command's ShutdownCh must
+// cancel the stopCtx handed to LocalRun, which aborts the interactive
+// variable prompt, fails LocalRun, and makes the command exit with an
+// error. The prompt-entry handshake proves the prompt was actually blocked
+// before the shutdown channel was closed.
+func TestImport_shutdownInterruptiblePrompt(t *testing.T) {
+	td := t.TempDir()
+	testCopyDir(t, testFixturePath("import-with-required-var"), td)
+	t.Chdir(td)
+
+	statePath := testTempFile(t)
+
+	p := testProvider()
+	p.GetProviderSchemaResponse = &providers.GetProviderSchemaResponse{
+		ResourceTypes: map[string]providers.Schema{
+			"test_instance": {
+				Block: &configschema.Block{
+					Attributes: map[string]*configschema.Attribute{
+						"id": {Type: cty.String, Optional: true, Computed: true},
+					},
+				},
+			},
+		},
+	}
+	ui := new(cli.MockUi)
+	view, _ := testView(t)
+	shutdownCh := make(chan struct{})
+	c := &ImportCommand{
+		Meta: Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			Ui:               ui,
+			View:             view,
+			ShutdownCh:       shutdownCh,
+		},
+	}
+
+	// The test harness normally disables input asking entirely (the `test`
+	// package flag makes Meta.Input return false). Re-enable interactive
+	// prompting for this test so the prompt-entry handshake can be reached;
+	// restored on cleanup because the flag is package-global.
+	oldTest := test
+	test = false
+	commandJoined := true // No command has started yet, so restoring test state is safe.
+	t.Cleanup(func() {
+		if commandJoined {
+			test = oldTest
+		}
+	})
+
+	// Route the real UIInput's I/O to deterministic test pipes: the prompt
+	// blocks on a pipe with no data, and prompt entry is signalled via the
+	// recording writer installed as defaultInputWriter.
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	entered := make(chan struct{})
+	oldReader, oldWriter := defaultInputReader, defaultInputWriter
+
+	// shutdown is idempotent: it is called by the main flow after the
+	// handshake and again from cleanup when the test fails early.
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() { close(shutdownCh) })
+	}
+
+	// done closes when c.Run has returned; runCode is only read after done.
+	var runCode int
+	done := make(chan struct{})
+
+	// Cleanup must neutralize the still-running command before restoring
+	// package-global test state: signal shutdown, close both pipe ends to
+	// unblock the stdin reader goroutine, and join c.Run. If joining fails,
+	// globals stay as-is rather than racing against the live command.
+	t.Cleanup(func() {
+		shutdown()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			fmt.Fprintln(os.Stderr, "fatal test cleanup: command still running after shutdown; aborting package test process")
+			os.Exit(1)
+		}
+		commandJoined = true
+		defaultInputReader, defaultInputWriter = oldReader, oldWriter
+	})
+	defaultInputReader = stdinR
+	defaultInputWriter = &promptEntrySignalWriter{w: bytes.NewBuffer(nil), entered: entered}
+
+	args := []string{
+		"-state", statePath,
+		"test_instance.foo",
+		"bar",
+	}
+	go func() {
+		runCode = c.Run(args)
+		close(done)
+	}()
+	commandJoined = false
+
+	// Handshake: wait until the interactive variable prompt is actually
+	// blocked before interrupting.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		shutdown()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		// No UI-buffer reads here: the command may still be running and
+		// concurrent access to the UI buffers would race.
+		t.Fatalf("the command never reached an interactive prompt")
+	}
+
+	// Interrupt through the ShutdownCh path, which cancels the stopCtx
+	// created by the command's InterruptibleContext and handed to LocalRun.
+	shutdown()
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		// Bounded extra window to join before giving up; do not read the
+		// UI buffers while the command may still be running.
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the command did not finish after ShutdownCh was closed")
+		}
+		t.Fatalf("the command did not finish after ShutdownCh was closed\nUI error output: %s", ui.ErrorWriter.String())
+	}
+
+	if runCode != 1 {
+		t.Fatalf("expected exit code 1, got %d\n\n%s", runCode, ui.ErrorWriter.String())
+	}
+
+	if errOutput := ui.ErrorWriter.String(); !strings.Contains(errOutput, "No value for required variable") {
+		t.Fatalf("unexpected error output. Expected to contain %q but it does not:\n%s", "No value for required variable", errOutput)
+	}
+}
 
 func TestApply(t *testing.T) {
 	// Create a temporary working directory that is empty
@@ -1623,7 +1783,7 @@ func TestApply_backup(t *testing.T) {
 				Name: "foo",
 			}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
 			&states.ResourceInstanceObjectSrc{
-				AttrsJSON: []byte(`{"id":"bar"}`),
+				AttrsJSON: []byte("{\n            \"id\": \"bar\"\n          }"),
 				Status:    states.ObjectReady,
 			},
 			addrs.AbsProviderConfig{

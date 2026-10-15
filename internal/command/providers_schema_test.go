@@ -17,8 +17,8 @@ import (
 	"github.com/mitchellh/cli"
 	"github.com/vmvarela/ghoten/internal/command/workdir"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
-	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/zclconf/go-cty/cty"
 )
 

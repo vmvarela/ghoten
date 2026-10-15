@@ -5746,22 +5746,64 @@ check "http_check" {
 }
 
 // TestContext2Apply_ephemeralResourcesLifecycleCheck is checking the hook calls
-// and the state to be sure that the expected information is there.
+// and the state to be sure that the expected information is there. A managed
+// consumer also verifies that it receives the ephemeral secret at apply time
+// and that the ephemeral resource and its payload are absent from the
+// persisted (serialized) state.
 func TestContext2Apply_ephemeralResourcesLifecycleCheck(t *testing.T) {
 	m := testModuleInline(t, map[string]string{
 		`main.tf`: `
 ephemeral "test_ephemeral_resource" "a" {
 }
+
+resource "test_instance" "consumer" {
+	vpc_id   = "consumer"
+	value_wo = ephemeral.test_ephemeral_resource.a.secret
+}
 `,
 	})
 
 	provider := testProvider("test")
-	provider.OpenEphemeralResourceResponse = &providers.OpenEphemeralResourceResponse{
-		Result: cty.ObjectVal(map[string]cty.Value{
-			"id":     cty.StringVal("id val"),
-			"secret": cty.StringVal("val"),
-			"input":  cty.NullVal(cty.String),
-		}),
+	openCount := 0
+	provider.OpenEphemeralResourceFn = func(req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
+		openCount++
+		return providers.OpenEphemeralResourceResponse{
+			Result: cty.ObjectVal(map[string]cty.Value{
+				"id":     cty.StringVal("id val"),
+				"secret": cty.StringVal("val"),
+				"input":  cty.NullVal(cty.String),
+			}),
+		}
+	}
+	provider.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		planned := req.ProposedNewState.AsValueMap()
+		if _, ok := planned["value_wo"]; ok {
+			planned["value_wo"] = cty.NullVal(cty.String)
+		}
+		if planned["id"].IsNull() {
+			planned["id"] = cty.UnknownVal(cty.String)
+		}
+		return providers.PlanResourceChangeResponse{
+			PlannedState: cty.ObjectVal(planned),
+		}
+	}
+
+	// Capture the write-only value actually sent to ApplyResourceChange for
+	// the managed consumer.
+	applied := map[string]string{}
+	provider.ApplyResourceChangeFn = func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		newState := req.PlannedState.AsValueMap()
+		vpcID := newState["vpc_id"].AsString()
+		newState["id"] = cty.StringVal("id-" + vpcID)
+
+		wo := req.Config.GetAttr("value_wo")
+		if !wo.IsNull() {
+			applied[vpcID] = wo.AsString()
+		}
+
+		return providers.ApplyResourceChangeResponse{
+			NewState: cty.ObjectVal(newState),
+		}
 	}
 
 	ps := map[addrs.Provider]providers.Factory{
@@ -5811,8 +5853,24 @@ ephemeral "test_ephemeral_resource" "a" {
 		t.Errorf("unexpected ephemeral resource content in the state:\n%s", diff)
 	}
 
-	if got, want := len(h.Calls), 8; got != want {
-		t.Fatalf("want %d hook calls but got %d", want, got)
+	// The consumer must receive the ephemeral secret as its write-only value.
+	if got, want := applied["consumer"], "val"; got != want {
+		t.Errorf("consumer received write-only value %q, want %q", got, want)
+	}
+
+	// The ephemeral resource is opened once per phase (plan and apply) and
+	// each open is matched by a close, so the open/close hook calls keep the
+	// same per-phase pattern even though the managed consumer adds its own
+	// hook calls.
+	if got, want := openCount, 2; got != want {
+		t.Errorf("ephemeral resource was opened %d times, want %d", got, want)
+	}
+	var ephemeralCalls []*testHookCall
+	for _, call := range h.Calls {
+		switch call.Action {
+		case "PreOpen", "PostOpen", "PreClose", "PostClose":
+			ephemeralCalls = append(ephemeralCalls, call)
+		}
 	}
 	wantCalls := []*testHookCall{
 		{Action: "PreOpen", InstanceID: addr.String()},
@@ -5824,8 +5882,28 @@ ephemeral "test_ephemeral_resource" "a" {
 		{Action: "PreClose", InstanceID: addr.String()},
 		{Action: "PostClose", InstanceID: addr.String()},
 	}
-	if diff := cmp.Diff(wantCalls, h.Calls); diff != "" {
-		t.Fatalf("unexpected hook calls:\n%s", diff)
+	if diff := cmp.Diff(wantCalls, ephemeralCalls); diff != "" {
+		t.Fatalf("unexpected ephemeral open/close hook calls:\n%s", diff)
+	}
+
+	// The persisted state must contain neither the ephemeral resource nor its
+	// payload; the managed consumer's write-only value is stripped as well.
+	f := &statefile.File{
+		State:            newState,
+		TerraformVersion: version.SemVer,
+	}
+	buf := bytes.NewBuffer(nil)
+	if err := statefile.Write(f, buf, encryption.StateEncryptionDisabled()); err != nil {
+		t.Fatalf("failed to serialize applied state: %s", err)
+	}
+	persisted := buf.Bytes()
+	for _, forbidden := range []string{"\"mode\":\"ephemeral\"", `"id val"`, `"secret":"val"`} {
+		if bytes.Contains(persisted, []byte(forbidden)) {
+			t.Errorf("persisted state contains forbidden content %q:\n%s", forbidden, persisted)
+		}
+	}
+	if !bytes.Contains(persisted, []byte(`"id-consumer"`)) {
+		t.Errorf("persisted state is missing the managed consumer; serialization check is not meaningful:\n%s", persisted)
 	}
 }
 
@@ -7043,5 +7121,217 @@ func TestContext2Apply_ephemeralInZeroInstanceModule(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestContext2Apply_ephemeralOutputCrossModuleWriteOnly checks that a value produced
+// by an ephemeral resource and shared via an `ephemeral = true` module output is
+// exporting identically at two different write-only attribute consumers: one in the
+// same module as the ephemeral resource, and one in a different module reached only
+// through the output.
+func TestContext2Apply_ephemeralOutputCrossModuleWriteOnly(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"child/main.tf": `
+			ephemeral "test_ephemeral_resource" "generate" {
+				input = "seed"
+			}
+
+			resource "test_instance" "child" {
+				vpc_id   = "child"
+				value_wo = ephemeral.test_ephemeral_resource.generate.secret
+			}
+
+			output "secret" {
+				ephemeral = true
+				value     = ephemeral.test_ephemeral_resource.generate.secret
+			}
+		`,
+		"main.tf": `
+			module "child" {
+				source = "./child"
+			}
+
+			resource "test_instance" "root" {
+				vpc_id   = "root"
+				value_wo = module.child.secret
+			}
+		`,
+	})
+
+	provider := testProvider("test")
+
+	openCount := 0
+	provider.OpenEphemeralResourceFn = func(req providers.OpenEphemeralResourceRequest) providers.OpenEphemeralResourceResponse {
+		openCount++
+		return providers.OpenEphemeralResourceResponse{
+			Result: cty.ObjectVal(map[string]cty.Value{
+				"id":     cty.StringVal("id"),
+				"secret": cty.StringVal(fmt.Sprintf("generated-%d", openCount)),
+				"input":  req.Config.GetAttr("input"),
+			}),
+		}
+	}
+
+	// Write-only attributes must never appear in planned state, so null it out here
+	provider.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		planned := req.ProposedNewState.AsValueMap()
+		if _, ok := planned["value_wo"]; ok {
+			planned["value_wo"] = cty.NullVal(cty.String)
+		}
+		if planned["id"].IsNull() {
+			planned["id"] = cty.UnknownVal(cty.String)
+		}
+		return providers.PlanResourceChangeResponse{
+			PlannedState: cty.ObjectVal(planned),
+		}
+	}
+
+	// Capture the write-only value actually sent to ApplyResourceChange for each of the two resources
+	applied := map[string]string{}
+	provider.ApplyResourceChangeFn = func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		newState := req.PlannedState.AsValueMap()
+		vpcID := newState["vpc_id"].AsString()
+		newState["id"] = cty.StringVal("id-" + vpcID)
+
+		wo := req.Config.GetAttr("value_wo")
+		if !wo.IsNull() {
+			applied[vpcID] = wo.AsString()
+		}
+
+		return providers.ApplyResourceChangeResponse{
+			NewState: cty.ObjectVal(newState),
+		}
+	}
+
+	h := &testHook{}
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(provider),
+		}, nil),
+		Hooks: []Hook{h},
+	})
+
+	plan, diags := ctx.Plan(context.Background(), m, states.NewState(), &PlanOpts{
+		Mode: plans.NormalMode,
+	})
+	assertNoErrors(t, diags)
+
+	newState, diags := ctx.Apply(context.Background(), plan, m, nil)
+	assertNoErrors(t, diags)
+
+	if applied["child"] == "" || applied["root"] == "" {
+		t.Fatalf("did not capture write-only values for both resources: %#v", applied)
+	}
+	if applied["child"] != applied["root"] {
+		t.Errorf(
+			"write-only values diverged across the module boundary: child=%q root=%q (ephemeral resource opened %d times)",
+			applied["child"], applied["root"], openCount,
+		)
+	}
+
+	// Both consumers must have received the ephemeral secret produced by the
+	// second open (one open per phase: plan and apply).
+	if got, want := openCount, 2; got != want {
+		t.Errorf("ephemeral resource was opened %d times, want %d", got, want)
+	}
+	if want := fmt.Sprintf("generated-%d", openCount); applied["child"] != want {
+		t.Errorf("consumer write-only value %q, want ephemeral secret %q", applied["child"], want)
+	}
+
+	// Each phase opens the ephemeral resource and closes it again afterwards,
+	// so the open/close hook calls keep the same per-phase pattern.
+	ephAddr := mustAbsResourceAddr("module.child.ephemeral.test_ephemeral_resource.generate").String()
+	var ephemeralCalls []*testHookCall
+	for _, call := range h.Calls {
+		switch call.Action {
+		case "PreOpen", "PostOpen", "PreClose", "PostClose":
+			ephemeralCalls = append(ephemeralCalls, call)
+		}
+	}
+	wantCalls := []*testHookCall{
+		{Action: "PreOpen", InstanceID: ephAddr},
+		{Action: "PostOpen", InstanceID: ephAddr},
+		{Action: "PreClose", InstanceID: ephAddr},
+		{Action: "PostClose", InstanceID: ephAddr},
+		{Action: "PreOpen", InstanceID: ephAddr},
+		{Action: "PostOpen", InstanceID: ephAddr},
+		{Action: "PreClose", InstanceID: ephAddr},
+		{Action: "PostClose", InstanceID: ephAddr},
+	}
+	if diff := cmp.Diff(wantCalls, ephemeralCalls); diff != "" {
+		t.Fatalf("unexpected ephemeral open/close hook calls:\n%s", diff)
+	}
+
+	// The persisted state must contain neither the ephemeral resource nor any
+	// of its payload values; the consumers' write-only values are stripped as
+	// well.
+	f := &statefile.File{
+		State:            newState,
+		TerraformVersion: version.SemVer,
+	}
+	buf := bytes.NewBuffer(nil)
+	if err := statefile.Write(f, buf, encryption.StateEncryptionDisabled()); err != nil {
+		t.Fatalf("failed to serialize applied state: %s", err)
+	}
+	persisted := buf.Bytes()
+	for _, forbidden := range []string{"\"mode\":\"ephemeral\"", "generated-"} {
+		if bytes.Contains(persisted, []byte(forbidden)) {
+			t.Errorf("persisted state contains forbidden content %q:\n%s", forbidden, persisted)
+		}
+	}
+	if !bytes.Contains(persisted, []byte(`"vpc_id":"child"`)) || !bytes.Contains(persisted, []byte(`"vpc_id":"root"`)) {
+		t.Errorf("persisted state is missing the managed consumers; serialization check is not meaningful:\n%s", persisted)
+	}
+}
+
+// TestContext2Apply_managedResourceEphemeralPayloadRejected verifies that an
+// ephemeral mark carried by the provider's apply response (in-process, as the
+// plugin protocol cannot transmit it) is rejected by the state write guard
+// during a managed apply: the diagnostics propagate to the apply caller and
+// no state object is written for the resource.
+func TestContext2Apply_managedResourceEphemeralPayloadRejected(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+			resource "test_object" "a" {
+				test_string = "clean"
+			}
+		`,
+	})
+
+	planProvider := simpleMockProvider()
+	planCtx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(planProvider),
+		}, nil),
+	})
+	plan, diags := planCtx.Plan(context.Background(), m, states.NewState(), DefaultPlanOpts)
+	assertNoErrors(t, diags)
+
+	applyProvider := simpleMockProvider()
+	applyProvider.ApplyResourceChangeFn = func(req providers.ApplyResourceChangeRequest) providers.ApplyResourceChangeResponse {
+		newState := req.PlannedState.AsValueMap()
+		newState["test_string"] = cty.StringVal("eph-leak").Mark(marks.Ephemeral)
+		return providers.ApplyResourceChangeResponse{
+			NewState: cty.ObjectVal(newState),
+		}
+	}
+	applyCtx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(applyProvider),
+		}, nil),
+	})
+
+	newState, diags := applyCtx.Apply(context.Background(), plan, m, nil)
+	if !diags.HasErrors() {
+		t.Fatalf("expected ephemeral mark in provider apply response to fail the apply; got diagnostics:\n%s", diags)
+	}
+	if msg := diags.Err().Error(); !strings.Contains(msg, "ephemeral marks found at the following paths") {
+		t.Fatalf("unexpected diagnostics:\n%s", msg)
+	}
+
+	// The rejected write must not replace any state object.
+	addr := mustResourceInstanceAddr("test_object.a")
+	if got := newState.ResourceInstance(addr); got != nil {
+		t.Errorf("rejected apply wrote a state object anyway:\n%s", spew.Sdump(got))
 	}
 }

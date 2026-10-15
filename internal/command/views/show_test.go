@@ -17,13 +17,13 @@ import (
 	"github.com/vmvarela/ghoten/internal/cloud/cloudplan"
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/initwd"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/terminal"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestShowHuman_DisplayPlan(t *testing.T) {

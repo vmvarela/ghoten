@@ -17,11 +17,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/clistate"
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/initwd"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestRemoteStoredVariableValue(t *testing.T) {
@@ -214,7 +214,7 @@ func TestRemoteContextWithVars(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, _, diags := b.LocalRun(t.Context(), op)
+			_, _, diags := b.LocalRun(t.Context(), t.Context(), op)
 
 			if test.WantError != "" {
 				if !diags.HasErrors() {
@@ -437,7 +437,7 @@ func TestRemoteVariablesDoNotOverride(t *testing.T) {
 				}
 			}
 
-			lr, _, diags := b.LocalRun(t.Context(), op)
+			lr, _, diags := b.LocalRun(t.Context(), t.Context(), op)
 
 			if diags.HasErrors() {
 				t.Fatalf("unexpected error\ngot:  %s\nwant: <no error>", diags.Err().Error())

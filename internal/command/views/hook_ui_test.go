@@ -17,11 +17,11 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/arguments"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // Test the PreApply hook for creating a new resource

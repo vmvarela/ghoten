@@ -13,8 +13,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
-	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
+	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	ctyconvert "github.com/zclconf/go-cty/cty/convert"
 )
 

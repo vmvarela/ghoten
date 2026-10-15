@@ -10,9 +10,9 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/command/arguments"
 	"github.com/vmvarela/ghoten/internal/command/views/json"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // The Refresh view is used for the refresh command.

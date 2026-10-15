@@ -28,10 +28,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states/remote"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 const (

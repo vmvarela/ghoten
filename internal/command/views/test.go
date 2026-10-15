@@ -20,13 +20,13 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/views/json"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/moduletest"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // Test renders outputs for test executions.

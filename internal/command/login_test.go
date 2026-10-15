@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vmvarela/ghoten/internal/command/workdir"
-	"github.com/vmvarela/ghoten/internal/terminal"
 	"github.com/opentofu/svchost"
 	"github.com/opentofu/svchost/disco"
+	"github.com/vmvarela/ghoten/internal/command/workdir"
+	"github.com/vmvarela/ghoten/internal/terminal"
 
 	"github.com/vmvarela/ghoten/internal/command/cliconfig"
 	"github.com/vmvarela/ghoten/internal/command/cliconfig/svcauthconfig"

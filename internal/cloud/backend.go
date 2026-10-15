@@ -32,11 +32,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/jsonformat"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/httpclient"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	tfversion "github.com/vmvarela/ghoten/version"
 
 	backendLocal "github.com/vmvarela/ghoten/internal/backend/local"

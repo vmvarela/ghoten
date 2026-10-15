@@ -11,9 +11,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
 	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/helper/hashcode"
-	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
 )
 
 func TestConfigFieldReader_impl(t *testing.T) {

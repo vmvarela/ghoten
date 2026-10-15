@@ -16,8 +16,8 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/flags"
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs"
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 // ValidateCommand is a Command implementation that validates the tofu files

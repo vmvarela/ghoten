@@ -675,6 +675,23 @@ const (
 
 //go:generate go tool golang.org/x/tools/cmd/stringer -type phaseState
 
+// rejectLeakedEphemeralMarks verifies that a value about to be encoded into
+// state carries no ephemeral marks. Marks on write-only attributes are already
+// stripped by the caller before this check, so any remaining ephemeral mark is
+// a leak of an ephemeral value into persistent state and must be rejected.
+// Values of ephemeral resources legitimately carry the mark and are kept in
+// state only in-memory for evaluation, so they are exempt.
+func (n *NodeAbstractResourceInstance) rejectLeakedEphemeralMarks(val cty.Value) error {
+	if n.Addr.Resource.Resource.Mode == addrs.EphemeralResourceMode {
+		return nil
+	}
+	_, pvms := val.UnmarkDeepWithPaths()
+	if err := marks.EnsureNoEphemeralMarks(pvms); err != nil {
+		return fmt.Errorf("failed to encode %s in state: %w", n.Addr, err)
+	}
+	return nil
+}
+
 // writeResourceInstanceState saves the given object as the current object for
 // the selected resource instance.
 //
@@ -767,6 +784,9 @@ func (n *NodeAbstractResourceInstance) writeResourceInstanceStateImpl(ctx contex
 	}
 
 	obj.Value = schema.RemoveEphemeralFromWriteOnly(obj.Value)
+	if err := n.rejectLeakedEphemeralMarks(obj.Value); err != nil {
+		return err
+	}
 	src, err := obj.Encode(schema.ImpliedType(), currentVersion)
 	if err != nil {
 		return fmt.Errorf("failed to encode %s in state: %w", absAddr, err)

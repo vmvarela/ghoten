@@ -31,15 +31,16 @@ func StatesMarshalEqual(a, b *states.State) bool {
 	// We write here some temporary files that have no header information
 	// populated, thus ensuring that we're only comparing the state itself
 	// and not any metadata.
+	//
+	// States that cannot be serialized (e.g. snapshots containing transient
+	// objects) are not marshal-equal: never panic and never claim equality.
 	err := Write(&File{State: a}, &aBuf, encryption.StateEncryptionDisabled())
 	if err != nil {
-		// Should never happen, because we're writing to an in-memory buffer
-		panic(err)
+		return false
 	}
 	err = Write(&File{State: b}, &bBuf, encryption.StateEncryptionDisabled())
 	if err != nil {
-		// Should never happen, because we're writing to an in-memory buffer
-		panic(err)
+		return false
 	}
 
 	return bytes.Equal(aBuf.Bytes(), bBuf.Bytes())

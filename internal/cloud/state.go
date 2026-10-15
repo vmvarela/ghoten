@@ -30,11 +30,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/backend/local"
 	"github.com/vmvarela/ghoten/internal/command/jsonstate"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/remote"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 const (

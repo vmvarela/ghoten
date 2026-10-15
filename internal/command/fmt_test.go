@@ -173,6 +173,32 @@ func TestFmt_nonexist(t *testing.T) {
 	}
 }
 
+func TestFmt_unsupportedExtension(t *testing.T) {
+	tempDir := testTempDirRealpath(t)
+	file := filepath.Join(tempDir, "unsupported.txt")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := cli.NewMockUi()
+	c := &FmtCommand{
+		Meta: Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(testProvider()),
+			Ui:               ui,
+		},
+	}
+	if code := c.Run([]string{file}); code != 2 {
+		t.Fatalf("wrong exit code: got %d, want 2; errors:\n%s", code, ui.ErrorWriter.String())
+	}
+
+	for _, ext := range []string{".tf", ".tofu", ".tfvars", ".tftest.hcl", ".tofutest.hcl", "ghoten fmt"} {
+		if !strings.Contains(ui.ErrorWriter.String(), ext) {
+			t.Errorf("expected error to include %q, got:\n%s", ext, ui.ErrorWriter.String())
+		}
+	}
+}
+
 func TestFmt_syntaxError(t *testing.T) {
 	tempDir := testTempDirRealpath(t)
 

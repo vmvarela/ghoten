@@ -6,8 +6,11 @@
 package httpclient
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/vmvarela/ghoten/internal/tracing"
@@ -24,6 +27,12 @@ type tracingTransport struct {
 var _ http.RoundTripper = (*tracingTransport)(nil)
 
 func (t *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The URL's query string and userinfo can carry credentials (e.g. for
+	// "presigned" URLs), so they must not reach otelhttp, which copies the
+	// full request URL into the span's url.full attribute. Strip them here
+	// and have urlSecretsRestoringTransport put them back just before the
+	// actual network request.
+	req = withoutURLCredentials(req)
 	resp, err := t.inner.RoundTrip(req)
 	if err != nil {
 		return resp, err
@@ -95,10 +104,75 @@ func (t *tracingTransport) addResponseHeaderAttributes(span tracing.Span, resp *
 
 	// Special case: redirect location (only for 3xx responses)
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		location := resp.Header.Get("Location")
-		// unconditionally capture this even if it's empty, this may help someone debug a misbehaving server that is sending back an invalid redirect with no location
-		span.SetAttributes(attribute.String("http.response.header.location", location))
+		// Redirect targets can carry credentials in the URL (e.g. for
+		// "presigned" URLs), so log them without the query string oruserinfo.
+		span.SetAttributes(attribute.String("http.response.header.location", redactedLocationText(resp.Header.Get("Location"))))
 	}
+}
+
+// redactedLocationText renders a Location header value without its query
+// string and userinfo, which can carry credentials. Values that don't parse
+// as a URL are redacted generically, because echoing any raw input risk
+// showing credential material in an unscrubbed form.
+func redactedLocationText(location string) string {
+	u, err := url.Parse(location)
+	if err != nil {
+		return "redacted location"
+	}
+	// The shared sanitizer drops userinfo, query string, and fragment:
+	// fragments aren't sent to servers but can carry credentials in
+	// attacker-chosen values, so drop them rather than echo possibly-secret
+	// text.
+	return RedactedURLString(u)
+}
+
+// urlCredentialsContextKey carries the original URL text from
+// withoutURLCredentials to urlSecretsRestoringTransport.
+type urlCredentialsContextKey struct{}
+
+// withoutURLCredentials returns a clone of req whose URL has no query string
+// and no userinfo, with the original URL stashed in the request context so
+// that urlSecretsRestoringTransport can restore it afterwards.
+//
+// This exists so otelhttp (an interpreter between the two transports) does
+// not export the credential-bearing request URL in span attributes such as
+// url.full, without changing the URL that actually gets sent to the server.
+func withoutURLCredentials(req *http.Request) *http.Request {
+	strippedURL := *req.URL
+	strippedURL.User = nil
+	strippedURL.RawQuery = ""
+	// Fragments aren't sent to servers but can carry credentials in
+	// attacker-chosen values, so spans must not show them either.
+	strippedURL.Fragment = ""
+	strippedURL.RawFragment = ""
+	ctx := context.WithValue(req.Context(), urlCredentialsContextKey{}, req.URL.String())
+	clone := req.Clone(ctx)
+	clone.URL = &strippedURL
+	return clone
+}
+
+var _ http.RoundTripper = (*urlSecretsRestoringTransport)(nil)
+
+// urlSecretsRestoringTransport restores the query string and userinfo that
+// withoutURLCredentials stripped, before the configured inner transport
+// sends the request over the network. The restored URL is applied only to
+// the actual request; trace spans never see the credential-bearing parts.
+type urlSecretsRestoringTransport struct {
+	inner http.RoundTripper
+}
+
+func (t *urlSecretsRestoringTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if raw, ok := req.Context().Value(urlCredentialsContextKey{}).(string); ok {
+		orig, err := url.Parse(raw)
+		if err != nil {
+			// Should be impossible: the value came from an already-parsed URL.
+			return nil, fmt.Errorf("restoring original request URL: %w", err)
+		}
+		clone := req.Clone(req.Context())
+		clone.URL = orig
+		req = clone
+	}
+	return t.inner.RoundTrip(req)
 }
 
 // trackingReadCloser wraps an io.ReadCloser to track bytes read

@@ -17,11 +17,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plugins"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // TestLocal returns a configured Local struct with temporary paths and

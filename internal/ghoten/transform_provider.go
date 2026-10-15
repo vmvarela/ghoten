@@ -374,16 +374,40 @@ func (t *ProviderFunctionTransformer) Transform(_ context.Context, g *Graph) err
 	// LuT of provider reference -> provider vertex
 	providerReferences := make(map[ProviderFunctionReference]dag.Vertex)
 
+	type NodeReference struct {
+		ref    *addrs.Reference
+		module addrs.Module
+	}
+
 	for _, v := range g.Vertices() {
 		// Provider function references
 		if nr, ok := v.(GraphNodeReferencer); ok && t.Config != nil {
-			for _, ref := range nr.References() {
-				if pf, ok := ref.Subject.(addrs.ProviderFunction); ok {
-					refPath := nr.ModulePath()
 
-					if outside, isOutside := v.(GraphNodeReferenceOutside); isOutside {
-						_, refPath = outside.ReferenceOutside()
-					}
+			// Construct the set of references that we need to check.
+			var refs []NodeReference
+
+			// Se incluyen References() y RootReferences() porque las expresiones
+			// de los bloques import se devuelven mediante RootReferences(): se
+			// evalúan en el módulo raíz aunque el destino esté en un módulo hijo.
+			for _, ref := range nr.References() {
+				refPath := nr.ModulePath()
+				if outside, isOutside := v.(GraphNodeReferenceOutside); isOutside {
+					_, refPath = outside.ReferenceOutside()
+				}
+				refs = append(refs, NodeReference{ref, refPath})
+			}
+
+			if nr, ok := v.(GraphNodeRootReferencer); ok {
+				for _, ref := range nr.RootReferences() {
+					refs = append(refs, NodeReference{ref, addrs.RootModule})
+				}
+			}
+			// Con todas las referencias reunidas, se construye el mapeo.
+			for _, nodeRef := range refs {
+				ref := nodeRef.ref
+
+				if pf, ok := ref.Subject.(addrs.ProviderFunction); ok {
+					refPath := nodeRef.module
 
 					key := ProviderFunctionReference{
 						ModulePath:    refPath.String(),

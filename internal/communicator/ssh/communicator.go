@@ -466,7 +466,9 @@ func (c *Communicator) UploadScript(path string, input io.Reader) error {
 	if c.connInfo.TargetPlatform != TargetPlatformWindows {
 		var stdout, stderr bytes.Buffer
 		cmd := &remote.Cmd{
-			Command: fmt.Sprintf("chmod 0777 %s", path),
+			// The SSH server runs this command via the user's shell, so the
+			// path must be quoted to stay literal (OpenTofu #4330).
+			Command: shquot.POSIXShell([]string{"chmod", "0777", path}),
 			Stdout:  &stdout,
 			Stderr:  &stderr,
 		}
@@ -896,7 +898,8 @@ func quoteShell(args []string, targetPlatform string) (string, error) {
 		return shquot.POSIXShell(args), nil
 	}
 	if targetPlatform == TargetPlatformWindows {
-		return shquot.WindowsArgv(args), nil
+		cmd, cmdArgs := shquot.WindowsArgvSplit(args)
+		return fmt.Sprintf("%s %s", cmd, cmdArgs), nil
 	}
 
 	return "", fmt.Errorf("Cannot quote shell command, target platform unknown: %s", targetPlatform)

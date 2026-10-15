@@ -9,8 +9,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/vmvarela/ghoten/internal/logging"
 )
@@ -50,15 +52,63 @@ func NewForRegistryRequests(ctx context.Context, retryCount int, timeout time.Du
 	retryableClient.RetryMax = retryCount
 	retryableClient.RequestLogHook = registryRequestLogHook
 	retryableClient.ErrorHandler = registryMaxRetryErrorHandler
-	retryableClient.Logger = logging.HCLogger()
+	// The internal logger would print unsanitized URLs; keep it disabled
+	// so that retry observability flows only through the sanitized
+	// RequestLogHook below.
+	retryableClient.Logger = nil
 
 	return retryableClient
 }
 
+// hclogToRetryLogger adapts an hclog-style leveled logger to
+// retryablehttp.Logger, whose Printf-style surface hclog.Logger doesn't
+// implement directly.
+type hclogToRetryLogger struct{ hclog.Logger }
+
+func (l hclogToRetryLogger) Printf(s string, args ...interface{}) {
+	l.Logger.Info(fmt.Sprintf(s, args...))
+}
+
 func registryRequestLogHook(logger retryablehttp.Logger, req *http.Request, i int) {
-	if i > 0 {
-		logger.Printf("[INFO] Failed request to %s; retrying", req.URL.String())
+	// The download retryable client disables internal retryablehttp logging
+	// (which prints unsanitized URLs), so its hook stays usable via the
+	// sanitized fallback logger.
+	if i <= 0 {
+		return
 	}
+	if logger == nil {
+		logger = hclogToRetryLogger{logging.HCLogger()}
+	}
+	// Drop userinfo, query string, and fragment: they can carry
+	// credentials (e.g. presigned URLs).
+	logger.Printf("[INFO] Failed request to %s; retrying", redactedRequestURL(req))
+}
+
+// redactedRequestURL renders a request's URL without its userinfo, query
+// string, and fragment, which can carry credentials (e.g. for "presigned"
+// URLs) that must not appear in logs or error messages.
+func redactedRequestURL(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	return RedactedURLString(req.URL)
+}
+
+// RedactedURLString renders u without its userinfo, query string, and
+// fragment, any of which can carry credentials (e.g. for "presigned" URLs)
+// that must not appear in user-facing labels, logs, traces, or error
+// messages. It is the shared sanitizer for all URL renderings in logs,
+// spans, and errors.
+func RedactedURLString(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	redacted := *u
+	redacted.User = nil
+	redacted.RawQuery = ""
+	redacted.Fragment = ""
+	redacted.RawFragment = ""
+	return redacted.String()
 }
 
 func registryMaxRetryErrorHandler(resp *http.Response, err error, numTries int) (*http.Response, error) {
@@ -67,21 +117,22 @@ func registryMaxRetryErrorHandler(resp *http.Response, err error, numTries int) 
 		resp.Body.Close()
 	}
 
-	// Additional error detail: if we have a response, use the status code;
-	// if we have an error, use that; otherwise nothing. We will never have
-	// both response and error.
-	var errMsg string
-	if resp != nil {
-		errMsg = fmt.Sprintf(": %s returned from %s", resp.Status, resp.Request.URL)
-	} else if err != nil {
-		errMsg = fmt.Sprintf(": %s", err)
-	}
-
-	// This function is always called with numTries=RetryMax+1. If we made any
-	// retry attempts, include that in the error message.
+	attemptMsg := "request failed"
 	if numTries > 1 {
-		return resp, fmt.Errorf("request failed after %d attempts%s",
-			numTries, errMsg)
+		// This function is always called with numTries=RetryMax+1. If we made
+		// any retry attempts, include that in the error message.
+		attemptMsg = fmt.Sprintf("request failed after %d attempts", numTries)
 	}
-	return resp, fmt.Errorf("request failed%s", errMsg)
+	if resp != nil {
+		// Additional error detail: the URL text can carry credentials
+		// (e.g. presigned query strings), so render it without userinfo
+		// and query string.
+		return resp, fmt.Errorf("%s: %s returned from %s", attemptMsg, resp.Status, redactedRequestURL(resp.Request))
+	}
+	if err != nil {
+		// Wrap (rather than flattening into text) so that callers can still
+		// scrub credential-bearing URLs embedded in the underlying error.
+		return resp, fmt.Errorf("%s: %w", attemptMsg, err)
+	}
+	return resp, fmt.Errorf("%s", attemptMsg)
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/opentofu/svchost/disco"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/collections"
 	"github.com/vmvarela/ghoten/internal/depsfile"
 	"github.com/vmvarela/ghoten/internal/getproviders"
 )
@@ -37,14 +38,15 @@ func TestEnsureProviderVersions(t *testing.T) {
 	// permutations that it ends up being more concise to express them as
 	// normal code.
 	type Test struct {
-		Source     getproviders.Source
-		Prepare    func(*testing.T, *Installer, *Dir)
-		LockFile   string
-		Reqs       getproviders.Requirements
-		Mode       InstallMode
-		Check      func(*testing.T, *Dir, *depsfile.Locks)
-		WantErr    string
-		WantEvents func(*Installer, *Dir) map[addrs.Provider][]*testInstallerEventLogItem
+		Source      getproviders.Source
+		Prepare     func(*testing.T, *Installer, *Dir)
+		LockFile    string
+		Reqs        getproviders.Requirements
+		Mode        InstallMode
+		Check       func(*testing.T, *Dir, *depsfile.Locks)
+		CheckSource func(*testing.T, getproviders.Source)
+		WantErr     string
+		WantEvents  func(*Installer, *Dir) map[addrs.Provider][]*testInstallerEventLogItem
 	}
 
 	// noProvider is just the zero value of addrs.Provider, which we're
@@ -98,6 +100,19 @@ func TestEnsureProviderVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// provider whose source hostname is the default provider registry host,
+	// for which GPG signature enforcement is not required unless
+	// GHOTEN_ENFORCE_GPG_VALIDATION is set.
+	defaultRegistryProvider := addrs.Provider{
+		Hostname:  addrs.DefaultProviderRegistryHost,
+		Namespace: "foo",
+		Type:      "beep",
+	}
+	// unrelatedHash is an "h1" hash that can never match the local package,
+	// standing in for a checksum that the mirror reports for some other
+	// platform.
+	unrelatedHash := getproviders.MustParseHash("h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 
 	fakePlatform := getproviders.Platform{OS: "bleep", Arch: "bloop"}
 	wrongPlatform := getproviders.Platform{OS: "wrong", Arch: "wrong"}
@@ -261,7 +276,7 @@ func TestEnsureProviderVersions(t *testing.T) {
 						TargetPlatform: fakePlatform,
 						Location:       beepProviderZip,
 						Authentication: getproviders.NewPackageHashAuthentication(
-							fakePlatform, []getproviders.Hash{beepProviderZipHash},
+							fakePlatform, []getproviders.Hash{beepProviderZipHash}, false,
 						),
 					},
 				},
@@ -318,6 +333,7 @@ func TestEnsureProviderVersions(t *testing.T) {
 								beepProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
 									beepProviderZipHash: {
 										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
 									},
 								}),
 							},
@@ -369,6 +385,278 @@ func TestEnsureProviderVersions(t *testing.T) {
 									// "h1" hash is calculated from only the files inside the archive.
 									beepProviderZipHash,
 								},
+								nil,
+								nil,
+							},
+						},
+						{
+							Event:    "FetchPackageSuccess",
+							Provider: beepProvider,
+							Args: struct {
+								Version    string
+								LocalDir   string
+								AuthResult string
+							}{
+								"2.1.0",
+								filepath.ToSlash(filepath.Join(dir.BasePath(), "example.com/foo/beep/2.1.0/bleep_bloop")),
+								"verified checksum",
+							},
+						},
+					},
+				}
+			},
+		},
+		"trusted mirror-reported hash recorded in lock file when GPG enforcement is not required": {
+			Source: getproviders.NewMockSource(
+				[]getproviders.PackageMeta{
+					{
+						Provider:       defaultRegistryProvider,
+						Version:        getproviders.MustParseVersion("2.1.0"),
+						TargetPlatform: fakePlatform,
+						Location:       beepProviderZip,
+						Authentication: getproviders.NewPackageHashAuthentication(
+							fakePlatform,
+							[]getproviders.Hash{
+								beepProviderZipHash, // matches the local package: verified locally
+								unrelatedHash,       // e.g. reported for a different platform
+							},
+							true,
+						),
+					},
+				},
+				nil,
+			),
+			Prepare: func(t *testing.T, _ *Installer, _ *Dir) {
+				// Force the default GPG policy for the default registry host so
+				// that the trusted mirror-reported hash is eligible below. The
+				// empty value is not "true", so enforcement stays disabled.
+				t.Setenv("GHOTEN_ENFORCE_GPG_VALIDATION", "")
+			},
+			Mode: InstallNewProvidersOnly,
+			Reqs: getproviders.Requirements{
+				defaultRegistryProvider: getproviders.MustParseVersionConstraints(">= 2.0.0"),
+			},
+			Check: func(t *testing.T, dir *Dir, locks *depsfile.Locks) {
+				gotLock := locks.Provider(defaultRegistryProvider)
+				wantLock := depsfile.NewProviderLock(
+					defaultRegistryProvider,
+					getproviders.MustParseVersion("2.1.0"),
+					getproviders.MustParseVersionConstraints(">= 2.0.0"),
+					[]getproviders.Hash{
+						beepProviderHash,
+						beepProviderZipHash,
+						// The hash reported only by the trusted mirror reaches
+						// the lock file unless GPG validation is enforced.
+						unrelatedHash,
+					},
+				)
+				if diff := cmp.Diff(wantLock, gotLock, depsfile.ProviderLockComparer); diff != "" {
+					t.Errorf("wrong lock entry\n%s", diff)
+				}
+			},
+			WantEvents: func(inst *Installer, dir *Dir) map[addrs.Provider][]*testInstallerEventLogItem {
+				return map[addrs.Provider][]*testInstallerEventLogItem{
+					noProvider: {
+						{
+							Event: "PendingProviders",
+							Args: map[addrs.Provider]getproviders.VersionConstraints{
+								defaultRegistryProvider: getproviders.MustParseVersionConstraints(">= 2.0.0"),
+							},
+						},
+						{
+							Event: "ProvidersAuthenticated",
+							Args: map[addrs.Provider]*getproviders.PackageAuthenticationResult{
+								defaultRegistryProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
+									beepProviderZipHash: {
+										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
+									},
+									unrelatedHash: {
+										ReportedByTrustedMirror: true,
+									},
+								}),
+							},
+						},
+					},
+					defaultRegistryProvider: {
+						{
+							Event:    "QueryPackagesBegin",
+							Provider: defaultRegistryProvider,
+							Args: struct {
+								Constraints string
+								Locked      bool
+							}{">= 2.0.0", false},
+						},
+						{
+							Event:    "QueryPackagesSuccess",
+							Provider: defaultRegistryProvider,
+							Args:     "2.1.0",
+						},
+						{
+							Event:    "FetchPackageMeta",
+							Provider: defaultRegistryProvider,
+							Args:     "2.1.0",
+						},
+						{
+							Event:    "FetchPackageBegin",
+							Provider: defaultRegistryProvider,
+							Args: struct {
+								Version  string
+								Location getproviders.PackageLocation
+								InCache  bool
+							}{"2.1.0", beepProviderZip, false},
+						},
+						{
+							Event:    "ProvidersLockUpdated",
+							Provider: defaultRegistryProvider,
+							Args: struct {
+								Version string
+								Local   []getproviders.Hash
+								Signed  []getproviders.Hash
+								Prior   []getproviders.Hash
+							}{
+								"2.1.0",
+								[]getproviders.Hash{
+									beepProviderHash,
+									beepProviderZipHash,
+								},
+								// The reported-only hash is treated as "signed"
+								// for lock file purposes, separate from the
+								// locally-verified hashes above.
+								[]getproviders.Hash{unrelatedHash},
+								nil,
+							},
+						},
+						{
+							Event:    "FetchPackageSuccess",
+							Provider: defaultRegistryProvider,
+							Args: struct {
+								Version    string
+								LocalDir   string
+								AuthResult string
+							}{
+								"2.1.0",
+								filepath.ToSlash(filepath.Join(dir.BasePath(), "registry.opentofu.org/foo/beep/2.1.0/bleep_bloop")),
+								"verified checksum",
+							},
+						},
+					},
+				}
+			},
+		},
+		"trusted mirror-reported hash excluded from lock file when GPG enforcement is required": {
+			Source: getproviders.NewMockSource(
+				[]getproviders.PackageMeta{
+					{
+						// A non-default registry host always requires GPG
+						// signature validation.
+						Provider:       beepProvider,
+						Version:        getproviders.MustParseVersion("2.1.0"),
+						TargetPlatform: fakePlatform,
+						Location:       beepProviderZip,
+						Authentication: getproviders.NewPackageHashAuthentication(
+							fakePlatform,
+							[]getproviders.Hash{
+								beepProviderZipHash,
+								unrelatedHash,
+							},
+							true,
+						),
+					},
+				},
+				nil,
+			),
+			Mode: InstallNewProvidersOnly,
+			Reqs: getproviders.Requirements{
+				beepProvider: getproviders.MustParseVersionConstraints(">= 2.0.0"),
+			},
+			Check: func(t *testing.T, dir *Dir, locks *depsfile.Locks) {
+				gotLock := locks.Provider(beepProvider)
+				wantLock := depsfile.NewProviderLock(
+					beepProvider,
+					getproviders.MustParseVersion("2.1.0"),
+					getproviders.MustParseVersionConstraints(">= 2.0.0"),
+					// Only the locally-verified hashes are recorded; the
+					// trusted mirror-reported hash must not leak into the
+					// lock file when GPG validation is enforced.
+					[]getproviders.Hash{
+						beepProviderHash,
+						beepProviderZipHash,
+					},
+				)
+				if diff := cmp.Diff(wantLock, gotLock, depsfile.ProviderLockComparer); diff != "" {
+					t.Errorf("wrong lock entry\n%s", diff)
+				}
+			},
+			WantEvents: func(inst *Installer, dir *Dir) map[addrs.Provider][]*testInstallerEventLogItem {
+				return map[addrs.Provider][]*testInstallerEventLogItem{
+					noProvider: {
+						{
+							Event: "PendingProviders",
+							Args: map[addrs.Provider]getproviders.VersionConstraints{
+								beepProvider: getproviders.MustParseVersionConstraints(">= 2.0.0"),
+							},
+						},
+						{
+							Event: "ProvidersAuthenticated",
+							Args: map[addrs.Provider]*getproviders.PackageAuthenticationResult{
+								beepProvider: getproviders.NewPackageAuthenticationResult(getproviders.HashDispositions{
+									beepProviderZipHash: {
+										VerifiedLocally: true,
+										Platforms:       collections.NewSet(fakePlatform),
+									},
+									unrelatedHash: {
+										ReportedByTrustedMirror: true,
+									},
+								}),
+							},
+						},
+					},
+					beepProvider: {
+						{
+							Event:    "QueryPackagesBegin",
+							Provider: beepProvider,
+							Args: struct {
+								Constraints string
+								Locked      bool
+							}{">= 2.0.0", false},
+						},
+						{
+							Event:    "QueryPackagesSuccess",
+							Provider: beepProvider,
+							Args:     "2.1.0",
+						},
+						{
+							Event:    "FetchPackageMeta",
+							Provider: beepProvider,
+							Args:     "2.1.0",
+						},
+						{
+							Event:    "FetchPackageBegin",
+							Provider: beepProvider,
+							Args: struct {
+								Version  string
+								Location getproviders.PackageLocation
+								InCache  bool
+							}{"2.1.0", beepProviderZip, false},
+						},
+						{
+							Event:    "ProvidersLockUpdated",
+							Provider: beepProvider,
+							Args: struct {
+								Version string
+								Local   []getproviders.Hash
+								Signed  []getproviders.Hash
+								Prior   []getproviders.Hash
+							}{
+								"2.1.0",
+								[]getproviders.Hash{
+									beepProviderHash,
+									beepProviderZipHash,
+								},
+								// GPG enforcement is required, so the
+								// trusted mirror-reported hash is not
+								// counted as "signed".
 								nil,
 								nil,
 							},
@@ -709,23 +997,15 @@ func TestEnsureProviderVersions(t *testing.T) {
 			},
 		},
 		"successful initial install of one provider through a warm global cache and correct locked checksum": {
-			Source: getproviders.NewMockSource(
-				[]getproviders.PackageMeta{
-					{
-						Provider:       beepProvider,
-						Version:        getproviders.MustParseVersion("2.0.0"),
-						TargetPlatform: fakePlatform,
-						Location:       beepProviderDir,
-					},
-					{
-						Provider:       beepProvider,
-						Version:        getproviders.MustParseVersion("2.1.0"),
-						TargetPlatform: fakePlatform,
-						Location:       beepProviderDir,
-					},
-				},
-				nil,
-			),
+			Source: getproviders.NewMockSource(nil, nil),
+			CheckSource: func(t *testing.T, source getproviders.Source) {
+				// The source must not be consulted at all when the locked
+				// provider version is already in the global cache; if this
+				// log is non-empty, the short-circuit regressed.
+				if calls := source.(*getproviders.MockSource).CallLog(); len(calls) != 0 {
+					t.Errorf("unexpected source calls\n%s", spew.Sdump(calls))
+				}
+			},
 			LockFile: `
 				# The existing cache entry is valid only if it matches a
 				# checksum already recorded in the lock file.
@@ -865,6 +1145,18 @@ func TestEnsureProviderVersions(t *testing.T) {
 				},
 				nil,
 			),
+			CheckSource: func(t *testing.T, source getproviders.Source) {
+				// AvailableVersions must be skipped even when the cache
+				// entry's checksum is incompatible; the install path still
+				// fetches package metadata to verify, so the only source
+				// call should be PackageMeta for the exact locked version.
+				want := [][]interface{}{
+					{"PackageMeta", beepProvider, getproviders.MustParseVersion("2.1.0"), fakePlatform},
+				}
+				if diff := cmp.Diff(want, source.(*getproviders.MockSource).CallLog()); diff != "" {
+					t.Errorf("wrong source call log\n%s", diff)
+				}
+			},
 			LockFile: `
 				# This is approximating the awkward situation where the lock
 				# file was populated by someone who installed from a location
@@ -2509,6 +2801,10 @@ func TestEnsureProviderVersions(t *testing.T) {
 
 			if test.Check != nil {
 				test.Check(t, outputDir, newLocks)
+			}
+
+			if test.CheckSource != nil {
+				test.CheckSource(t, source)
 			}
 
 			if test.WantEvents != nil {

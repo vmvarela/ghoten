@@ -77,6 +77,32 @@ func TestWorkspace_createAndChange(t *testing.T) {
 
 }
 
+func TestWorkspace_createAlreadyExistsHint(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	view, _ := testView(t)
+	first := &WorkspaceNewCommand{
+		Meta: Meta{WorkingDir: workdir.NewDir("."), Ui: cli.NewMockUi(), View: view},
+	}
+	if code := first.Run([]string{"test"}); code != 0 {
+		t.Fatalf("first workspace creation failed: %d", code)
+	}
+
+	ui := cli.NewMockUi()
+	view, _ = testView(t)
+	second := &WorkspaceNewCommand{
+		Meta: Meta{WorkingDir: workdir.NewDir("."), Ui: ui, View: view},
+	}
+	if code := second.Run([]string{"test"}); code != 1 {
+		t.Fatalf("duplicate workspace creation returned %d, want 1", code)
+	}
+
+	const want = "Workspace \"test\" already exists.\nUse \"ghoten workspace select test\" to switch to it."
+	if got := strings.TrimSpace(ui.ErrorWriter.String()); got != want {
+		t.Fatalf("unexpected duplicate-workspace diagnostic:\n got: %q\nwant: %q", got, want)
+	}
+}
+
 // Create some workspaces and test the list output.
 // This also ensures we switch to the correct env after each call
 func TestWorkspace_createAndList(t *testing.T) {

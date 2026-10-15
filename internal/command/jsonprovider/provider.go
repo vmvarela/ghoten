@@ -8,8 +8,8 @@ package jsonprovider
 import (
 	"encoding/json"
 
-	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/providers"
 )
 
 // FormatVersion represents the version of the json format and will be

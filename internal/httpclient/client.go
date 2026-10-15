@@ -63,7 +63,7 @@ func New(ctx context.Context) *http.Client {
 		// We wrap otelhttp with our own transport to augment the traces
 		// (otelhttp only sends some information to metrics).
 		cli.Transport = &tracingTransport{
-			inner: otelhttp.NewTransport(cli.Transport),
+			inner: otelhttp.NewTransport(&urlSecretsRestoringTransport{inner: cli.Transport}),
 		}
 	}
 

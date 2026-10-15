@@ -290,7 +290,7 @@ func TestRefresh_defaultState(t *testing.T) {
 	actual := newState.RootModule().Resources["test_instance.foo"].Instances[addrs.NoKey].Current
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
-		AttrsJSON:    []byte(`{"ami":null,"id":"yes"}`),
+		AttrsJSON:    []byte("{\n            \"ami\": null,\n            \"id\": \"yes\"\n          }"),
 		Dependencies: []addrs.ConfigResource{},
 	}
 	if !reflect.DeepEqual(actual, expected) {
@@ -364,7 +364,7 @@ func TestRefresh_outPath(t *testing.T) {
 	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
-		AttrsJSON:    []byte(`{"ami":null,"id":"yes"}`),
+		AttrsJSON:    []byte("{\n            \"ami\": null,\n            \"id\": \"yes\"\n          }"),
 		Dependencies: []addrs.ConfigResource{},
 	}
 	if !reflect.DeepEqual(actual, expected) {
@@ -624,7 +624,7 @@ func TestRefresh_backup(t *testing.T) {
 	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
-		AttrsJSON:    []byte(`{"ami":null,"id":"changed"}`),
+		AttrsJSON:    []byte("{\n            \"ami\": null,\n            \"id\": \"changed\"\n          }"),
 		Dependencies: []addrs.ConfigResource{},
 	}
 	if !reflect.DeepEqual(actual, expected) {
@@ -699,7 +699,7 @@ func TestRefresh_disableBackup(t *testing.T) {
 	actual.ConfigExprHash = nil
 	expected := &states.ResourceInstanceObjectSrc{
 		Status:       states.ObjectReady,
-		AttrsJSON:    []byte(`{"ami":null,"id":"yes"}`),
+		AttrsJSON:    []byte("{\n            \"ami\": null,\n            \"id\": \"yes\"\n          }"),
 		Dependencies: []addrs.ConfigResource{},
 	}
 	if !reflect.DeepEqual(actual, expected) {

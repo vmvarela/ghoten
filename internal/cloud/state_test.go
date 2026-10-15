@@ -16,8 +16,8 @@ import (
 
 	tfe "github.com/hashicorp/go-tfe"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
-	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"

@@ -30,10 +30,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/tracing"
 
 	backendInit "github.com/vmvarela/ghoten/internal/backend/init"
@@ -243,7 +243,9 @@ func (m *Meta) selectWorkspace(ctx context.Context, b backend.Backend) error {
 			// len is always 1 if using Name; 0 means we're using Tags and there
 			// aren't any matching workspaces. Which might be normal and fine, so
 			// let's just ask:
-			name, err := m.UIInput().Input(context.Background(), &ghoten.InputOpts{
+			ctx, cancel := m.InterruptibleContext(m.CommandContext())
+			defer cancel()
+			name, err := m.UIInput().Input(ctx, &ghoten.InputOpts{
 				Id:          "create-workspace",
 				Query:       "\n[reset][bold][yellow]No workspaces found.[reset]",
 				Description: fmt.Sprintf(inputCloudInitCreateWorkspace, strings.Join(c.WorkspaceMapping.Tags, ", ")),
@@ -290,7 +292,9 @@ func (m *Meta) selectWorkspace(ctx context.Context, b backend.Backend) error {
 	}
 
 	// Otherwise, ask the user to select a workspace from the list of existing workspaces.
-	v, err := m.UIInput().Input(context.Background(), &ghoten.InputOpts{
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
+	v, err := m.UIInput().Input(ctx, &ghoten.InputOpts{
 		Id: "select-workspace",
 		Query: fmt.Sprintf(
 			"\n[reset][bold][yellow]The currently selected workspace (%s) does not exist.[reset]",

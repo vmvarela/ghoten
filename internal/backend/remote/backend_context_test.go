@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 
 	tfe "github.com/hashicorp/go-tfe"
 	"github.com/zclconf/go-cty/cty"
@@ -215,7 +215,7 @@ func TestRemoteContextWithVars(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, _, diags := b.LocalRun(t.Context(), op)
+			_, _, diags := b.LocalRun(t.Context(), t.Context(), op)
 
 			if test.WantError != "" {
 				if !diags.HasErrors() {
@@ -438,7 +438,7 @@ func TestRemoteVariablesDoNotOverride(t *testing.T) {
 				}
 			}
 
-			lr, _, diags := b.LocalRun(t.Context(), op)
+			lr, _, diags := b.LocalRun(t.Context(), t.Context(), op)
 
 			if diags.HasErrors() {
 				t.Fatalf("unexpected error\ngot:  %s\nwant: <no error>", diags.Err().Error())

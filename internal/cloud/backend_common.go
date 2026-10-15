@@ -25,9 +25,9 @@ import (
 	"github.com/hashicorp/jsonapi"
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/command/jsonformat"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/logging"
 	"github.com/vmvarela/ghoten/internal/plans"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 var (

@@ -363,7 +363,7 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
 	return file, diags
 }
 
-func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdiags.Diagnostics {
+func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption, indent bool) tfdiags.Diagnostics {
 	// Here we'll convert back from the "File" representation to our
 	// stateV4 struct representation and write that.
 	//
@@ -490,9 +490,25 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 	sV4.CheckResults = encodeCheckResultsV4(file.State.CheckResults)
 
+	// Gate on accumulated conversion/validation errors before normalizing,
+	// marshaling and writing: a state whose serialization produced errors
+	// must never reach the writer. Warning-only diagnostics must still
+	// produce valid output.
+	if diags.HasErrors() {
+		return diags
+	}
+
 	sV4.normalize()
 
-	src, err := json.Marshal(sV4)
+	var src []byte
+	var err error
+	if indent {
+		// Indenta el JSON en claro antes de cifrarlo: el estado local queda
+		// legible y el sobre cifrado conserva el formato compacto.
+		src, err = json.MarshalIndent(sV4, "", "  ")
+	} else {
+		src, err = json.Marshal(sV4)
+	}
 	if err != nil {
 		// Shouldn't happen if we do our conversion to *stateV4 correctly above.
 		diags = diags.Append(tfdiags.Sourceless(
@@ -506,6 +522,11 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 	encrypted, encDiags := enc.EncryptState(src)
 	diags = diags.Append(encDiags)
+	if diags.HasErrors() {
+		// Encryption failed, possibly even after returning some bytes.
+		// Never present such output to the writer.
+		return diags
+	}
 
 	_, err = w.Write(encrypted)
 	if err != nil {
@@ -522,6 +543,18 @@ func writeStateV4(file *File, w io.Writer, enc encryption.StateEncryption) tfdia
 
 func appendInstanceObjectStateV4(rs *states.Resource, is *states.ResourceInstance, key addrs.InstanceKey, obj *states.ResourceInstanceObjectSrc, deposed states.DeposedKey, isV4s []instanceObjectStateV4, hasProviderInstanceKeys bool) ([]instanceObjectStateV4, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
+
+	// Ephemeral values must never be persisted. AttrSensitivePaths only
+	// carries the serializable sensitive subset; the remaining transient
+	// marks (including Ephemeral) live in TransientPathValueMarks, so a
+	// leaked ephemeral mark here means the object cannot be saved.
+	if err := marks.EnsureNoEphemeralMarks(obj.TransientPathValueMarks); err != nil {
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Failed to serialize resource instance in state",
+			fmt.Sprintf("Instance %s contains ephemeral values, which cannot be saved in state: %s.", rs.Addr.Instance(key), err),
+		))
+	}
 
 	var status string
 	switch obj.Status {

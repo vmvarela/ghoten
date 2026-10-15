@@ -19,10 +19,10 @@ import (
 	"time"
 
 	multierror "github.com/hashicorp/go-multierror"
-	"github.com/vmvarela/ghoten/internal/states/remote"
-	"github.com/vmvarela/ghoten/internal/states/statemgr"
 	tag "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tag/v20180813"
 	"github.com/tencentyun/cos-go-sdk-v5"
+	"github.com/vmvarela/ghoten/internal/states/remote"
+	"github.com/vmvarela/ghoten/internal/states/statemgr"
 )
 
 const (

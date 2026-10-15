@@ -386,6 +386,21 @@ func (i *Installer) ensureProviderVersionsNeed(
 			return getproviders.Version{}, err
 		}
 
+		// If the provider is locked and the global cache directory already
+		// contains the exact locked version, we can skip querying the source
+		// for available versions (which is needed only to detect retracted
+		// releases) and trust the cached package instead.
+		if locked[provider] && i.globalCacheDir != nil {
+			pl := locks.Provider(provider)
+			if i.globalCacheDir.ProviderVersion(pl.Provider(), pl.Version()) != nil {
+				log.Printf("[DEBUG] Global cache dir enabled and contains locked provider %s %s. Skipping check for retracted provider version.", pl.Provider(), pl.Version())
+				if cb := evts.QueryPackagesSuccess; cb != nil {
+					cb(pl.Provider(), pl.Version())
+				}
+				return pl.Version(), nil
+			}
+		}
+
 		available, warnings, err := i.source.AvailableVersions(ctx, provider)
 		if err != nil {
 			if cb := evts.QueryPackagesFailure; cb != nil {
@@ -743,7 +758,7 @@ func (i *Installer) ensureProviderVersionInDirectory(
 			// Note that the "tofu init" UI relies on us pretending
 			// that these are "signed" to avoid generating its warning
 			// that the dependency lock file might be incomplete.
-			return hd.ReportedByRegistry
+			return hd.ReportedByRegistry || hd.ReportedByTrustedMirror
 		}
 		return hd.SignedByAnyGPGKeys()
 	}))

@@ -6,8 +6,12 @@
 package remote
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"log"
+	"strings"
 	"sync"
 	"testing"
 
@@ -18,6 +22,7 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
@@ -393,6 +398,10 @@ func TestStatePersist(t *testing.T) {
 	if logIdx != logCnt {
 		t.Fatalf("not all requests were read. Expected logIdx to be %d but got %d", logCnt, logIdx)
 	}
+
+	// El contenido enviado con Put debe ser compacto; los backends remotos
+	// no deben recibir el formato indentado de los archivos locales.
+	assertCompactStateJSON(t, mockClient.current)
 }
 
 func TestState_GetRootOutputValues(t *testing.T) {
@@ -761,6 +770,216 @@ func TestWriteStateForMigrationWithForcePushClient(t *testing.T) {
 	if logIdx != logCnt {
 		log.Fatalf("not all requests were read. Expected logIdx to be %d but got %d", logCnt, logIdx)
 	}
+}
+
+// countMethodInClientLog counts entries with the given method in a mock client log.
+func countMethodInClientLog(entries []mockClientRequest, method string) int {
+	count := 0
+	for _, req := range entries {
+		if req.Method == method {
+			count++
+		}
+	}
+	return count
+}
+
+// lastClientRequest returns the most recent entry with the given method, if any.
+func lastClientRequest(entries []mockClientRequest, method string) (mockClientRequest, bool) {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Method == method {
+			return entries[i], true
+		}
+	}
+	return mockClientRequest{}, false
+}
+
+// seedRemoteStateSnapshot serializes a small valid state snapshot with a fixed
+// lineage and serial, to seed the mock remote client as a payload that already
+// exists on the remote side. Failure tests assert this prior payload survives
+// a failed persist untouched.
+func seedRemoteStateSnapshot(t *testing.T) []byte {
+	t.Helper()
+	state := states.NewState()
+	providerConfig := addrs.AbsProviderConfig{
+		Provider: addrs.NewDefaultProvider("test"),
+		Module:   addrs.RootModule,
+	}
+	addr := addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_instance", Name: "foo"}
+	state.RootModule().SetResourceProvider(addr, providerConfig)
+	state.RootModule().SetResourceInstanceCurrent(
+		addr.Instance(addrs.NoKey),
+		&states.ResourceInstanceObjectSrc{
+			AttrsJSON: []byte(`{"id":"x"}`),
+			Status:    states.ObjectReady,
+		},
+		providerConfig,
+		addrs.NoKey,
+	)
+	var buf bytes.Buffer
+	err := statefile.Write(statefile.New(state, "remote-safety-lineage", 1), &buf, encryption.StateEncryptionDisabled())
+	if err != nil {
+		t.Fatalf("failed to serialize seed snapshot: %s", err)
+	}
+	return buf.Bytes()
+}
+
+// assertCompactStateJSON comprueba que el contenido del estado sea JSON
+// compacto: una línea sin espacios insignificantes y con un salto final,
+// como produce statefile.Write. Así se verifican los bytes remotos y de nube,
+// no solo los mapas decodificados.
+func assertCompactStateJSON(t *testing.T, data []byte) {
+	t.Helper()
+	line, _, found := bytes.Cut(data, []byte{'\n'})
+	if !found || len(line) == 0 || !json.Valid(line) {
+		t.Fatalf("expected a compact single-line state JSON payload, got:\n%s", data)
+	}
+	var compacted bytes.Buffer
+	if err := json.Compact(&compacted, line); err != nil || !bytes.Equal(compacted.Bytes(), line) {
+		t.Fatalf("expected a compact (non-indented) state JSON payload, got:\n%s", data)
+	}
+}
+
+// leakEphemeralMarkIntoState adds an Ephemeral transient mark to every current
+// instance object, emulating an in-process write that bypassed the ephemeral
+// guards and left a leaked mark behind.
+func leakEphemeralMarkIntoState(state *states.State) *states.State {
+	root := state.RootModule()
+	for _, rs := range root.Resources {
+		for _, is := range rs.Instances {
+			if is.Current == nil {
+				continue
+			}
+			is.Current.TransientPathValueMarks = []cty.PathValueMarks{{
+				Path:  cty.GetAttrPath("id"),
+				Marks: cty.NewValueMarks(marks.Ephemeral),
+			}}
+		}
+	}
+	return state
+}
+
+// clearEphemeralMarksFromState removes all transient marks from every current
+// instance object, emulating the corrected retry after a failed persist.
+func clearEphemeralMarksFromState(state *states.State) *states.State {
+	root := state.RootModule()
+	for _, rs := range root.Resources {
+		for _, is := range rs.Instances {
+			if is.Current == nil {
+				continue
+			}
+			is.Current.TransientPathValueMarks = nil
+		}
+	}
+	return state
+}
+
+// encryptStateWithBytesAndError simulates an encryption backend that yields
+// usable bytes together with an error: such output must be treated as a
+// failure and never reach the writer or the remote client.
+type encryptStateWithBytesAndError struct {
+	encryption.StateEncryption
+}
+
+var _ encryption.StateEncryption = encryptStateWithBytesAndError{}
+
+func (e encryptStateWithBytesAndError) EncryptState(src []byte) ([]byte, error) {
+	return src, errors.New("synthetic encryption failure with bytes")
+}
+
+// TestStatePersistFailedSerializationPutsNothing verifies that a state whose
+// serialization fails (a leaked ephemeral mark) makes PersistState return an
+// error without any Put call and with the prior remote payload unchanged, and
+// that the corrected retry persists successfully.
+func TestStatePersistFailedSerializationPutsNothing(t *testing.T) {
+	payload := seedRemoteStateSnapshot(t)
+	client := &mockClient{current: payload}
+	mgr := NewState(client, encryption.StateEncryptionDisabled())
+	if err := mgr.RefreshState(t.Context()); err != nil {
+		t.Fatalf("failed to RefreshState: %s", err)
+	}
+
+	if err := mgr.WriteState(leakEphemeralMarkIntoState(mgr.State())); err != nil {
+		t.Fatalf("failed to WriteState: %s", err)
+	}
+	err := mgr.PersistState(t.Context(), nil)
+	if err == nil {
+		t.Fatal("expected PersistState to fail with a leaked ephemeral mark")
+	}
+	if !strings.Contains(err.Error(), "ephemeral") {
+		t.Fatalf("expected the error to mention ephemeral values, got: %s", err)
+	}
+	if got := countMethodInClientLog(client.log, "Put"); got != 0 {
+		t.Fatalf("expected zero Put calls for failed serialization, got %d", got)
+	}
+	if !bytes.Equal(client.current, payload) {
+		t.Fatal("expected the prior remote payload to be unchanged after failed serialization")
+	}
+
+	// Corrected retry: once the ephemeral leak is gone, persisting the same
+	// state must succeed with exactly one Put. The failed attempt already
+	// advanced the serial, so the retry's serial is readSerial+2.
+	if err := mgr.WriteState(clearEphemeralMarksFromState(mgr.State())); err != nil {
+		t.Fatalf("failed to WriteState: %s", err)
+	}
+	if err := mgr.PersistState(t.Context(), nil); err != nil {
+		t.Fatalf("expected corrected retry to succeed, got: %s", err)
+	}
+	put, ok := lastClientRequest(client.log, "Put")
+	if !ok {
+		t.Fatal("expected one Put call after the corrected retry")
+	}
+	if serial := put.Content["serial"]; serial != 3.0 {
+		t.Fatalf("expected serial 3.0 after failed attempt and corrected retry, got %v", serial)
+	}
+	assertCompactStateJSON(t, client.current)
+}
+
+// TestStatePersistFailedEncryptionPutsNothing verifies that an encryption
+// failure that still returns bytes makes PersistState return an error without
+// any Put call and with the prior remote payload unchanged, and that a retry
+// with working encryption persists successfully.
+func TestStatePersistFailedEncryptionPutsNothing(t *testing.T) {
+	payload := seedRemoteStateSnapshot(t)
+	client := &mockClient{current: payload}
+	mgr := NewState(client, encryptStateWithBytesAndError{encryption.StateEncryptionDisabled()})
+	if err := mgr.RefreshState(t.Context()); err != nil {
+		t.Fatalf("failed to RefreshState: %s", err)
+	}
+
+	// Change the state so persist does not short-circuit as "nothing changed".
+	s := mgr.State()
+	s.RootModule().SetOutputValue("foo", cty.StringVal("bar"), false, "")
+	if err := mgr.WriteState(s); err != nil {
+		t.Fatalf("failed to WriteState: %s", err)
+	}
+
+	err := mgr.PersistState(t.Context(), nil)
+	if err == nil {
+		t.Fatal("expected PersistState to fail when encryption returns bytes together with an error")
+	}
+	if !strings.Contains(err.Error(), "synthetic encryption failure with bytes") {
+		t.Fatalf("expected the encryption error to be reported, got: %s", err)
+	}
+	if got := countMethodInClientLog(client.log, "Put"); got != 0 {
+		t.Fatalf("expected zero Put calls for failed encryption, got %d", got)
+	}
+	if !bytes.Equal(client.current, payload) {
+		t.Fatal("expected the prior remote payload to be unchanged after failed encryption")
+	}
+
+	// Corrected retry: restore working encryption and persist the same state.
+	mgr.encryption = encryption.StateEncryptionDisabled()
+	if err := mgr.PersistState(t.Context(), nil); err != nil {
+		t.Fatalf("expected corrected retry to succeed, got: %s", err)
+	}
+	put, ok := lastClientRequest(client.log, "Put")
+	if !ok {
+		t.Fatal("expected one Put call after the corrected retry")
+	}
+	if serial := put.Content["serial"]; serial != 3.0 {
+		t.Fatalf("expected serial 3.0 after failed attempt and corrected retry, got %v", serial)
+	}
+	assertCompactStateJSON(t, client.current)
 }
 
 // mockOptionalClientLocker is a mock implementation of a client that supports optional locking.

@@ -7,6 +7,7 @@ package command
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -44,6 +45,17 @@ func TestStatePull(t *testing.T) {
 	actual := ui.OutputWriter.Bytes()
 	if bytes.Equal(actual, expected) {
 		t.Fatalf("expected:\n%s\n\nto include: %q", actual, expected)
+	}
+
+	// Sin importar el formato local, state pull debe producir JSON compacto:
+	// una sola línea, sin espacios en blanco insignificantes.
+	line, _, found := bytes.Cut(actual, []byte{'\n'})
+	if !found || len(line) == 0 || !json.Valid(line) {
+		t.Fatalf("expected compact state JSON output, got:\n%s", actual)
+	}
+	var compacted bytes.Buffer
+	if err := json.Compact(&compacted, line); err != nil || !bytes.Equal(compacted.Bytes(), line) {
+		t.Fatalf("expected compact (non-indented) state JSON output, got:\n%s", actual)
 	}
 }
 
