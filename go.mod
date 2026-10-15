@@ -8,8 +8,8 @@ go 1.26.7
 godebug tlsmlkem=0
 
 require (
-	cloud.google.com/go/kms v1.33.0
-	cloud.google.com/go/storage v1.68.0
+	cloud.google.com/go/kms v1.35.0
+	cloud.google.com/go/storage v1.69.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v1.2.0
@@ -44,7 +44,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
-	github.com/googleapis/gax-go/v2 v2.24.1
+	github.com/googleapis/gax-go/v2 v2.26.2
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.75
 	github.com/hashicorp/consul/api v1.34.5
 	github.com/hashicorp/consul/sdk v0.18.2
@@ -109,7 +109,7 @@ require (
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	golang.org/x/time v0.16.0
-	google.golang.org/api v0.299.0
+	google.golang.org/api v0.301.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.0
@@ -122,9 +122,9 @@ require (
 require (
 	cel.dev/expr v0.25.3 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.23.3 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/compute/metadata v0.9.1 // indirect
+	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
+	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	cloud.google.com/go/iam v1.13.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
@@ -206,7 +206,7 @@ require (
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
-	github.com/google/s2a-go v0.1.10 // indirect
+	github.com/google/s2a-go v0.1.11 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
