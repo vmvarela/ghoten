@@ -333,8 +333,7 @@ func TestHTTPMirrorSourceTrustAllHashes(t *testing.T) {
 	})
 }
 
-// Regression for Oracle Gate37 finding 1: an archives entry that is present
-// but JSON-null must not panic. With trust_all_hashes enabled the nil
+// Regression: an archives entry that is present but JSON-null must not panic. With trust_all_hashes enabled the nil
 // off-platform entry makes the whole query fail with a clear error; with
 // trust disabled it is ignored, as before.
 func TestHTTPMirrorSourceNullArchiveEntry(t *testing.T) {
