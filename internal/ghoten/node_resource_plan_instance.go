@@ -36,8 +36,12 @@ type NodePlannableResourceInstance struct {
 	*NodeAbstractResourceInstance
 	ForceCreateBeforeDestroy bool
 
-	// skipRefresh indicates that we should skip refreshing individual instances
+	// skipRefresh indicates that we should skip refreshing individual instances.
 	skipRefresh bool
+
+	// smartRefresh is true only when skipRefresh is a provisional Smart Refresh
+	// candidate rather than an explicit user-requested skip.
+	smartRefresh bool
 
 	// skipPlanChanges indicates we should skip trying to plan change actions
 	// for any instances.
@@ -352,7 +356,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			// The graph transformer only identifies resources that are candidates
 			// for skipping. Make the final decision here, after instance expansion
 			// and provider resolution, using the evaluated per-instance fingerprint.
-			if n.skipRefresh && (!fingerprintOK || !smartRefreshCanSkip(instanceRefreshState, refreshFingerprint, smartRefreshNow())) {
+			if n.smartRefresh && n.skipRefresh && (!fingerprintOK || !smartRefreshCanSkip(instanceRefreshState, refreshFingerprint, smartRefreshNow())) {
 				log.Printf("[DEBUG] SmartRefresh: forcing refresh for %q because evaluated fingerprint/freshness changed", n.Addr)
 				n.skipRefresh = false
 			}
