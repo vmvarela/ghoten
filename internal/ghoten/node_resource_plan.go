@@ -29,8 +29,13 @@ type nodeExpandPlannableResource struct {
 	// on regardless of what the configuration says.
 	ForceCreateBeforeDestroy *bool
 
-	// skipRefresh indicates that we should skip refreshing individual instances
+	// skipRefresh indicates that we should skip refreshing individual instances.
 	skipRefresh bool
+
+	// smartRefresh distinguishes an evaluated Smart Refresh candidate from an
+	// explicit skip such as -refresh=false. Smart Refresh is allowed to turn a
+	// candidate back into a real refresh; explicit skips are not.
+	smartRefresh bool
 
 	preDestroyRefresh bool
 
@@ -390,6 +395,7 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx context.Conte
 			// nodes that have it.
 			ForceCreateBeforeDestroy: n.CreateBeforeDestroy(),
 			skipRefresh:              n.skipRefresh,
+			smartRefresh:             n.smartRefresh,
 			skipPlanChanges:          n.skipPlanChanges,
 			forceReplace:             n.forceReplace,
 		}
