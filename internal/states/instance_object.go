@@ -53,11 +53,19 @@ type ResourceInstanceObject struct {
 
 	SkipDestroy bool
 
-	// ConfigExprHash is a SHA-256 fingerprint of the syntactic structure of
-	// the resource's count, for_each, and depends_on expressions. It is
-	// persisted in state and used by the SmartRefreshTransformer to detect
-	// configuration changes between runs.
+	// ConfigExprHash is the legacy Smart Refresh structural fingerprint.
+	// It is retained for backward-compatible state decoding only.
 	ConfigExprHash []byte
+
+	// RefreshFingerprint is a SHA-256 fingerprint of the evaluated resource
+	// configuration, resolved provider instance/configuration, and normalized
+	// dependency/lifecycle metadata used by Smart Refresh.
+	RefreshFingerprint []byte
+
+	// LastRefreshTime is the Unix timestamp of the last successful remote
+	// ReadResource for this object. Smart Refresh uses it to bound how long
+	// drift can remain undetected when a fingerprint stays unchanged.
+	LastRefreshTime int64
 }
 
 // ObjectStatus represents the status of a RemoteObject.
@@ -158,6 +166,8 @@ func (o *ResourceInstanceObject) Encode(ty cty.Type, schemaVersion uint64) (*Res
 		CreateBeforeDestroy:     o.CreateBeforeDestroy,
 		SkipDestroy:             o.SkipDestroy,
 		ConfigExprHash:          o.ConfigExprHash,
+		RefreshFingerprint:      o.RefreshFingerprint,
+		LastRefreshTime:         o.LastRefreshTime,
 	}, nil
 }
 
