@@ -15,6 +15,7 @@ import (
 	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
@@ -25,6 +26,12 @@ var smartRefreshNow = time.Now
 
 func fingerprintCtyValue(val cty.Value) ([]byte, bool) {
 	if val == cty.NilVal || !val.IsWhollyKnown() {
+		return nil, false
+	}
+	// Never persist even a one-way digest derived from ephemeral/write-only
+	// values. Their contract is that no durable artifact depends on their
+	// contents. Smart Refresh therefore falls back to a remote read.
+	if marks.Contains(val, marks.Ephemeral) {
 		return nil, false
 	}
 
