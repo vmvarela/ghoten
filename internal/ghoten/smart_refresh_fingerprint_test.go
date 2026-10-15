@@ -62,6 +62,16 @@ func TestResourceRefreshFingerprintTracksEvaluatedInputs(t *testing.T) {
 		t.Fatal("evaluated provider configuration changes must change the fingerprint")
 	}
 
+	providerKey := addrs.StringKey("secondary")
+	providerKeyFingerprint, ok := providerConfigFingerprint(providerAddr, providerKey, providerConfigA)
+	if !ok {
+		t.Fatal("expected keyed provider fingerprint")
+	}
+	providerKeyChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, providerKey, providerKeyFingerprint, 0, []addrs.ConfigResource{depA}, false, false)
+	if bytes.Equal(base, providerKeyChanged) {
+		t.Fatal("provider instance key changes must change the fingerprint")
+	}
+
 	schemaChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 1, []addrs.ConfigResource{depA}, false, false)
 	if bytes.Equal(base, schemaChanged) {
 		t.Fatal("resource schema version changes must change the fingerprint")
