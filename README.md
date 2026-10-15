@@ -73,6 +73,8 @@ A remote `ReadResource` call is skipped only when the fingerprint matches the la
 
 The output reports refreshed vs. skipped resources, making the API-call reduction visible.
 
+Provider fingerprints cover the provider configuration value visible to OpenTofu Core and the resolved provider instance. Legacy provider protocols do not expose every provider-internal context derived from external environment (for example, an account selected only through credentials/environment variables). If that external context changes independently of HCL, use a full refresh; the 24-hour freshness bound limits, but cannot eliminate, that protocol-level blind spot.
+
 ## Documentation
 
 - [Quickstart & installation](docs/quickstart.md)
