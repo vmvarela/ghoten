@@ -50,7 +50,7 @@ const (
 
 	// RefreshSmart selectively refreshes only resources whose configuration
 	// has changed and their dependency subgraph. This is "-refresh=smart"
-	// and the new default behavior.
+	// and is opt-in; RefreshAll remains the compatibility default.
 	RefreshSmart
 )
 
