@@ -28,10 +28,11 @@ func fingerprintCtyValue(val cty.Value) ([]byte, bool) {
 	if val == cty.NilVal || !val.IsWhollyKnown() {
 		return nil, false
 	}
-	// Never persist even a one-way digest derived from ephemeral/write-only
-	// values. Their contract is that no durable artifact depends on their
-	// contents. Smart Refresh therefore falls back to a remote read.
-	if marks.Contains(val, marks.Ephemeral) {
+	// Never persist even a one-way digest derived from ephemeral/write-only or
+	// sensitive values. A plain digest can still become a durable equality or
+	// offline-guessing oracle for secrets. Smart Refresh therefore falls back
+	// to a remote read whenever protected values participate in configuration.
+	if marks.ContainsAnyMark(val, marks.Ephemeral, marks.Sensitive) {
 		return nil, false
 	}
 
