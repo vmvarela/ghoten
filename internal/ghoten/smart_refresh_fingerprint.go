@@ -15,6 +15,7 @@ import (
 	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
@@ -100,6 +101,21 @@ func resourceRefreshFingerprint(
 	return h.Sum(nil), true
 }
 
+func smartRefreshSupportsConfig(config *configs.Resource) bool {
+	if config == nil || config.Managed == nil {
+		return false
+	}
+	// Advanced lifecycle/condition semantics can change planning independently
+	// of the resource configuration value. Until their evaluated semantics are
+	// represented explicitly in the fingerprint, refresh these resources
+	// conservatively rather than hashing HCL source ranges.
+	return !config.Managed.IgnoreAllChanges &&
+		len(config.Managed.IgnoreChanges) == 0 &&
+		config.Managed.PreventDestroy == nil &&
+		len(config.TriggersReplacement) == 0 &&
+		!config.HasCustomConditions()
+}
+
 func smartRefreshCanSkip(prior *states.ResourceInstanceObject, fingerprint []byte, now time.Time) bool {
 	if prior == nil || len(fingerprint) == 0 || len(prior.RefreshFingerprint) == 0 {
 		return false
@@ -140,15 +156,7 @@ func evaluatedResourceRefreshFingerprint(
 	if n == nil || n.Config == nil || n.Config.Managed == nil || n.Schema == nil {
 		return nil, false, diags
 	}
-	// Advanced lifecycle/condition semantics can change planning independently
-	// of the resource configuration value. Until their evaluated semantics are
-	// represented explicitly in the fingerprint, refresh these resources
-	// conservatively rather than hashing HCL source ranges.
-	if n.Config.Managed.IgnoreAllChanges ||
-		len(n.Config.Managed.IgnoreChanges) != 0 ||
-		n.Config.Managed.PreventDestroy != nil ||
-		len(n.Config.TriggersReplacement) != 0 ||
-		n.Config.HasCustomConditions() {
+	if !smartRefreshSupportsConfig(n.Config) {
 		return nil, false, diags
 	}
 	if n.ResolvedProvider.ConfigFingerprint == nil {
