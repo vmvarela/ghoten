@@ -5,6 +5,7 @@ package ghoten
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"sort"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/states"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 const smartRefreshMaxAge = 24 * time.Hour
@@ -115,4 +117,44 @@ func cloneBytes(src []byte) []byte {
 	ret := make([]byte, len(src))
 	copy(ret, src)
 	return ret
+}
+
+func (n *NodePlannableResourceInstance) evaluatedRefreshFingerprint(
+	ctx context.Context,
+	evalCtx EvalContext,
+	skipDestroy bool,
+) ([]byte, bool, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	if n.Config == nil || n.Schema == nil {
+		return nil, false, diags
+	}
+	if n.ResolvedProvider.ConfigFingerprint == nil {
+		return nil, false, diags
+	}
+
+	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.Addr)
+	diags = diags.Append(forEachDiags)
+	if forEachDiags.HasErrors() {
+		return nil, false, diags
+	}
+
+	keyData := EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	configVal, _, configDiags := evalCtx.EvaluateBlock(ctx, n.Config.Config, n.Schema, nil, keyData)
+	diags = diags.Append(configDiags.InConfigBody(n.Config.Config, n.Addr.String()))
+	if configDiags.HasErrors() {
+		return nil, false, diags
+	}
+
+	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
+	fingerprint, ok := resourceRefreshFingerprint(
+		n.ResourceInstanceAddr(),
+		configVal,
+		n.ResolvedProvider.ProviderConfig,
+		n.ResolvedProviderKey,
+		providerFingerprint,
+		n.Dependencies,
+		n.Config.Managed.CreateBeforeDestroy || n.ForceCreateBeforeDestroy,
+		skipDestroy,
+	)
+	return fingerprint, ok, diags
 }
