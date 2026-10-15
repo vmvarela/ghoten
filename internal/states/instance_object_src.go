@@ -74,15 +74,17 @@ type ResourceInstanceObjectSrc struct {
 	CreateBeforeDestroy bool
 	SkipDestroy         bool
 
-	// ConfigExprHash is a SHA-256 fingerprint of the syntactic structure of
-	// the resource's count, for_each, and depends_on expressions. It is used
-	// by the SmartRefreshTransformer to detect configuration changes between
-	// runs without requiring expression evaluation.
-	//
-	// This field is optional: states written by older versions of Ghoten will
-	// not have it, in which case the smart-refresh heuristic falls back to
-	// conservative behavior (assuming the body changed).
+	// ConfigExprHash is the legacy Smart Refresh structural fingerprint.
+	// It remains optional for backward-compatible state decoding.
 	ConfigExprHash []byte
+
+	// RefreshFingerprint is the evaluated per-instance Smart Refresh
+	// fingerprint. Missing fingerprints force a conservative remote refresh.
+	RefreshFingerprint []byte
+
+	// LastRefreshTime is the Unix timestamp of the last successful remote
+	// refresh for this object. Zero means unknown and therefore forces refresh.
+	LastRefreshTime int64
 }
 
 // Compare two lists using an given element equal function, ignoring order and duplicates
@@ -180,6 +182,14 @@ func (os *ResourceInstanceObjectSrc) Equal(other *ResourceInstanceObjectSrc) boo
 		return false
 	}
 
+	if !bytes.Equal(os.RefreshFingerprint, other.RefreshFingerprint) {
+		return false
+	}
+
+	if os.LastRefreshTime != other.LastRefreshTime {
+		return false
+	}
+
 	return true
 }
 
@@ -232,6 +242,8 @@ func (os *ResourceInstanceObjectSrc) Decode(ty cty.Type) (*ResourceInstanceObjec
 		CreateBeforeDestroy: os.CreateBeforeDestroy,
 		SkipDestroy:         os.SkipDestroy,
 		ConfigExprHash:      os.ConfigExprHash,
+		RefreshFingerprint:  os.RefreshFingerprint,
+		LastRefreshTime:     os.LastRefreshTime,
 	}, nil
 }
 
