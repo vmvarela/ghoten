@@ -14,6 +14,7 @@ import (
 	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
@@ -92,6 +93,23 @@ func smartRefreshValueFingerprint(v cty.Value) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
+// smartRefreshSupportsConfig reports whether a resource's lifecycle settings
+// are simple enough to be fully represented by the evaluated fingerprint.
+// Advanced settings (ignore rules, prevent-destroy, replacement triggers,
+// custom conditions) can alter planning while leaving the evaluated config
+// unchanged, so Smart Refresh refreshes those resources conservatively
+// instead of ever skipping their provider read.
+func smartRefreshSupportsConfig(config *configs.Resource) bool {
+	if config == nil || config.Managed == nil {
+		return false
+	}
+	return !config.Managed.IgnoreAllChanges &&
+		len(config.Managed.IgnoreChanges) == 0 &&
+		config.Managed.PreventDestroy == nil &&
+		len(config.TriggersReplacement) == 0 &&
+		!config.HasCustomConditions()
+}
+
 func smartRefreshInstanceFingerprint(
 	configVal cty.Value,
 	addr addrs.AbsResourceInstance,
@@ -100,6 +118,8 @@ func smartRefreshInstanceFingerprint(
 	providerFingerprint []byte,
 	schemaVersion uint64,
 	dependencies []addrs.ConfigResource,
+	createBeforeDestroy bool,
+	skipDestroy bool,
 ) ([]byte, error) {
 	if len(providerFingerprint) == 0 {
 		return nil, fmt.Errorf("provider configuration fingerprint is unavailable")
@@ -114,6 +134,8 @@ func smartRefreshInstanceFingerprint(
 	fmt.Fprintf(h, "resource:%s\n", addr.String())
 	fmt.Fprintf(h, "provider:%s\n", providerAddr.String())
 	fmt.Fprintf(h, "schema-version:%d\n", schemaVersion)
+	fmt.Fprintf(h, "create-before-destroy:%t\n", createBeforeDestroy)
+	fmt.Fprintf(h, "skip-destroy:%t\n", skipDestroy)
 	if providerKey != addrs.NoKey {
 		fmt.Fprintf(h, "provider-key:%s\n", providerKey.String())
 	}

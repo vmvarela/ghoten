@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 )
@@ -59,13 +61,13 @@ func TestSmartRefreshInstanceFingerprint_IncludesProviderConfig(t *testing.T) {
 	})
 
 	fpA, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider-a"), 1, nil,
+		config, addr, providerAddr, addrs.NoKey, []byte("provider-a"), 1, nil, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fpB, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider-b"), 1, nil,
+		config, addr, providerAddr, addrs.NoKey, []byte("provider-b"), 1, nil, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -91,13 +93,13 @@ func TestSmartRefreshInstanceFingerprint_IncludesDependencies(t *testing.T) {
 	depB := addrs.RootModule.Resource(addrs.ManagedResourceMode, "test_instance", "b")
 
 	fpA, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA},
+		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA}, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fpB, err := smartRefreshInstanceFingerprint(
-		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA, depB},
+		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, []addrs.ConfigResource{depA, depB}, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -141,13 +143,13 @@ func TestSmartRefreshInstanceFingerprint_IncludesSchemaVersion(t *testing.T) {
 		Provider: addrs.NewDefaultProvider("test"),
 	}
 	fp1, err := smartRefreshInstanceFingerprint(
-		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, nil,
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, nil, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fp2, err := smartRefreshInstanceFingerprint(
-		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 2, nil,
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, []byte("provider"), 2, nil, false, false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -234,9 +236,77 @@ func TestSmartRefreshInstanceFingerprint_RequiresProviderFingerprint(t *testing.
 		Provider: addrs.NewDefaultProvider("test"),
 	}
 	_, err := smartRefreshInstanceFingerprint(
-		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, nil, 1, nil,
+		cty.EmptyObjectVal, addr, providerAddr, addrs.NoKey, nil, 1, nil, false, false,
 	)
 	if err == nil {
 		t.Fatalf("expected missing provider fingerprint to force conservative fallback")
+	}
+}
+
+func TestSmartRefreshInstanceFingerprint_IncludesLifecycleFlags(t *testing.T) {
+	addr := addrs.RootModuleInstance.ResourceInstance(
+		addrs.ManagedResourceMode, "test_instance", "example", addrs.NoKey,
+	)
+	providerAddr := addrs.AbsProviderConfig{
+		Module:   addrs.RootModule,
+		Provider: addrs.NewDefaultProvider("test"),
+	}
+	config := cty.ObjectVal(map[string]cty.Value{
+		"name": cty.StringVal("example"),
+	})
+
+	base, err := smartRefreshInstanceFingerprint(
+		config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, nil, false, false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		cbd         bool
+		skipDestroy bool
+	}{
+		{name: "create_before_destroy", cbd: true},
+		{name: "skip_destroy", skipDestroy: true},
+		{name: "both", cbd: true, skipDestroy: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			flagged, err := smartRefreshInstanceFingerprint(
+				config, addr, providerAddr, addrs.NoKey, []byte("provider"), 1, nil, test.cbd, test.skipDestroy,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Equal(base, flagged) {
+				t.Fatalf("lifecycle flag change did not invalidate the resource fingerprint")
+			}
+		})
+	}
+}
+
+func TestSmartRefreshSupportsConfig(t *testing.T) {
+	tests := map[string]struct {
+		config *configs.Resource
+		want   bool
+	}{
+		"nil config":           {config: nil, want: false},
+		"data resource":        {config: &configs.Resource{}, want: false},
+		"simple managed":       {config: &configs.Resource{Managed: &configs.ManagedResource{}}, want: true},
+		"ignore_all_changes":   {config: &configs.Resource{Managed: &configs.ManagedResource{IgnoreAllChanges: true}}, want: false},
+		"ignore_changes":       {config: &configs.Resource{Managed: &configs.ManagedResource{IgnoreChanges: []hcl.Traversal{hcl.Traversal{hcl.TraverseRoot{Name: "x"}}}}}, want: false},
+		"prevent_destroy":      {config: &configs.Resource{Managed: &configs.ManagedResource{PreventDestroy: hcl.StaticExpr(cty.True, hcl.Range{})}}, want: false},
+		"triggers_replacement": {config: &configs.Resource{TriggersReplacement: []hcl.Expression{hcl.StaticExpr(cty.StringVal("x"), hcl.Range{})}}, want: false},
+		"preconditions":        {config: &configs.Resource{Managed: &configs.ManagedResource{}, Preconditions: []*configs.CheckRule{{}}}, want: false},
+		"postconditions":       {config: &configs.Resource{Managed: &configs.ManagedResource{}, Postconditions: []*configs.CheckRule{{}}}, want: false},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := smartRefreshSupportsConfig(test.config); got != test.want {
+				t.Fatalf("got %t, want %t", got, test.want)
+			}
+		})
 	}
 }

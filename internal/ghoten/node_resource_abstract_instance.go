@@ -140,9 +140,13 @@ func (n *NodeAbstractResourceInstance) Path() addrs.ModuleInstance {
 	return n.Addr.Module
 }
 
-func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext) ([]byte, tfdiags.Diagnostics) {
+func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext, createBeforeDestroy, skipDestroy bool) ([]byte, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
 	if n.Config == nil || n.Schema == nil {
+		return nil, diags
+	}
+	if !smartRefreshSupportsConfig(n.Config) {
+		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its config uses advanced lifecycle settings", n.Addr)
 		return nil, diags
 	}
 	if n.ResolvedProvider.ConfigFingerprint == nil {
@@ -176,6 +180,8 @@ func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx cont
 		providerFingerprint,
 		n.SchemaVersion,
 		n.Dependencies,
+		createBeforeDestroy,
+		skipDestroy,
 	)
 	if err != nil {
 		log.Printf("[DEBUG] SmartRefresh: cannot fingerprint %s: %s", n.Addr, err)

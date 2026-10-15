@@ -352,7 +352,9 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 
 			if !importing {
 				var fingerprintDiags tfdiags.Diagnostics
-				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(ctx, evalCtx)
+				currentRefreshFingerprint, fingerprintDiags = n.evaluatedSmartRefreshFingerprint(
+					ctx, evalCtx, instanceRefreshState.CreateBeforeDestroy, instanceRefreshState.SkipDestroy,
+				)
 				diags = diags.Append(fingerprintDiags)
 				if fingerprintDiags.HasErrors() {
 					return diags

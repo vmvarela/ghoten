@@ -387,7 +387,8 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 	// Refresh. A failed mutation invalidates cached metadata because the remote
 	// object may have been partially modified after the last ReadResource.
 	var applyRefreshFingerprint []byte
-	if fingerprint, fingerprintDiags := n.evaluatedSmartRefreshFingerprint(ctx, evalCtx); !fingerprintDiags.HasErrors() {
+	skipDestroy, skipDestroyDiags := n.shouldSkipDestroy()
+	if fingerprint, fingerprintDiags := n.evaluatedSmartRefreshFingerprint(ctx, evalCtx, n.CreateBeforeDestroy(), skipDestroy); !fingerprintDiags.Append(skipDestroyDiags).HasErrors() {
 		applyRefreshFingerprint = fingerprint
 	} else {
 		log.Printf("[DEBUG] SmartRefresh: unable to fingerprint apply result for %s; next plan will refresh conservatively", n.Addr)
