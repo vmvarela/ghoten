@@ -292,6 +292,13 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 			"Incompatible plan mode options",
 			"The -destroy and -refresh-only options are mutually-exclusive.",
 		))
+	case o.destroyRaw && o.RefreshMode == plans.RefreshSmart:
+		o.PlanMode = plans.DestroyMode
+		diags = diags.Append(tfdiags.Sourceless(
+			tfdiags.Error,
+			"Incompatible refresh options",
+			"Smart refresh is not supported with -destroy. Use -refresh=true so Ghoten refreshes all managed objects before building the destroy plan.",
+		))
 	case o.destroyRaw:
 		o.PlanMode = plans.DestroyMode
 	case o.refreshOnlyRaw:
@@ -302,6 +309,11 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 				"Incompatible refresh options",
 				"It doesn't make sense to use -refresh-only at the same time as -refresh=false, because Ghoten would have nothing to do.",
 			))
+		} else if o.RefreshMode == plans.RefreshSmart {
+			// refresh-only promises a full reconciliation of state with remote
+			// reality, so selective refresh is deliberately normalized to all.
+			o.RefreshMode = plans.RefreshAll
+			o.Refresh = true
 		}
 	default:
 		o.PlanMode = plans.NormalMode
