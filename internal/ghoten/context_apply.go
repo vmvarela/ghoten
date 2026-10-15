@@ -156,7 +156,7 @@ func (c *Context) Apply(ctx context.Context, plan *plans.Plan, config *configs.C
 
 	newState := walker.State.Close()
 
- 	// Smart Refresh metadata is updated only by resource instances that were
+	// Smart Refresh metadata is updated only by resource instances that were
 	// actually planned/refreshed. Never globally backfill it here: doing so
 	// would incorrectly advance metadata for resources omitted by -target or
 	// -exclude.
