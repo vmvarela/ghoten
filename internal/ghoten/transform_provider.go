@@ -94,6 +94,11 @@ type ResolvedProvider struct {
 	// or returns nil and an error if the provider isn't initialized.
 	Instance func(addrs.InstanceKey) (providers.Configured, error)
 
+	// ConfigFingerprint returns the evaluated configuration fingerprint for a
+	// concrete provider instance. A nil/empty result makes Smart Refresh fall
+	// back to a conservative remote refresh.
+	ConfigFingerprint func(addrs.InstanceKey) []byte
+
 	// Test overrides
 	IsMocked          bool
 	MockResources     []*configs.MockResource
@@ -200,6 +205,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
 				KeyResource:   req.KeyResource,
 				KeyExact:      req.KeyExact,
 			}
+			if fp, ok := target.(interface{ ProviderConfigFingerprint(addrs.InstanceKey) []byte }); ok {
+				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
+			}
 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
 			pv.SetProvider(resolved)
 
@@ -270,6 +278,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
 			}
 			resolved.ProviderConfig = target.ProviderAddr()
 			resolved.Instance = target.Instance
+			if fp, ok := target.(interface{ ProviderConfigFingerprint(addrs.InstanceKey) []byte }); ok {
+				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
+			}
 
 			// Include test mocking and override extensions
 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
