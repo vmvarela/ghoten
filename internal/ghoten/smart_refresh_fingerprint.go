@@ -47,6 +47,13 @@ func fingerprintCtyValue(val cty.Value) ([]byte, bool) {
 	return sum[:], true
 }
 
+func instanceKeyFingerprintString(key addrs.InstanceKey) string {
+	if key == addrs.NoKey {
+		return "<no-key>"
+	}
+	return key.String()
+}
+
 func providerConfigFingerprint(addr addrs.AbsProviderConfig, key addrs.InstanceKey, configVal cty.Value) ([]byte, bool) {
 	configHash, ok := fingerprintCtyValue(configVal)
 	if !ok {
@@ -55,7 +62,7 @@ func providerConfigFingerprint(addr addrs.AbsProviderConfig, key addrs.InstanceK
 
 	h := sha256.New()
 	fmt.Fprintf(h, "provider:%s\n", addr.String())
-	fmt.Fprintf(h, "provider-key:%s\n", key.String())
+	fmt.Fprintf(h, "provider-key:%s\n", instanceKeyFingerprintString(key))
 	h.Write(configHash)
 	return h.Sum(nil), true
 }
@@ -89,7 +96,7 @@ func resourceRefreshFingerprint(
 	h := sha256.New()
 	fmt.Fprintf(h, "resource:%s\n", addr.String())
 	fmt.Fprintf(h, "provider:%s\n", providerAddr.String())
-	fmt.Fprintf(h, "provider-key:%s\n", providerKey.String())
+	fmt.Fprintf(h, "provider-key:%s\n", instanceKeyFingerprintString(providerKey))
 	fmt.Fprintf(h, "resource-schema-version:%d\n", schemaVersion)
 	fmt.Fprintf(h, "create-before-destroy:%t\n", createBeforeDestroy)
 	fmt.Fprintf(h, "skip-destroy:%t\n", skipDestroy)
