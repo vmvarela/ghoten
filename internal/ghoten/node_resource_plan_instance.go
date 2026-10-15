@@ -6,7 +6,6 @@
 package ghoten
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -344,37 +343,48 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			}
 			instanceRefreshState.SkipDestroy = skipDestroy
 
+			refreshFingerprint, fingerprintOK, fingerprintDiags := n.evaluatedRefreshFingerprint(ctx, evalCtx, skipDestroy)
+			diags = diags.Append(fingerprintDiags)
+			if fingerprintDiags.HasErrors() {
+				return diags
+			}
+
+			// The graph transformer only identifies resources that are candidates
+			// for skipping. Make the final decision here, after instance expansion
+			// and provider resolution, using the evaluated per-instance fingerprint.
+			if n.skipRefresh && (!fingerprintOK || !smartRefreshCanSkip(instanceRefreshState, refreshFingerprint, smartRefreshNow())) {
+				log.Printf("[DEBUG] SmartRefresh: forcing refresh for %q because evaluated fingerprint/freshness changed", n.Addr)
+				n.skipRefresh = false
+			}
+
 			if n.skipRefresh {
-				// Notify hooks that this resource's refresh was intentionally skipped
-				// (e.g. smart refresh mode determined no config change).
 				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
 					return h.PostSkipRefresh(n.Addr, states.CurrentGen)
 				}))
 				if diags.HasErrors() {
 					return diags
 				}
-				// Persist the structural fingerprint so future plans can detect
-				// config changes even for resources that were not refreshed.
-				hashChanged := false
-				if n.Config != nil && instanceRefreshState != nil {
-					newHash := configExprHash(n.Config)
-					if !bytes.Equal(instanceRefreshState.ConfigExprHash, newHash) {
-						instanceRefreshState.ConfigExprHash = newHash
-						hashChanged = true
-					}
-				}
-				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy || hashChanged {
+				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy {
 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
 					if diags.HasErrors() {
 						return diags
 					}
+				}
+			} else if importing {
+				// importState already performed a remote refresh.
+				if fingerprintOK {
+					instanceRefreshState.RefreshFingerprint = cloneBytes(refreshFingerprint)
+					instanceRefreshState.LastRefreshTime = smartRefreshNow().Unix()
+				} else {
+					instanceRefreshState.RefreshFingerprint = nil
+					instanceRefreshState.LastRefreshTime = 0
 				}
 			}
 		}
 	}
 
 	// Refresh, maybe
-	// The import process handles its own refresh
+	// The import process handles its own refresh.
 	if !n.skipRefresh && !importing {
 		s, refreshDiags := n.refresh(ctx, evalCtx, states.NotDeposed, instanceRefreshState)
 		diags = diags.Append(refreshDiags)
@@ -385,16 +395,24 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 		instanceRefreshState = s
 
 		if instanceRefreshState != nil {
-			// When refreshing we start by merging the stored dependencies and
-			// the configured dependencies. The configured dependencies will be
-			// stored to state once the changes are applied. If the plan
-			// results in no changes, we will re-write these dependencies
-			// below.
 			instanceRefreshState.Dependencies = mergeDeps(n.Dependencies, instanceRefreshState.Dependencies)
-			// Persist the structural fingerprint so future plans can detect
-			// config changes even for resources that were not skipped.
-			if n.Config != nil {
-				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
+
+			skipDestroy, skipDiags := n.shouldSkipDestroy()
+			diags = diags.Append(skipDiags)
+			if diags.HasErrors() {
+				return diags
+			}
+			refreshFingerprint, fingerprintOK, fingerprintDiags := n.evaluatedRefreshFingerprint(ctx, evalCtx, skipDestroy)
+			diags = diags.Append(fingerprintDiags)
+			if fingerprintDiags.HasErrors() {
+				return diags
+			}
+			if fingerprintOK {
+				instanceRefreshState.RefreshFingerprint = cloneBytes(refreshFingerprint)
+				instanceRefreshState.LastRefreshTime = smartRefreshNow().Unix()
+			} else {
+				instanceRefreshState.RefreshFingerprint = nil
+				instanceRefreshState.LastRefreshTime = 0
 			}
 		}
 
