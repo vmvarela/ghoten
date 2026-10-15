@@ -119,13 +119,15 @@ func cloneBytes(src []byte) []byte {
 	return ret
 }
 
-func (n *NodePlannableResourceInstance) evaluatedRefreshFingerprint(
+func evaluatedResourceRefreshFingerprint(
 	ctx context.Context,
 	evalCtx EvalContext,
+	n *NodeAbstractResourceInstance,
+	forceCreateBeforeDestroy bool,
 	skipDestroy bool,
 ) ([]byte, bool, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
-	if n.Config == nil || n.Schema == nil {
+	if n == nil || n.Config == nil || n.Config.Managed == nil || n.Schema == nil {
 		return nil, false, diags
 	}
 	if n.ResolvedProvider.ConfigFingerprint == nil {
@@ -153,8 +155,16 @@ func (n *NodePlannableResourceInstance) evaluatedRefreshFingerprint(
 		n.ResolvedProviderKey,
 		providerFingerprint,
 		n.Dependencies,
-		n.Config.Managed.CreateBeforeDestroy || n.ForceCreateBeforeDestroy,
+		n.Config.Managed.CreateBeforeDestroy || forceCreateBeforeDestroy,
 		skipDestroy,
 	)
 	return fingerprint, ok, diags
+}
+
+func (n *NodePlannableResourceInstance) evaluatedRefreshFingerprint(
+	ctx context.Context,
+	evalCtx EvalContext,
+	skipDestroy bool,
+) ([]byte, bool, tfdiags.Diagnostics) {
+	return evaluatedResourceRefreshFingerprint(ctx, evalCtx, n.NodeAbstractResourceInstance, n.ForceCreateBeforeDestroy, skipDestroy)
 }
