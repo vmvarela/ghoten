@@ -65,9 +65,11 @@ ghoten plan -refresh=false
 ghoten plan -refresh=smart
 ```
 
-Smart Refresh does **not** rely on HCL source text. For each managed resource instance it fingerprints the evaluated configuration (including variables, locals, module inputs, `count.index`, `each.key` and `each.value`), the resolved provider instance and its evaluated configuration, dependencies, and lifecycle metadata.
+Smart Refresh does **not** rely on HCL source text. For each eligible managed resource instance it fingerprints the evaluated configuration (including variables, locals, module inputs, `count.index`, `each.key` and `each.value`), the resolved provider instance and its evaluated configuration, the resource schema version, dependencies, and the supported lifecycle values (`create_before_destroy` and `destroy`).
 
-A remote `ReadResource` call is skipped only when the fingerprint matches the last successful synchronization and that synchronization is less than 24 hours old. Missing/unknown fingerprints and stale entries refresh conservatively. Data sources, orphaned objects and deposed objects are also handled conservatively.
+A remote `ReadResource` call is skipped only when the fingerprint matches the last successful synchronization and that synchronization is less than 24 hours old. Missing/unknown fingerprints and stale entries refresh conservatively. Resources involving protected values (`sensitive` or `ephemeral`/write-only), advanced lifecycle semantics (`ignore_changes`, `replace_triggered_by`, `prevent_destroy`), custom conditions, data sources, orphaned objects and deposed objects also refresh conservatively.
+
+A normal `plan` keeps OpenTofu's non-mutating state semantics: it does not write a newly refreshed fingerprint/timestamp back to the backend. That metadata becomes durable when the refreshed state is subsequently applied (including a saved plan that is applied). Therefore, once the 24-hour freshness window expires, repeated standalone plans will continue to refresh until a corresponding state update is persisted.
 
 `-refresh-only -refresh=smart` is normalized to a full refresh because refresh-only promises state reconciliation. `-destroy -refresh=smart` is rejected; destroy currently requires a full pre-destroy refresh.
 
