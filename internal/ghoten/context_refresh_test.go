@@ -2030,3 +2030,45 @@ func TestContext2SmartRefreshSkipsUnchangedRemoteRead(t *testing.T) {
 		t.Fatalf("unchanged fresh smart refresh made %d ReadResource calls, want 0", readCalls)
 	}
 }
+
+
+func TestContext2RefreshFalseNeverCallsReadResource(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "refresh-basic")
+
+	state := states.NewState()
+	root := state.EnsureModule(addrs.RootModuleInstance)
+	root.SetResourceInstanceCurrent(
+		mustResourceInstanceAddr("aws_instance.web").Resource,
+		&states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectReady,
+			AttrsJSON: []byte(`{"id":"foo","foo":"bar"}`),
+		},
+		mustProviderConfig(`provider["registry.opentofu.org/hashicorp/aws"]`),
+		addrs.NoKey,
+	)
+
+	readCalls := 0
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		readCalls++
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	_, diags := ctx.Refresh(context.Background(), m, state, &PlanOpts{
+		Mode:        plans.NormalMode,
+		SkipRefresh: true,
+		RefreshMode: plans.RefreshNone,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("refresh=false plan failed: %s", diags.Err())
+	}
+	if readCalls != 0 {
+		t.Fatalf("refresh=false made %d ReadResource calls, want 0", readCalls)
+	}
+}
