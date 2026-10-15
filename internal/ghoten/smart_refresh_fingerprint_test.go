@@ -42,26 +42,26 @@ func TestResourceRefreshFingerprintTracksEvaluatedInputs(t *testing.T) {
 	depA := addrs.ConfigResource{Module: addrs.RootModule, Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_dep", Name: "a"}}
 	depB := addrs.ConfigResource{Module: addrs.RootModule, Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_dep", Name: "b"}}
 
-	base, ok := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, []addrs.ConfigResource{depA}, false, false)
+	base, ok := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 0, []addrs.ConfigResource{depA}, false, false)
 	if !ok {
 		t.Fatal("expected resource fingerprint")
 	}
-	same, ok := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, []addrs.ConfigResource{depA}, false, false)
+	same, ok := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 0, []addrs.ConfigResource{depA}, false, false)
 	if !ok || !bytes.Equal(base, same) {
 		t.Fatal("fingerprint must be deterministic")
 	}
 
-	configChanged, _ := resourceRefreshFingerprint(resourceAddr, configB, providerAddr, addrs.NoKey, providerFingerprintA, []addrs.ConfigResource{depA}, false, false)
+	configChanged, _ := resourceRefreshFingerprint(resourceAddr, configB, providerAddr, addrs.NoKey, providerFingerprintA, 0, []addrs.ConfigResource{depA}, false, false)
 	if bytes.Equal(base, configChanged) {
 		t.Fatal("evaluated resource configuration changes must change the fingerprint")
 	}
 
-	providerChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintB, []addrs.ConfigResource{depA}, false, false)
+	providerChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintB, 0, []addrs.ConfigResource{depA}, false, false)
 	if bytes.Equal(base, providerChanged) {
 		t.Fatal("evaluated provider configuration changes must change the fingerprint")
 	}
 
-	depsChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, []addrs.ConfigResource{depA, depB}, false, false)
+	depsChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 0, []addrs.ConfigResource{depA, depB}, false, false)
 	if bytes.Equal(base, depsChanged) {
 		t.Fatal("dependency changes must change the fingerprint")
 	}
@@ -75,8 +75,8 @@ func TestResourceRefreshFingerprintDependencyOrderIndependent(t *testing.T) {
 	depA := addrs.ConfigResource{Module: addrs.RootModule, Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_dep", Name: "a"}}
 	depB := addrs.ConfigResource{Module: addrs.RootModule, Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_dep", Name: "b"}}
 
-	a, _ := resourceRefreshFingerprint(resourceAddr, config, providerAddr, addrs.NoKey, providerFingerprint, []addrs.ConfigResource{depA, depB}, false, false)
-	b, _ := resourceRefreshFingerprint(resourceAddr, config, providerAddr, addrs.NoKey, providerFingerprint, []addrs.ConfigResource{depB, depA}, false, false)
+	a, _ := resourceRefreshFingerprint(resourceAddr, config, providerAddr, addrs.NoKey, providerFingerprint, 0, []addrs.ConfigResource{depA, depB}, false, false)
+	b, _ := resourceRefreshFingerprint(resourceAddr, config, providerAddr, addrs.NoKey, providerFingerprint, 0, []addrs.ConfigResource{depB, depA}, false, false)
 	if !bytes.Equal(a, b) {
 		t.Fatal("dependency order must not affect the fingerprint")
 	}
