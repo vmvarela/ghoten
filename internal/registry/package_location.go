@@ -89,7 +89,9 @@ var _ PackageLocation = PackageLocationDirect{}
 
 // UILabel implements PackageLocation.
 func (p PackageLocationDirect) UILabel() string {
-	return p.packageURL.String()
+	// The userinfo and query string of the package URL can carry
+	// credentials (e.g. for "presigned" URLs), so we never show them here.
+	return redactedURL(p.packageURL)
 }
 
 // Subdir implements PackageLocation.

@@ -586,6 +586,43 @@ func TestNodeDestroyDeposedResourceInstanceObject_Execute_WriteErrorsExposeAndRe
 		}
 	})
 
+	t.Run("write error still triggers the post-apply hook", func(t *testing.T) {
+		// The pre-apply hook starts an apply heartbeat (e.g. in the JSON
+		// output hook) that only the post-apply hook can close, so even when
+		// the state write fails the post-apply hook must be called.
+		deposedKey := states.NewDeposedKey()
+		// Same setup as "write error alone with clean destroy": the destroy
+		// itself succeeds and only the state write fails.
+		evalCtx, _, p := buildContext(
+			deposedKey,
+			func(src *states.ResourceInstanceObjectSrc) {
+				src.AttrsJSON = []byte(`null`)
+				src.TransientPathValueMarks = []cty.PathValueMarks{{
+					Path:  cty.Path{},
+					Marks: cty.NewValueMarks(marks.Ephemeral),
+				}}
+			},
+			cty.NullVal(idObjType),
+			nil,
+		)
+		hook := &testHook{}
+		evalCtx.HookHook = hook
+
+		node := newNode(p, deposedKey)
+		diags := node.Execute(t.Context(), evalCtx, walkApply)
+		if !diags.HasErrors() {
+			t.Fatalf("expected write error to surface, got: %#v", diags)
+		}
+
+		want := []*testHookCall{
+			{Action: "PreApply", InstanceID: "test_instance.foo"},
+			{Action: "PostApply", InstanceID: "test_instance.foo"},
+		}
+		if diff := cmp.Diff(want, hook.Calls); diff != "" {
+			t.Errorf("wrong hook calls (-want +got):\n%s", diff)
+		}
+	})
+
 	t.Run("ordinary failed provider destroy retains unmarked object and retry removes the deposed key", func(t *testing.T) {
 		deposedKey := states.NewDeposedKey()
 		absResource := mustResourceInstanceAddr("test_instance.foo")

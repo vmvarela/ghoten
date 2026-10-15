@@ -811,7 +811,7 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		diags = diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Failed to download module",
-			Detail:   fmt.Sprintf("Could not download module %q (%s:%d) source code from %q: %s.", req.Name, req.CallRange.Filename, req.CallRange.Start.Line, packageLocation, err),
+			Detail:   fmt.Sprintf("Could not download module %q (%s:%d) source code from %q: %s.", req.Name, req.CallRange.Filename, req.CallRange.Start.Line, packageLocation.UILabel(), err),
 			Subject:  req.CallRange.Ptr(),
 		})
 		return nil, nil, diags

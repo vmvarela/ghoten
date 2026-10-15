@@ -14,8 +14,8 @@ import (
 
 	"github.com/mitchellh/cli"
 
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 // UnlockCommand is a cli.Command implementation that manually unlocks
@@ -117,7 +117,9 @@ func (c *UnlockCommand) Run(args []string) int {
 			"This will allow local Ghoten commands to modify this state, even though it\n" +
 			"may still be in use. Only 'yes' will be accepted to confirm."
 
-		v, err := c.UIInput().Input(context.Background(), &ghoten.InputOpts{
+		promptCtx, cancel := c.InterruptibleContext(ctx)
+		defer cancel()
+		v, err := c.UIInput().Input(promptCtx, &ghoten.InputOpts{
 			Id:          "force-unlock",
 			Query:       "Do you really want to force-unlock?",
 			Description: desc,

@@ -7,6 +7,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"net/rpc"
 
 	"github.com/hashicorp/go-plugin"
@@ -20,17 +21,32 @@ type UIInput struct {
 }
 
 func (i *UIInput) Input(ctx context.Context, opts *ghoten.InputOpts) (string, error) {
-	var resp UIInputInputResponse
-	err := i.Client.Call("Plugin.Input", opts, &resp)
-	if err != nil {
-		return "", err
+	type callResult struct {
+		value string
+		err   error
 	}
-	if resp.Error != nil {
-		err = resp.Error
-		return "", err
+	ch := make(chan callResult, 1)
+	go func() {
+		var resp UIInputInputResponse
+		err := i.Client.Call("Plugin.Input", opts, &resp)
+		if err == nil && resp.Error != nil {
+			err = resp.Error
+		}
+		ch <- callResult{resp.Value, err}
+	}()
+	var result callResult
+	select {
+	case result = <-ch:
+	case <-ctx.Done():
+		// The user was interrupted while the plugin was asking for input.
+		// The answer (if any) is discarded; the buffered channel keeps the
+		// RPC results goroutine from leaking.
+		return "", fmt.Errorf("interrupted: %w", ctx.Err())
 	}
-
-	return resp.Value, nil
+	if result.err != nil {
+		return "", result.err
+	}
+	return result.value, nil
 }
 
 type UIInputInputResponse struct {

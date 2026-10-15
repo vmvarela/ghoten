@@ -388,7 +388,7 @@ func (s *HTTPMirrorSource) errUnauthorized(finalURL *url.URL) error {
 	hostname, err := svchostFromURL(finalURL)
 	if err != nil {
 		// Again, weird but we'll tolerate it.
-		return fmt.Errorf("invalid credentials for %s", finalURL)
+		return fmt.Errorf("invalid credentials for %s", httpclient.RedactedURLString(finalURL))
 	}
 
 	return ErrUnauthorized{

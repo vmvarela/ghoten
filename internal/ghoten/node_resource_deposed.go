@@ -352,11 +352,12 @@ func (n *NodeDestroyDeposedResourceInstanceObject) Execute(ctx context.Context, 
 	// be caught on the next run.
 	writeDiags := n.writeResourceInstanceState(ctx, evalCtx, state)
 	diags = diags.Append(writeDiags)
+	// The post-apply hook closes the apply heartbeat started by the pre-apply
+	// hook (e.g. in the JSON output hook), so it must run on every path.
+	diags = diags.Append(n.postApplyHook(evalCtx, state, diags.Err()))
 	if diags.HasErrors() {
 		return diags
 	}
-
-	diags = diags.Append(n.postApplyHook(evalCtx, state, diags.Err()))
 
 	return diags.Append(updateStateHook(evalCtx, n.Addr))
 }

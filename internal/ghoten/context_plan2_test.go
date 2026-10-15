@@ -4679,7 +4679,7 @@ resource "test_object" "b" {
 		}, nil),
 	})
 
-	// Solo test_object.b está en el estado; test_object.a se quitó con "state rm".
+	// Only test_object.b is in the state; test_object.a was removed with "state rm".
 	state := states.BuildState(func(s *states.SyncState) {
 		s.SetResourceInstanceCurrent(
 			mustResourceInstanceAddr("test_object.b"),
@@ -4693,6 +4693,268 @@ resource "test_object" "b" {
 	})
 
 	plan, diags := ctx.Plan(context.Background(), m, state, &PlanOpts{
+		Mode: plans.NormalMode,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors\n%s", diags.Err().Error())
+	}
+
+	var gotCreate, gotReplace bool
+	for _, c := range plan.Changes.Resources {
+		switch c.Addr.String() {
+		case "test_object.a":
+			if c.Action != plans.Create {
+				t.Fatalf("unexpected %s change for %s; want Create", c.Action, c.Addr)
+			}
+			gotCreate = true
+		case "test_object.b":
+			if c.Action != plans.DeleteThenCreate {
+				t.Fatalf("unexpected %s change for %s; want DeleteThenCreate", c.Action, c.Addr)
+			}
+			if c.ActionReason != plans.ResourceInstanceReplaceByTriggers {
+				t.Fatalf("incorrect reason for change: %s; want ResourceInstanceReplaceByTriggers", c.ActionReason)
+			}
+			gotReplace = true
+		default:
+			t.Fatal("unexpected change", c.Addr, c.Action)
+		}
+	}
+	if !gotCreate || !gotReplace {
+		t.Fatalf("missing expected plan changes: test_object.a create=%t, test_object.b replace=%t", gotCreate, gotReplace)
+	}
+}
+
+// TestContext2Plan_triggeredByForgetThenCreate verifies that a resource being
+// replaced through the destructive-but-retained ForgetThenCreate action
+// (lifecycle.destroy = false) still triggers replace_triggered_by on
+// downstream resources that reference the whole resource, and that the
+// downstream instance is planned after its trigger (reference ordering).
+func TestContext2Plan_triggeredByForgetThenCreate(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+  test_string = "hello"
+  test_number = 2
+  lifecycle {
+    destroy = false
+  }
+}
+resource "test_object" "b" {
+  test_string = "world"
+  lifecycle {
+    replace_triggered_by = [test_object.a]
+  }
+}
+`,
+	})
+
+	// Force a replacement of test_object.a driven by the test_number change,
+	// without touching test_string.
+	p := simpleMockProvider()
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		resp := providers.PlanResourceChangeResponse{
+			PlannedState:   req.ProposedNewState,
+			PlannedPrivate: req.PriorPrivate,
+		}
+		if !req.PriorState.IsNull() {
+			resp.RequiresReplace = []cty.Path{cty.GetAttrPath("test_number")}
+		}
+		return resp
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	// test_object.b must not be planned for replacement for any reason of
+	// its own, so that the only candidate trigger is the change to
+	// test_object.a.
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.a"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"hello","test_number":1}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.b"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"world"}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+	})
+
+	plan, diags := ctx.Plan(t.Context(), m, state, &PlanOpts{
+		Mode: plans.NormalMode,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors\n%s", diags.Err().Error())
+	}
+
+	sawChange := map[string]int{}
+	for i, c := range plan.Changes.Resources {
+		sawChange[c.Addr.String()] = i
+		switch c.Addr.String() {
+		case "test_object.a":
+			// lifecycle.destroy = false turns the replacement into
+			// ForgetThenCreate: the old object is forgotten, not destroyed.
+			if c.Action != plans.ForgetThenCreate {
+				t.Fatalf("unexpected %s change for %s; want ForgetThenCreate", c.Action, c.Addr)
+			}
+		case "test_object.b":
+			// ForgetThenCreate can trigger downstream replacement.
+			if c.Action != plans.DeleteThenCreate {
+				t.Fatalf("unexpected %s change for %s; want DeleteThenCreate", c.Action, c.Addr)
+			}
+			if c.ActionReason != plans.ResourceInstanceReplaceByTriggers {
+				t.Fatalf("incorrect reason for change: %s; want ResourceInstanceReplaceByTriggers", c.ActionReason)
+			}
+		default:
+			t.Fatal("unexpected change", c.Addr, c.Action)
+		}
+	}
+	// replace_triggered_by makes b depend on a, so a must be planned first.
+	if ia, ib := sawChange["test_object.a"], sawChange["test_object.b"]; ia >= ib {
+		t.Errorf("test_object.a (index %d) must be planned before test_object.b (index %d)", ia, ib)
+	}
+}
+
+// TestContext2Plan_triggeredByForgetThenCreateUnchangedAttr verifies that a
+// single-attribute replace_triggered_by entry only triggers downstream
+// replacement when the attribute value actually changes, even though the
+// ForgetThenCreate replacement would otherwise qualify as a trigger for
+// whole-resource references.
+func TestContext2Plan_triggeredByForgetThenCreateUnchangedAttr(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+  test_string = "hello"
+  test_number = 2
+  lifecycle {
+    destroy = false
+  }
+}
+resource "test_object" "b" {
+  test_string = "world"
+  lifecycle {
+    replace_triggered_by = [test_object.a.test_string]
+  }
+}
+`,
+	})
+
+	// Force a replacement of test_object.a driven by the test_number change,
+	// without touching test_string.
+	p := simpleMockProvider()
+	p.PlanResourceChangeFn = func(req providers.PlanResourceChangeRequest) providers.PlanResourceChangeResponse {
+		resp := providers.PlanResourceChangeResponse{
+			PlannedState:   req.ProposedNewState,
+			PlannedPrivate: req.PriorPrivate,
+		}
+		if !req.PriorState.IsNull() {
+			resp.RequiresReplace = []cty.Path{cty.GetAttrPath("test_number")}
+		}
+		return resp
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.a"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"hello","test_number":1}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.b"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"world"}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+	})
+
+	plan, diags := ctx.Plan(t.Context(), m, state, &PlanOpts{
+		Mode: plans.NormalMode,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors\n%s", diags.Err().Error())
+	}
+
+	for _, c := range plan.Changes.Resources {
+		switch c.Addr.String() {
+		case "test_object.a":
+			if c.Action != plans.ForgetThenCreate {
+				t.Fatalf("unexpected %s change for %s; want ForgetThenCreate", c.Action, c.Addr)
+			}
+		case "test_object.b":
+			// test_string keeps the value "hello", so the attribute-based
+			// trigger must not replace b.
+			if c.Action != plans.NoOp {
+				t.Fatalf("unexpected %s change for %s; replace_triggered_by must not fire for an unchanged attribute", c.Action, c.Addr)
+			}
+		default:
+			t.Fatal("unexpected change", c.Addr, c.Action)
+		}
+	}
+}
+
+// TestContext2Plan_triggeredByAttrOfNewResource verifies that a
+// replace_triggered_by entry referencing a single attribute of a resource
+// that has no prior state at all (being newly created) triggers replacement
+// downstream.
+func TestContext2Plan_triggeredByAttrOfNewResource(t *testing.T) {
+	m := testModuleInline(t, map[string]string{
+		"main.tf": `
+resource "test_object" "a" {
+  test_string = "hello"
+}
+resource "test_object" "b" {
+  test_string = "world"
+  lifecycle {
+    replace_triggered_by = [test_object.a.test_string]
+  }
+}
+`,
+	})
+
+	p := simpleMockProvider()
+	ctx := testContext2(t, &ContextOpts{
+		Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
+		}, nil),
+	})
+
+	// Only test_object.b is in the state; test_object.a was removed with "state rm".
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			mustResourceInstanceAddr("test_object.b"),
+			&states.ResourceInstanceObjectSrc{
+				AttrsJSON: []byte(`{"test_string":"world"}`),
+				Status:    states.ObjectReady,
+			},
+			mustProviderConfig(`provider["registry.opentofu.org/hashicorp/test"]`),
+			addrs.NoKey,
+		)
+	})
+
+	plan, diags := ctx.Plan(t.Context(), m, state, &PlanOpts{
 		Mode: plans.NormalMode,
 	})
 	if diags.HasErrors() {

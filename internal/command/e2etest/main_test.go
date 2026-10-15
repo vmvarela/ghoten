@@ -30,12 +30,56 @@ var canRunGoBuild bool
 
 func TestMain(m *testing.M) {
 	teardown := setup()
-	code := m.Run()
-	teardown()
-	os.Exit(code)
+	// run returns before os.Exit, so the deferred teardown always fires,
+	// even if a test panics.
+	run := func() int {
+		defer teardown()
+		return m.Run()
+	}
+	os.Exit(run())
 }
 
-func setup() func() {
+func setup() (teardown func()) {
+	cleanup := func() {}
+
+	// Isolate e2e runs from the host CLI config: an empty TF_CLI_CONFIG_FILE
+	// still falls back to the home-dir config file (e.g. ~/.terraformrc),
+	// which may carry provider_installation dev_overrides or mirrors that
+	// would leak into test runs. Point HOME and XDG_CONFIG_HOME at empty
+	// temp dirs for the whole suite, including child processes run in tests.
+	homeDir, err := os.MkdirTemp("", "e2etest-home")
+	if err != nil {
+		panic(fmt.Sprintf("failed to create isolated home directory: %s", err))
+	}
+	prevHome, hadHome := os.LookupEnv("HOME")
+	prevXdgConfig, hadXdgConfig := os.LookupEnv("XDG_CONFIG_HOME")
+	os.Setenv("HOME", homeDir)
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	cleanup = func() {
+		// Restore originally-set variables; originally-unset ones must be
+		// unset again rather than set to "".
+		if hadHome {
+			os.Setenv("HOME", prevHome)
+		} else {
+			os.Unsetenv("HOME")
+		}
+		if hadXdgConfig {
+			os.Setenv("XDG_CONFIG_HOME", prevXdgConfig)
+		} else {
+			os.Unsetenv("XDG_CONFIG_HOME")
+		}
+		os.RemoveAll(homeDir)
+	}
+
+	// If any of the steps below panic (e.g. in GoBuild or filepath.Abs),
+	// still run the cleanup on the way out of the panic.
+	defer func() {
+		if r := recover(); r != nil {
+			cleanup()
+			panic(r)
+		}
+	}()
+
 	if ghotenBin != "" {
 		// this is pre-set when we're running in a binary produced from
 		// the make-archive.sh script, since that is for testing an
@@ -47,7 +91,7 @@ func setup() func() {
 		if err != nil {
 			panic(fmt.Sprintf("failed to find absolute path of ghoten executable: %s", err))
 		}
-		return func() {}
+		return cleanup
 	}
 
 	tmpFilename := e2e.GoBuild("github.com/vmvarela/ghoten/cmd/ghoten", "ghoten")
@@ -62,6 +106,7 @@ func setup() func() {
 
 	return func() {
 		os.Remove(tmpFilename)
+		cleanup()
 	}
 }
 

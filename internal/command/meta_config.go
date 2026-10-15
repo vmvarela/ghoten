@@ -23,11 +23,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configload"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/httpclient"
 	"github.com/vmvarela/ghoten/internal/initwd"
 	"github.com/vmvarela/ghoten/internal/registry"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // loadConfig reads a configuration from the given directory, which should
@@ -124,7 +124,9 @@ func (m *Meta) rootModuleCall(ctx context.Context, rootDir string) (configs.Stat
 			if variable.Required() {
 				// User prompts are best efforts, so we accept the input here
 				// and rely on downstream checks to validate it
-				rawVal, err := m.getInput(context.Background(), variable)
+				ctx, cancel := m.InterruptibleContext(m.CommandContext())
+				defer cancel()
+				rawVal, err := m.getInput(ctx, variable)
 				if err != nil {
 					return cty.NilVal, hcl.Diagnostics{&hcl.Diagnostic{
 						Severity: hcl.DiagError,
@@ -361,11 +363,13 @@ func (m *Meta) inputForSchema(given cty.Value, schema *configschema.Block) (cty.
 	sort.Strings(names)
 
 	input := m.UIInput()
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
 	for _, name := range names {
 		attrS := schema.Attributes[name]
 
 		for {
-			strVal, err := input.Input(context.Background(), &ghoten.InputOpts{
+			strVal, err := input.Input(ctx, &ghoten.InputOpts{
 				Id:          name,
 				Query:       name,
 				Description: attrS.Description,

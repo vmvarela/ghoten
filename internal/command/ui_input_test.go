@@ -99,6 +99,34 @@ func TestUIInputInput_canceled(t *testing.T) {
 	}
 }
 
+func TestUIInputInput_interruptibleContext(t *testing.T) {
+	r, _ := io.Pipe()
+	shutdownCh := make(chan struct{})
+	m := &Meta{ShutdownCh: shutdownCh}
+
+	// Same context pattern used by interactive prompt call sites.
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
+
+	i := &UIInput{
+		Reader: r,
+		Writer: bytes.NewBuffer(nil),
+	}
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		close(shutdownCh)
+	}()
+
+	v, err := i.Input(ctx, &ghoten.InputOpts{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected a context.Canceled error, got: %v", err)
+	}
+	if v != "" {
+		t.Fatalf("unexpected input: %s", v)
+	}
+}
+
 func TestUIInputInput_spaces(t *testing.T) {
 	i := &UIInput{
 		Reader: bytes.NewBufferString("foo bar\n"),

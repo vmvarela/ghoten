@@ -278,20 +278,25 @@ const (
 
 // Registry returns an httptest server that mocks out some registry functionality.
 func Registry(flags ...uint8) *httptest.Server {
-	if len(flags) == 0 {
-		return httptest.NewServer(mockRegHandler(
-			map[uint8]struct{}{
-				// default setting
-				WithModuleLocationInBody: {},
-			},
-		))
-	}
+	return httptest.NewServer(mockRegHandler(registryFlags(flags)))
+}
 
+// RegistryTLS is like Registry but serves over HTTPS. Credentials are only sent
+// to https destinations, so tests that depend on them must use this.
+func RegistryTLS(flags ...uint8) *httptest.Server {
+	return httptest.NewTLSServer(mockRegHandler(registryFlags(flags)))
+}
+
+func registryFlags(flags []uint8) map[uint8]struct{} {
+	if len(flags) == 0 {
+		// default setting
+		return map[uint8]struct{}{WithModuleLocationInBody: {}}
+	}
 	cfg := map[uint8]struct{}{}
 	for _, flag := range flags {
 		cfg[flag] = struct{}{}
 	}
-	return httptest.NewServer(mockRegHandler(cfg))
+	return cfg
 }
 
 // RegistryRetryableErrorsServer returns an httptest server that mocks out the

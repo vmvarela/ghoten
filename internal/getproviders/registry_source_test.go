@@ -292,8 +292,12 @@ func TestRegistryClientPackageMetaPackages(t *testing.T) {
 		name         string
 		packagesJSON string
 		shasum       string
+		downloadURL  string
 		wantErr      string
 		wantPackage  map[Platform]RegistryPlatformData
+		// errMustNotContain checks that secrets from server-supplied
+		// content never appear in the returned error text.
+		errMustNotContain []string
 	}{
 		{
 			name: "omitted",
@@ -337,11 +341,20 @@ func TestRegistryClientPackageMetaPackages(t *testing.T) {
 			shasum:  strings.Repeat("g", 64),
 			wantErr: "invalid SHA256 hash",
 		},
+		{
+			name: "invalid download URL",
+			// The unparseable URL (invalid percent escape) must yield a
+			// generic message; wrapping the parse error would echo the
+			// userinfo password and query from the server-supplied URL.
+			downloadURL:       "https://user:SENTINELPW@host/p%zz?sig=SENTINELSIG",
+			wantErr:           "registry response includes invalid download URL",
+			errMustNotContain: []string{"SENTINELPW", "SENTINELSIG"},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			client := testRegistryClientWithPackages(t, tc.packagesJSON, tc.shasum)
+			client := testRegistryClientWithPackages(t, tc.packagesJSON, tc.shasum, tc.downloadURL)
 
 			got, err := client.PackageMeta(context.Background(), provider, version, platform)
 			if tc.wantErr != "" {
@@ -350,6 +363,11 @@ func TestRegistryClientPackageMetaPackages(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("wrong error\ngot:  %s\nwant: %s", err.Error(), tc.wantErr)
+				}
+				for _, mustNot := range tc.errMustNotContain {
+					if strings.Contains(err.Error(), mustNot) {
+						t.Fatalf("error contains %q: %s", mustNot, err.Error())
+					}
 				}
 				return
 			}
@@ -384,10 +402,13 @@ func TestRegistryClientPackageMetaPackages(t *testing.T) {
 // independent of the fake server in registry_client_test.go) that serves the
 // download metadata for the example.com/awesomesauce/happycloud 1.2.0
 // linux_amd64 version, with the given raw `packages` JSON and optional `shasum`.
-func testRegistryClientWithPackages(t *testing.T, packagesJSON, shasum string) *registryClient {
+func testRegistryClientWithPackages(t *testing.T, packagesJSON, shasum, downloadURL string) *registryClient {
 	t.Helper()
 	if shasum == "" {
 		shasum = "000000000000000000000000000000000000000000000000000000000000f00d"
+	}
+	if downloadURL == "" {
+		downloadURL = "/pkg/awesomesauce/happycloud_1.2.0.zip"
 	}
 
 	mux := http.NewServeMux()
@@ -405,11 +426,11 @@ func testRegistryClientWithPackages(t *testing.T, packagesJSON, shasum string) *
 			"arch": "amd64",
 			"filename": "happycloud_1.2.0.zip",
 			"shasum": %q,
-			"download_url": "/pkg/awesomesauce/happycloud_1.2.0.zip",
+			"download_url": %q,
 			"shasums_url": "/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS",
 			"shasums_signature_url": "/pkg/awesomesauce/happycloud_1.2.0_SHA256SUMS.sig",
 			"signing_keys": {"gpg_public_keys": []}%s
-		}`, shasum, packagesJSON)
+		}`, shasum, downloadURL, packagesJSON)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

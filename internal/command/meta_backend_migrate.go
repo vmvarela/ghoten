@@ -23,9 +23,9 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/clistate"
 	"github.com/vmvarela/ghoten/internal/command/views"
 	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 type backendMigrateOpts struct {
@@ -891,7 +891,9 @@ func (m *Meta) promptNewWorkspaceName(destinationType string) (string, error) {
 		}
 		message = `[reset][bold][yellow]Cloud backend requires all workspaces to be given an explicit name.[reset]`
 	}
-	name, err := m.UIInput().Input(context.Background(), &ghoten.InputOpts{
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
+	name, err := m.UIInput().Input(ctx, &ghoten.InputOpts{
 		Id:          "new-state-name",
 		Query:       message,
 		Description: strings.TrimSpace(inputBackendNewWorkspaceName),
@@ -906,7 +908,9 @@ func (m *Meta) promptNewWorkspaceName(destinationType string) (string, error) {
 func (m *Meta) promptMultiStateMigrationPattern(sourceType string) (string, error) {
 	// This is not the first prompt a user would be presented with in the migration to TFC, so no
 	// guard on m.input is needed here.
-	renameWorkspaces, err := m.UIInput().Input(context.Background(), &ghoten.InputOpts{
+	ctx, cancel := m.InterruptibleContext(m.CommandContext())
+	defer cancel()
+	renameWorkspaces, err := m.UIInput().Input(ctx, &ghoten.InputOpts{
 		Id:          "backend-migrate-multistate-to-tfc",
 		Query:       fmt.Sprintf("[reset][bold][yellow]%s[reset]", "Would you like to rename your workspaces?"),
 		Description: fmt.Sprintf(strings.TrimSpace(tfcInputBackendMigrateMultiToMulti), sourceType),
@@ -924,7 +928,7 @@ func (m *Meta) promptMultiStateMigrationPattern(sourceType string) (string, erro
 		return "*", nil
 	}
 
-	pattern, err := m.UIInput().Input(context.Background(), &ghoten.InputOpts{
+	pattern, err := m.UIInput().Input(ctx, &ghoten.InputOpts{
 		Id:          "backend-migrate-multistate-to-tfc-pattern",
 		Query:       fmt.Sprintf("[reset][bold][yellow]%s[reset]", "How would you like to rename your workspaces?"),
 		Description: strings.TrimSpace(tfcInputBackendMigrateMultiToMultiPattern),

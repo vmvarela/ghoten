@@ -8,6 +8,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -37,7 +38,263 @@ const (
 	xTerraformGet     = "X-Terraform-Get"
 	xTerraformVersion = "X-Terraform-Version"
 	modulesServiceID  = "modules.v1"
+
+	// packageDownloadTimeout bounds each direct package download. Unlike the
+	// registry metadata client's shorter timeout, this covers the whole
+	// transfer of a possibly-huge package archive.
+	packageDownloadTimeout = 30 * time.Minute
 )
+
+// redactedURL renders u without its userinfo, query string, and fragment,
+// any of which can carry credentials (e.g. for "presigned" URLs) that must
+// not appear in user-facing labels, logs, traces, or error messages.
+func redactedURL(u *url.URL) string {
+	return httpclient.RedactedURLString(u)
+}
+
+// urlScrubs returns scrub pairs that remove the userinfo and query string of
+// u from error text, since either can carry credentials (e.g. for "presigned"
+// URLs).
+func urlScrubs(u *url.URL) [][2]string {
+	if u == nil {
+		return nil
+	}
+	var scrubs [][2]string
+	if user := u.User; user != nil {
+		scrubs = append(scrubs, [2]string{user.String() + "@", ""})
+		if _, hasPass := user.Password(); hasPass {
+			// net/http error text renders passwords as "user:***@", so
+			// catch that rendering too to hide the whole userinfo.
+			scrubs = append(scrubs, [2]string{user.Username() + ":***@", ""})
+		}
+	}
+	if q := u.RawQuery; q != "" {
+		// Error text usually renders the whole URL, so dropping the
+		// "?query" suffix hides the query string; replacing any stray
+		// occurrence of the query text is a safety net.
+		scrubs = append(scrubs,
+			[2]string{"?" + q, ""},
+			[2]string{q, "REDACTED"},
+		)
+	}
+	if f := u.Fragment; f != "" {
+		// Fragments aren't sent to servers but can carry credentials in
+		// attacker-chosen values, so hide them from error text too.
+		scrubs = append(scrubs, [2]string{"#" + f, ""})
+		if ef := u.EscapedFragment(); ef != "" && ef != f {
+			scrubs = append(scrubs, [2]string{"#" + ef, ""})
+		}
+	}
+	return scrubs
+}
+
+// urlSecrets returns the credential-bearing fragments of u whose
+// appearance in error text means the text could not be sanitized with
+// certainty.
+func urlSecrets(u *url.URL) []string {
+	if u == nil {
+		return nil
+	}
+	var secrets []string
+	if user := u.User; user != nil {
+		secrets = append(secrets, user.String())
+	}
+	if q := u.RawQuery; q != "" {
+		secrets = append(secrets, q)
+	}
+	if f := u.Fragment; f != "" {
+		secrets = append(secrets, f)
+		if ef := u.EscapedFragment(); ef != "" && ef != f {
+			secrets = append(secrets, ef)
+		}
+	}
+	return secrets
+}
+
+// quotedSecretText renders s as it appears inside a %q-formatted string
+// (error renderings that embed URLs using %q escape characters), without
+// the surrounding quotes.
+func quotedSecretText(s string) string {
+	s = strconv.Quote(s)
+	return s[1 : len(s)-1]
+}
+
+// redactURLError wraps err so its message omits the userinfo and query
+// string of u, since lower-level errors typically embed the full request
+// URL text verbatim and these parts can contain credentials. Errors from
+// the HTTP client can also embed the URLs of each redirect hop, and those
+// can carry their own credentials, so those are scrubbed too.
+func redactURLError(u *url.URL, err error) error {
+	if err == nil {
+		return nil
+	}
+	red := &urlRedactedError{err: err}
+	addURL := func(u *url.URL) {
+		red.scrubs = append(red.scrubs, urlScrubs(u)...)
+		red.secrets = append(red.secrets, urlSecrets(u)...)
+	}
+	addURL(u)
+
+	// Nested *url.Error values may come from preceding redirect hops.
+	var ue *url.Error
+	for e := err; errors.As(e, &ue); e = ue.Err {
+		if hop, perr := url.Parse(ue.URL); perr == nil {
+			addURL(hop)
+		} else if ue.URL != "" {
+			if ue.Op == "parse" {
+				// A parse error of a URL (e.g. of an invalid redirect
+				// Location header) says the raw URL text sits in the
+				// message but can't be parsed and redacted piece by
+				// piece, so the message can't be sanitized with
+				// certainty.
+				red.uncertain = true
+			}
+			// Fail closed: an unparseable URL can still print credential
+			// material verbatim, so scrub the whole text rather than guess
+			// which parts are secret.
+			red.scrubs = append(red.scrubs, [2]string{ue.URL, "<redacted URL>"})
+		}
+		if ue.URL != "" {
+			// Remember the %q rendering of each URL routed through the
+			// chain, so that any other quoted URL-like text in the
+			// message (whose content the chain can't explain, e.g. when
+			// net/http flattens a Location parse error with %v) marks
+			// the message as unsanitizable.
+			red.knownQuoted = append(red.knownQuoted, strconv.Quote(ue.URL))
+		}
+	}
+	// Renderings that %q-quote URL text escape characters in ways the
+	// raw-text scrubs above can't target, so scrub each secret's quoted
+	// form too.
+	for _, secret := range red.secrets {
+		if q := quotedSecretText(secret); q != secret {
+			red.scrubs = append(red.scrubs, [2]string{q, "REDACTED"})
+		}
+	}
+	return red
+}
+
+type urlRedactedError struct {
+	err         error
+	scrubs      [][2]string
+	secrets     []string
+	knownQuoted []string // %q renderings of URL texts resolved through the chain
+	uncertain   bool
+}
+
+func (e *urlRedactedError) Error() string {
+	msg := e.err.Error()
+	for _, scrub := range e.scrubs {
+		msg = strings.ReplaceAll(msg, scrub[0], scrub[1])
+	}
+	// Fail closed: some renderings embed URL text in forms the scrub
+	// pairs can't target; if the text couldn't be sanitized with
+	// certainty (or any secret material survived in raw or quoted form),
+	// the whole message is replaced by a generic one. Unwrap still
+	// returns the underlying error so callers can apply their own
+	// sanitizing.
+	if e.uncertain || e.hasUnknownURLText() || e.hasSurvivingSecrets(msg) {
+		return "registry request failed with an error message that could not be safely sanitized"
+	}
+	return msg
+}
+
+// hasUnknownURLText reports whether the error message contains %q-quoted
+// URL-like text that no *url.Error traversed through the chain explains:
+// its contents (which may include a credential-bearing query or fragment)
+// couldn't be routed through any scrub, so they can't be sanitized with
+// certainty. This covers messages like net/http's flattened Location parse
+// failures, which embed the unparseable URL with %v.
+func (e *urlRedactedError) hasUnknownURLText() bool {
+	residual := e.err.Error()
+	for _, known := range e.knownQuoted {
+		residual = strings.ReplaceAll(residual, known, "")
+	}
+	for _, secret := range e.secrets {
+		residual = strings.ReplaceAll(residual, secret, "")
+		residual = strings.ReplaceAll(residual, quotedSecretText(secret), "")
+	}
+	// Look inside the remaining %q-quoted spans for URL-like content.
+	for i := 0; i < len(residual); {
+		if residual[i] != '"' {
+			i++
+			continue
+		}
+		// Skip escaped characters so a \" inside a %q span does not close it early.
+		j := i + 1
+		for j < len(residual) && residual[j] != '"' {
+			if residual[j] == '\\' && j+1 < len(residual) {
+				j++
+			}
+			j++
+		}
+		// An unclosed quote is treated as a span running to the end (fail closed).
+		if j >= len(residual) {
+			j = len(residual)
+		}
+		span := residual[i+1 : j]
+		if strings.Contains(span, "://") || strings.Contains(span, "?") ||
+			strings.Contains(span, "//") || strings.Contains(span, "@") ||
+			strings.Contains(span, "#") {
+			return true
+		}
+		i = j + 1
+	}
+	return false
+}
+
+// hasSurvivingSecrets reports whether secret material (raw or in its %q
+// escaped form) survived the scrubbing, meaning the text can't be believed
+// sanitized.
+func (e *urlRedactedError) hasSurvivingSecrets(msg string) bool {
+	for _, secret := range e.secrets {
+		if strings.Contains(msg, secret) || strings.Contains(msg, quotedSecretText(secret)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *urlRedactedError) Unwrap() error {
+	// Callers can still unwrap to the original cause (whose own rendering
+	// they may wish to sanitize themselves); only Error() sanitizes.
+	return e.err
+}
+
+// secureRegistryCheckRedirect is the redirect policy for registry clients. It
+// refuses HTTPS-to-HTTP downgrades and drops Authorization on cross-host
+// redirects explicitly, so the guarantee does not depend on stdlib header
+// copying rules.
+func secureRegistryCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	if len(via) > 0 {
+		orig := via[0]
+		prev := via[len(via)-1]
+		if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return fmt.Errorf(
+				"refusing to follow redirect from %s to %s: would send registry credentials over an insecure connection",
+				redactedURL(prev.URL), redactedURL(req.URL),
+			)
+		}
+		// net/http adds a Referer header carrying the previous request's URL
+		// (including its credential-bearing query string and userinfo) before
+		// calling this policy, so drop it on every hop: cross-host hops must
+		// never receive the secret, and same-host hops don't need it.
+		req.Header.Del("Referer")
+		// Authorization is only kept when the redirect target has the same
+		// authority (scheme and host) as the original request. The Host
+		// field of the previous request is unreliable for comparison, so
+		// compare URL authorities directly; this also keeps credentials
+		// correctly across multi-hop same-host chains and forbids scope
+		// creep to a different authority.
+		if req.URL.Scheme != orig.URL.Scheme || req.URL.Host != orig.URL.Host {
+			req.Header.Del("Authorization")
+		}
+	}
+	return nil
+}
 
 var (
 	tfVersion = version.String()
@@ -73,6 +330,11 @@ func NewClient(ctx context.Context, services *disco.Disco, client *retryablehttp
 		client = httpclient.NewForRegistryRequests(ctx, 1, 10*time.Second)
 	}
 
+	// Credentials may be reused for direct package downloads (and other
+	// requests may carry credentials too), so installs must never follow
+	// redirects over an insecure connection or leak credentials across hosts.
+	client.HTTPClient.CheckRedirect = secureRegistryCheckRedirect
+
 	return &Client{
 		client:   client,
 		services: services,
@@ -106,7 +368,7 @@ func (c *Client) ModulePackageVersions(ctx context.Context, packageAddr regaddr.
 	}
 	versionsURL := modulePackageEndpointURL(baseURL, packageAddr, "versions")
 
-	log.Printf("[DEBUG] fetching module versions from %q", versionsURL)
+	log.Printf("[DEBUG] fetching module versions from %q", redactedURL(versionsURL))
 
 	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", versionsURL.String(), nil)
 	if err != nil {
@@ -114,7 +376,9 @@ func (c *Client) ModulePackageVersions(ctx context.Context, packageAddr regaddr.
 	}
 	req = req.WithContext(ctx)
 
-	c.addRequestCreds(ctx, host, req.Request)
+	if versionsURL.Scheme == "https" {
+		c.addRequestCreds(ctx, host, req.Request)
+	}
 	req.Header.Set(xTerraformVersion, tfVersion)
 
 	resp, err := c.client.Do(req)
@@ -180,7 +444,7 @@ func (c *Client) ModulePackageLocation(ctx context.Context, packageAddr regaddr.
 	// practice the callers of the client always populate the version, so we
 	// don't support omitting that anymore: a version string is now always expected.
 	metadataURL := modulePackageEndpointURL(baseURL, packageAddr, version, "download")
-	log.Printf("[DEBUG] looking up module location from %q", metadataURL)
+	log.Printf("[DEBUG] looking up module location from %q", redactedURL(metadataURL))
 
 	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", metadataURL.String(), nil)
 	if err != nil {
@@ -189,7 +453,9 @@ func (c *Client) ModulePackageLocation(ctx context.Context, packageAddr regaddr.
 
 	req = req.WithContext(ctx)
 
-	c.addRequestCreds(ctx, host, req.Request)
+	if metadataURL.Scheme == "https" {
+		c.addRequestCreds(ctx, host, req.Request)
+	}
 	req.Header.Set(xTerraformVersion, tfVersion)
 
 	resp, err := c.client.Do(req)
@@ -207,8 +473,10 @@ func (c *Client) ModulePackageLocation(ctx context.Context, packageAddr regaddr.
 	case http.StatusOK:
 		var v response.ModuleLocationRegistryResp
 		if err := json.Unmarshal(body, &v); err != nil {
-			return nil, fmt.Errorf("module %q version %q failed to deserialize response body %s: %w",
-				packageAddr, version, body, err)
+			// Report only response metadata: the body itself can contain a
+			// credential-bearing location URL supplied by the registry.
+			return nil, fmt.Errorf("module %q version %q failed to deserialize %d-byte response body (content-type %q): %w",
+				packageAddr, version, len(body), resp.Header.Get("Content-Type"), err)
 		}
 
 		if v.UseRegistryCredentials == nil {
@@ -251,8 +519,10 @@ func (c *Client) ModulePackageLocation(ctx context.Context, packageAddr regaddr.
 		return nil, fmt.Errorf("module %q version %q not found", packageAddr, version)
 
 	default:
-		// anything else is an error:
-		return nil, fmt.Errorf("error getting download location for %q: %s resp:%s", packageAddr, resp.Status, body)
+		// anything else is an error (without echoing the response body,
+		// which can carry a credential-bearing location URL):
+		return nil, fmt.Errorf("error getting download location for %q: %s (content-type %q, %d bytes)",
+			packageAddr, resp.Status, resp.Header.Get("Content-Type"), len(body))
 	}
 }
 
@@ -298,30 +568,44 @@ func modulePackageEndpointURL(baseURL *url.URL, packageAddr regaddr.ModulePackag
 // module request. If the original source address did not include a subdirectory
 // portion then the result is just a normalized version of targetDir.
 func (c *Client) InstallModulePackage(ctx context.Context, location PackageLocationDirect, targetDir string) (string, error) {
-	urlString := location.packageURL.String()
+	// urlString is a credential-free rendering used for logs, traces, and
+	// error messages: the userinfo and query string of the package URL can
+	// carry credentials (e.g. for "presigned" URLs).
+	urlString := redactedURL(location.packageURL)
 	ctx, span := tracing.Tracer().Start(ctx, "Fetch Package",
 		tracing.SpanAttributes(traceattrs.URLFull(urlString)),
 	)
 	defer span.End()
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", urlString, nil)
+	// The request itself must use the full signed URL, whose query string
+	// and userinfo may carry the credentials authorizing the download;
+	// only logs, traces, and error messages use the redacted rendering.
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", location.packageURL.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("preparing to download from %s: %w", urlString, err)
 	}
 
 	host := location.packageAddr.Host
 	if location.useRegistryCredentials {
-		c.addRequestCreds(ctx, host, req.Request)
+		if location.packageURL.Scheme == "https" {
+			c.addRequestCreds(ctx, host, req.Request)
+		} else {
+			log.Printf("[WARN] not sending registry credentials for %s: refusing to send credentials to an insecure http destination", urlString)
+		}
 	}
 	req.Header.Set(xTerraformVersion, tfVersion)
-	// We'll set some content negotiation headers just in case that helps
+	// We'll set a content negotiation header just in case that helps
 	// someone using a general-purpose static HTTP server serve content
 	// compressed on the fly by the server. (We will actually tolerate more
 	// than what we report here, in the more common case where the server
 	// just returns whatever it has on disk without any transformation,
 	// but this is just a hint for some common choices.
+	//
+	// Note that we must not set Accept-Encoding ourselves: that would opt
+	// out of net/http's transparent handling of gzip-encoded responses,
+	// and so would leave us misreading a package that the server
+	// transforms with gzip.
 	req.Header.Set("Accept", "application/zip, application/x-tar; *;q=0.1")
-	req.Header.Set("Accept-Encoding", "identity, gzip, *;q=0.1")
 
 	// We first fetch the raw content at the URL into a temporary file, and
 	// then we can sniff what format it seems to be in so that we'll tolerate
@@ -341,9 +625,35 @@ func (c *Client) InstallModulePackage(ctx context.Context, location PackageLocat
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 	}()
-	resp, err := c.client.Do(req)
+	// The registry metadata client's timeout is intended only for small
+	// metadata requests, so we do the actual download (which could take a
+	// while to transfer) using a dedicated retryable HTTP client whose
+	// underlying HTTP client has a deadline suitable for large packages.
+	//
+	// The retry policy is copied from the metadata retryable client, but we
+	// build a fresh retryablehttp.Client (rather than shallow-copying it) so
+	// that its internal state is not aliased, and we disable its internal
+	// logging, which would print the full request URL (whose userinfo and
+	// query string can carry credentials) in an unsanitized form. Retries
+	// remain observable via the sanitized RequestLogHook.
+	httpClient := *c.client.HTTPClient
+	httpClient.Timeout = packageDownloadTimeout
+	downloadClient := retryablehttp.NewClient()
+	downloadClient.Logger = nil
+	downloadClient.HTTPClient = &httpClient
+	downloadClient.RetryWaitMin = c.client.RetryWaitMin
+	downloadClient.RetryWaitMax = c.client.RetryWaitMax
+	downloadClient.RetryMax = c.client.RetryMax
+	downloadClient.CheckRetry = c.client.CheckRetry
+	downloadClient.Backoff = c.client.Backoff
+	downloadClient.PrepareRetry = c.client.PrepareRetry
+	downloadClient.ErrorHandler = c.client.ErrorHandler
+	downloadClient.RequestLogHook = c.client.RequestLogHook
+	downloadClient.ResponseLogHook = c.client.ResponseLogHook
+
+	resp, err := downloadClient.Do(req)
 	if err != nil {
-		return "", err // net/http includes method and URL in its errors automatically
+		return "", fmt.Errorf("fetching module package from %s: %w", urlString, redactURLError(location.packageURL, err))
 	}
 	defer resp.Body.Close()
 
@@ -355,11 +665,15 @@ func (c *Client) InstallModulePackage(ctx context.Context, location PackageLocat
 	if err != nil {
 		return "", fmt.Errorf("copying module package to temporary file: %w", err)
 	}
-	if wantN, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64); err == nil {
-		// If the server told us how much data it was expecting to send then
-		// we'll make sure we got exactly that much data.
-		if n != wantN {
-			return "", fmt.Errorf("server promised %d bytes, but returned %d bytes", wantN, n)
+	// If the server told us how much data it was expecting to send then
+	// we'll make sure we got exactly that much data. But for responses
+	// that net/http transparently decompressed, the header refers to the
+	// compressed length and no longer matches the body we received.
+	if !resp.Uncompressed {
+		if wantN, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64); err == nil {
+			if n != wantN {
+				return "", fmt.Errorf("server promised %d bytes, but returned %d bytes", wantN, n)
+			}
 		}
 	}
 
@@ -434,10 +748,18 @@ func preparePackageLocationIndirect(realAddrRaw string, subdir string, baseURL *
 
 // preparePackageLocationDirect constructs a PackageLocationDirect from a
 // URL string returned by the registry for direct package hosting.
+//
+// baseURL is the URL of the metadata request that supplied the location;
+// its scheme determines whether registry credentials may be reused for the
+// package download. baseURL must therefore always be the metadata URL, never
+// merely the resolved base against which relative locations are interpreted
+// (which happens to be the same URL type here).
 func preparePackageLocationDirect(locationRaw string, packageAddr regaddr.ModulePackage, subdir string, baseURL *url.URL, useRegistryCredentials bool) (PackageLocation, error) {
 	packageURL, err := url.Parse(locationRaw)
 	if err != nil {
-		return nil, fmt.Errorf("registry returned an invalid package URL: %w", err)
+		// Fail closed: the parse error echoes the raw input, which can
+		// carry credentials, so don't include it here.
+		return nil, errors.New("registry returned an invalid package URL")
 	}
 
 	if !packageURL.IsAbs() {
@@ -445,10 +767,19 @@ func preparePackageLocationDirect(locationRaw string, packageAddr regaddr.Module
 		packageURL = baseURL.ResolveReference(packageURL)
 	}
 	if packageURL.Scheme != "http" && packageURL.Scheme != "https" {
-		return nil, fmt.Errorf("registry returned invalid package URL %q: must be http or https URL", locationRaw)
+		return nil, fmt.Errorf("registry returned invalid package URL %s: must be http or https URL", redactedURL(packageURL))
 	}
 	if packageURL.Fragment != "" {
-		return nil, fmt.Errorf("registry returned invalid package URL %q: must not include fragment part", locationRaw)
+		return nil, fmt.Errorf("registry returned invalid package URL %s: must not include fragment part", redactedURL(packageURL))
+	}
+
+	// When the metadata that supplied this location was fetched over plain
+	// HTTP, a man-in-the-middle attacker could have chosen this package URL
+	// to steal the registry's credentials, so refuse to send them to it.
+	if useRegistryCredentials && baseURL.Scheme != "https" {
+		log.Printf("[WARN] registry metadata for %s was fetched over an insecure connection; not sending registry credentials to the package location at %s",
+			packageAddr, redactedURL(packageURL))
+		useRegistryCredentials = false
 	}
 
 	return PackageLocationDirect{

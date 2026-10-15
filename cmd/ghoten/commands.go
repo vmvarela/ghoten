@@ -13,10 +13,10 @@ import (
 	"github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/mitchellh/cli"
-	"github.com/vmvarela/ghoten/internal/command/workdir"
 	"github.com/opentofu/svchost"
 	"github.com/opentofu/svchost/disco"
 	"github.com/opentofu/svchost/svcauth"
+	"github.com/vmvarela/ghoten/internal/command/workdir"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command"
@@ -126,6 +126,13 @@ func initCommands(
 		// the retries from other places than env vars.
 		ProviderSourceLocationConfig: providerSourceLocationConfigFromEnv(),
 	}
+
+	// Initialize the interrupt coordinator eagerly, before this Meta is
+	// copied into each command below: all commands then share a single
+	// ShutdownCh consumer, rather than each lazily starting a consumer of
+	// its own the first time it touches the interrupt machinery (which
+	// would let interrupt events get split across coordinators).
+	meta.InitInterruptCoordinator()
 
 	// The command list is included in the tofu -help
 	// output, which is in turn included in the docs at

@@ -283,7 +283,9 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 
 	downloadURL, err := url.Parse(body.DownloadURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid download URL: %w", err)
+		// Don't wrap the parse error here: *url.Error embeds the raw
+		// server-supplied DownloadURL, which may carry secrets.
+		return PackageMeta{}, errors.New("registry response includes invalid download URL")
 	}
 	downloadURL = resp.Request.URL.ResolveReference(downloadURL)
 	if downloadURL.Scheme != "http" && downloadURL.Scheme != "https" {
@@ -350,7 +352,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 
 	shasumsURL, err := url.Parse(body.SHA256SumsURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid SHASUMS URL: %w", err)
+		return PackageMeta{}, errors.New("registry response includes invalid SHASUMS URL")
 	}
 	shasumsURL = resp.Request.URL.ResolveReference(shasumsURL)
 	if shasumsURL.Scheme != "http" && shasumsURL.Scheme != "https" {
@@ -365,7 +367,7 @@ func (c *registryClient) PackageMeta(ctx context.Context, provider addrs.Provide
 	}
 	signatureURL, err := url.Parse(body.SHA256SumsSignatureURL)
 	if err != nil {
-		return PackageMeta{}, fmt.Errorf("registry response includes invalid SHASUMS signature URL: %w", err)
+		return PackageMeta{}, errors.New("registry response includes invalid SHASUMS signature URL")
 	}
 	signatureURL = resp.Request.URL.ResolveReference(signatureURL)
 	if signatureURL.Scheme != "http" && signatureURL.Scheme != "https" {

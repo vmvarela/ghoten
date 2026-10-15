@@ -303,20 +303,23 @@ func (c *TestCommand) Run(rawArgs []string) int {
 		runner.Start(ctx)
 	}()
 
-	// Wait for the operation to complete, or for an interrupt to occur.
+	// Wait for the operation to complete, or for an interrupt to occur. The
+	// graceful and fatal broadcasts are pre-created by the command's
+	// interrupt coordinator, so the fatal phase can never miss an event
+	// that arrives while the fatal phase is being registered.
+	graceful, fatal := c.interruptBroadcasts()
 	select {
-	case <-c.ShutdownCh:
+	case <-graceful:
 		// Nice request to be cancelled.
 
 		view.Interrupted()
 		runner.Stopped = true
 		stop()
 
+		// The user pressed it again, now we have to get it to stop as
+		// fast as possible.
 		select {
-		case <-c.ShutdownCh:
-			// The user pressed it again, now we have to get it to stop as
-			// fast as possible.
-
+		case <-fatal:
 			view.FatalInterrupt()
 			runner.Cancelled = true
 			cancel()
