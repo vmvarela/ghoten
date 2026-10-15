@@ -12,6 +12,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
