@@ -119,7 +119,7 @@ func TestSmartRefreshMetadataFresh(t *testing.T) {
 		{name: "missing", last: 0, want: false},
 		{name: "recent", last: now.Add(-time.Hour).Unix(), want: true},
 		{name: "boundary", last: now.Add(-smartRefreshMaxAge).Unix(), want: true},
-		{name: "stale", last: now.Add(-smartRefreshMaxAge-time.Second).Unix(), want: false},
+		{name: "stale", last: now.Add(-smartRefreshMaxAge - time.Second).Unix(), want: false},
 		{name: "future", last: now.Add(time.Second).Unix(), want: false},
 	}
 
@@ -160,8 +160,8 @@ func TestSmartRefreshInstanceFingerprint_IncludesSchemaVersion(t *testing.T) {
 func TestSmartRefreshSchemaContainsPersistUnsafeValue(t *testing.T) {
 	schema := &configschema.Block{
 		Attributes: map[string]*configschema.Attribute{
-			"plain":     {Type: cty.String, Optional: true},
-			"sensitive": {Type: cty.String, Optional: true, Sensitive: true},
+			"plain":      {Type: cty.String, Optional: true},
+			"sensitive":  {Type: cty.String, Optional: true, Sensitive: true},
 			"write_only": {Type: cty.String, Optional: true, WriteOnly: true},
 		},
 	}

@@ -848,9 +848,9 @@ type instanceObjectStateV4 struct {
 	CreateBeforeDestroy bool `json:"create_before_destroy,omitempty"`
 	SkipDestroy         bool `json:"skip_destroy,omitempty"`
 
-	ConfigExprHash      []byte `json:"config_expr_hash,omitempty"`
+	ConfigExprHash     []byte `json:"config_expr_hash,omitempty"`
 	RefreshFingerprint []byte `json:"refresh_fingerprint,omitempty"`
-	LastRefreshUnix     int64  `json:"last_refresh_unix,omitempty"`
+	LastRefreshUnix    int64  `json:"last_refresh_unix,omitempty"`
 }
 
 type checkResultsV4 struct {

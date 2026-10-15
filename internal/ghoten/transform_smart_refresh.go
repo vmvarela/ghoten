@@ -354,4 +354,3 @@ func (t *SmartRefreshTransformer) skipAllRefresh(g *Graph) {
 		}
 	}
 }
-

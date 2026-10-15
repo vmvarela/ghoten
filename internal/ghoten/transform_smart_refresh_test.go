@@ -884,4 +884,3 @@ func TestConfigExprHash_DependsOnOrderIndependent(t *testing.T) {
 		t.Errorf("configExprHash is not order-independent for depends_on: %x != %x", hAB, hBA)
 	}
 }
-
