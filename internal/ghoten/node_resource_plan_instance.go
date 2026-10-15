@@ -379,6 +379,10 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 					instanceRefreshState.RefreshFingerprint = nil
 					instanceRefreshState.LastRefreshTime = 0
 				}
+				diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
+				if diags.HasErrors() {
+					return diags
+				}
 			}
 		}
 	}
