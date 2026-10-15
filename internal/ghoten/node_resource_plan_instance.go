@@ -351,12 +351,14 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			instanceRefreshState.SkipDestroy = skipDestroy
 
 			if !importing {
-				// Best effort: a failed fingerprint only disables the cache for this
-				// resource. Real config errors are reported by n.plan, and refresh-only
-				// plans must not fail on them.
-				currentRefreshFingerprint, _ = n.evaluatedSmartRefreshFingerprint(
-					ctx, evalCtx, instanceRefreshState.CreateBeforeDestroy, instanceRefreshState.SkipDestroy,
-				)
+				if n.smartRefresh {
+					// Best effort: a failed fingerprint only disables the cache for this
+					// resource. Real config errors are reported by n.plan, and refresh-only
+					// plans must not fail on them.
+					currentRefreshFingerprint, _ = n.evaluatedSmartRefreshFingerprint(
+						ctx, evalCtx, instanceRefreshState.CreateBeforeDestroy, instanceRefreshState.SkipDestroy,
+					)
+				}
 
 				if n.smartRefresh && n.skipRefresh {
 					switch {
