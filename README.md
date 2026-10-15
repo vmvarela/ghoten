@@ -12,7 +12,7 @@ Ghoten is an [OpenTofu](https://opentofu.org/) fork that adds one opinionated th
 
 We built it for teams that already trust container registries and want fewer moving parts in Terraform/OpenTofu state management. Instead of running a custom HTTP backend, you can reuse registry auth, permissions, and auditing you already have.
 
-> **Upstream policy:** Ghoten tracks [OpenTofu](https://github.com/opentofu/opentofu) and keeps changes focused on the ORAS backend and related automation.
+> **Upstream policy:** Ghoten tracks [OpenTofu](https://github.com/opentofu/opentofu) while keeping its fork-specific changes focused on OCI state and opt-in performance experiments such as Smart Refresh.
 
 ## Quick Start
 
@@ -52,20 +52,26 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
 
 ## Smart Refresh
 
-Ghoten includes a `-refresh=smart` flag that speeds up `plan` and `apply` operations in large infrastructures by skipping refresh for resources whose configuration hasn't changed:
+Ghoten includes an opt-in `-refresh=smart` mode for large infrastructures:
 
 ```bash
-# Refresh all resources (default behavior)
+# Full refresh (default and OpenTofu-compatible behavior)
 ghoten plan
 
 # Skip refresh entirely
 ghoten plan -refresh=false
 
-# Smart refresh: only refresh resources with config changes and their dependents
+# Selective refresh using evaluated per-instance fingerprints
 ghoten plan -refresh=smart
 ```
 
-Smart refresh compares a hash of each resource's configuration expression to detect structural changes. When no changes are detected, the resource is skipped, reducing API calls and execution time. The output shows how many resources were refreshed vs. skipped.
+Smart Refresh does **not** rely on HCL source text. For each managed resource instance it fingerprints the evaluated configuration (including variables, locals, module inputs, `count.index`, `each.key` and `each.value`), the resolved provider instance and its evaluated configuration, dependencies, and lifecycle metadata.
+
+A remote `ReadResource` call is skipped only when the fingerprint matches the last successful synchronization and that synchronization is less than 24 hours old. Missing/unknown fingerprints and stale entries refresh conservatively. Data sources, orphaned objects and deposed objects are also handled conservatively.
+
+`-refresh-only -refresh=smart` is normalized to a full refresh because refresh-only promises state reconciliation. `-destroy -refresh=smart` is rejected; destroy currently requires a full pre-destroy refresh.
+
+The output reports refreshed vs. skipped resources, making the API-call reduction visible.
 
 ## Documentation
 
