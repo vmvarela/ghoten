@@ -16,6 +16,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/vmvarela/ghoten/internal/command/workdir"
+	"github.com/vmvarela/ghoten/internal/depsfile"
+	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/plans/planfile"
+	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
@@ -381,6 +385,36 @@ func TestShow_planWithChanges(t *testing.T) {
 				t.Fatalf("unexpected output\ngot: %s\nwant: %s", got, want)
 			}
 		})
+	}
+}
+
+// TestShow_plan_jsonWithEmbeddedSchemas verifies that show -json uses the
+// schemas embedded in the plan file instead of launching providers. It
+// deliberately omits testingOverrides so that the fallback path (which needs
+// to launch the "test" provider) cannot work.
+func TestShow_plan_jsonWithEmbeddedSchemas(t *testing.T) {
+	planPathWithChanges := showFixturePlanFileWithEmbeddedSchemas(t, plans.DeleteThenCreate)
+
+	view, done := testView(t)
+	c := &ShowCommand{
+		Meta: Meta{
+			WorkingDir: workdir.NewDir("."),
+			View:       view,
+		},
+	}
+
+	code := c.Run([]string{"-plan=" + planPathWithChanges, "-json"})
+	output := done(t)
+	if code != 0 {
+		t.Fatalf("unexpected exit status %d; want 0\ngot: %s", code, output.Stderr())
+	}
+
+	var got plan
+	if err := json.Unmarshal([]byte(output.Stdout()), &got); err != nil {
+		t.Fatalf("failed to parse output as JSON: %s", err)
+	}
+	if len(got.ResourceChanges) != 1 {
+		t.Fatalf("expected one resource change, got %d", len(got.ResourceChanges))
 	}
 }
 
@@ -1342,6 +1376,67 @@ func showFixturePlanFile(t *testing.T, action plans.Action) string {
 		states.NewState(),
 		plan,
 	)
+}
+
+// showFixturePlanFileWithEmbeddedSchemas is like showFixturePlanFile, but
+// the resulting plan file also embeds the trimmed provider schemas needed
+// to render its single change, like plan files written by Ghoten itself.
+func showFixturePlanFileWithEmbeddedSchemas(t *testing.T, action plans.Action) string {
+	t.Helper()
+
+	_, snap := testModuleWithSnapshot(t, "show")
+	plannedVal := cty.ObjectVal(map[string]cty.Value{
+		"id":  cty.UnknownVal(cty.String),
+		"ami": cty.StringVal("bar"),
+	})
+	priorValRaw, err := plans.NewDynamicValue(cty.NullVal(plannedVal.Type()), plannedVal.Type())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plannedValRaw, err := plans.NewDynamicValue(plannedVal, plannedVal.Type())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := testPlan(t)
+	plan.Changes.SyncWrapper().AppendResourceInstanceChange(&plans.ResourceInstanceChangeSrc{
+		Addr: addrs.Resource{
+			Mode: addrs.ManagedResourceMode,
+			Type: "test_instance",
+			Name: "foo",
+		}.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+		ProviderAddr: addrs.AbsProviderConfig{
+			Provider: addrs.NewDefaultProvider("test"),
+			Module:   addrs.RootModule,
+		},
+		ChangeSrc: plans.ChangeSrc{
+			Action: action,
+			Before: priorValRaw,
+			After:  plannedValRaw,
+		},
+	})
+
+	schema := showFixtureSchema()
+	path := testTempFile(t)
+	err = planfile.Create(path, planfile.CreateArgs{
+		ConfigSnapshot:       snap,
+		PreviousRunStateFile: &statefile.File{State: states.NewState()},
+		StateFile: &statefile.File{
+			State:            states.NewState(),
+			TerraformVersion: version.SemVer,
+		},
+		Plan:            plan,
+		DependencyLocks: depsfile.NewLocks(),
+		Schemas: map[addrs.Provider]providers.ProviderSchema{
+			addrs.NewDefaultProvider("test"): {
+				Provider:      schema.Provider,
+				ResourceTypes: schema.ResourceTypes,
+			},
+		},
+	}, encryption.PlanEncryptionDisabled())
+	if err != nil {
+		t.Fatalf("failed to create temporary plan file: %s", err)
+	}
+	return path
 }
 
 // this simplified plan struct allows us to preserve field order when marshaling

@@ -232,9 +232,7 @@ func protocPlatform() string {
 	case "darwin_amd64":
 		return "osx-x86_64"
 	case "darwin_arm64":
-		// As of 3.15.6 there isn't yet an osx-aarch_64 package available,
-		// so we'll install the x86_64 version and hope Rosetta can handle it.
-		return "osx-x86_64"
+		return "osx-aarch_64"
 	case "windows_amd64":
 		return "win64" // for some reason the windows packages don't have a CPU architecture part
 	default:

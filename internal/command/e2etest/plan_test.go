@@ -6,12 +6,16 @@
 package e2etest
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/e2e"
+	"github.com/vmvarela/ghoten/internal/plans"
 )
 
 // The tests in this file are for the following sequence:
@@ -167,4 +171,93 @@ func TestPlanOnMultipleDeprecatedMarksSliceBug(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestPlanShowWithEmbeddedSchema is a regression test for showing a plan of
+// a configuration containing an ephemeral resource: the schemas stored in the
+// plan file must be enough for "show" to render the plan, even when the
+// provider cannot be launched anymore.
+func TestPlanShowWithEmbeddedSchema(t *testing.T) {
+	t.Parallel()
+
+	fixturePath := filepath.Join("testdata", "plan-with-embedded-ephemeral-config")
+	tf := e2e.NewBinary(t, ghotenBin, fixturePath)
+	buildSimpleProvider(t, "6", tf.WorkDir(), "simple")
+
+	{ // INIT
+		_, stderr, err := tf.Run("init", "-plugin-dir=cache")
+		if err != nil {
+			t.Fatalf("unexpected init error: %s\nstderr:\n%s", err, stderr)
+		}
+	}
+
+	{ // PLAN
+		stdout, stderr, err := tf.Run("plan", "-out=tfplan")
+		if err != nil {
+			t.Fatalf("unexpected plan error: %s\nstderr:\n%s", err, stderr)
+		}
+		checker := outputEntriesChecker{phase: "plan"}
+		checker.addChecks(
+			outputEntry{[]string{"ephemeral.simple_resource.test_ephemeral: Opening..."}, true},
+			outputEntry{[]string{"ephemeral.simple_resource.test_ephemeral: Open complete after"}, true},
+			outputEntry{[]string{"ephemeral.simple_resource.test_ephemeral: Closing..."}, true},
+			outputEntry{[]string{"ephemeral.simple_resource.test_ephemeral: Close complete after"}, true},
+			outputEntry{[]string{`+ resource "simple_resource" "test_res"`}, true},
+		)
+		out := stripAnsi(stdout)
+		checker.check(t, out)
+
+		// assert plan file content
+		plan, err := tf.Plan("tfplan")
+		if err != nil {
+			t.Fatalf("failed to read the plan file: %s", err)
+		}
+		idx := slices.IndexFunc(plan.Changes.Resources, func(src *plans.ResourceInstanceChangeSrc) bool {
+			return src.Addr.Resource.Resource.Mode == addrs.EphemeralResourceMode
+		})
+		if idx < 0 {
+			t.Fatalf("no ephemeral resource found in the plan file")
+		}
+		res := plan.Changes.Resources[idx]
+		if res.Before != nil {
+			t.Errorf("ephemeral resource %q from plan contains before value but it shouldn't: %s", res.Addr.String(), res.Before)
+		}
+		if res.After != nil {
+			t.Errorf("ephemeral resource %q from plan contains after value but it shouldn't: %s", res.Addr.String(), res.After)
+		}
+		if got, want := res.Action, plans.Open; got != want {
+			t.Errorf("ephemeral resource %q from plan contains wrong actions. want %q; got %q", res.Addr.String(), want, got)
+		}
+	}
+
+	// Break the installed provider so "show" could not launch it and can
+	// only succeed through the schemas embedded in the plan file.
+	if err := os.RemoveAll(tf.Path(".terraform", "providers")); err != nil {
+		t.Fatalf("failed to remove installed provider: %s", err)
+	}
+
+	{ // SHOW -json
+		stdout, stderr, err := tf.Run("show", "-json", "tfplan")
+		if err != nil {
+			t.Fatalf("unexpected show -json error: %s\nstderr:\n%s", err, stderr)
+		}
+		checker := outputEntriesChecker{phase: "show -json"}
+		checker.addChecks(
+			outputEntry{[]string{`{"address":"ephemeral.simple_resource.test_ephemeral","mode":"ephemeral","type":"simple_resource","name":"test_ephemeral","provider_config_key":"simple"`}, true},
+		)
+		out := stripAnsi(stdout)
+		checker.check(t, out)
+	}
+	{ // SHOW (human)
+		stdout, stderr, err := tf.Run("show", "tfplan")
+		if err != nil {
+			t.Fatalf("unexpected show error: %s\nstderr:\n%s", err, stderr)
+		}
+		checker := outputEntriesChecker{phase: "show"}
+		checker.addChecks(
+			outputEntry{[]string{`+ resource "simple_resource" "test_res"`}, true},
+		)
+		out := stripAnsi(stdout)
+		checker.check(t, out)
+	}
 }

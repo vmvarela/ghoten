@@ -9,15 +9,19 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 
+	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configload"
 	"github.com/vmvarela/ghoten/internal/depsfile"
 	"github.com/vmvarela/ghoten/internal/encryption"
 	"github.com/vmvarela/ghoten/internal/plans"
+	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
@@ -233,6 +237,29 @@ func (r *Reader) ReadConfig(ctx context.Context, rootCall configs.StaticModuleCa
 	diags = diags.Append(configDiags)
 
 	return config, diags
+}
+
+// ReadSchemas reads the trimmed-down subset of provider schemas embedded in
+// the plan file, if present.
+// The result is keyed by provider address; if the plan file has no schemas
+// entry at all, the returned error is ErrNoSchemas and the caller should
+// fall back to obtaining the schemas from the providers themselves.
+func (r *Reader) ReadSchemas() (map[addrs.Provider]providers.ProviderSchema, error) {
+	f, err := r.zip.Open(tfschemasFilename)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, ErrNoSchemas
+		}
+		return nil, errUnusable(fmt.Errorf("failed to extract schemas from plan file: %w", err))
+	}
+	defer f.Close()
+
+	provSchemas, err := readSchemas(f)
+	if err != nil {
+		return nil, errUnusable(fmt.Errorf("failed to read schemas from plan file: %w", err))
+	}
+
+	return provSchemas, nil
 }
 
 // ReadDependencyLocks reads the dependency lock information embedded in
