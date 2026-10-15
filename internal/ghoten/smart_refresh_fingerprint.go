@@ -65,6 +65,7 @@ func resourceRefreshFingerprint(
 	providerAddr addrs.AbsProviderConfig,
 	providerKey addrs.InstanceKey,
 	providerFingerprint []byte,
+	schemaVersion uint64,
 	dependencies []addrs.ConfigResource,
 	createBeforeDestroy bool,
 	skipDestroy bool,
@@ -88,6 +89,7 @@ func resourceRefreshFingerprint(
 	fmt.Fprintf(h, "resource:%s\n", addr.String())
 	fmt.Fprintf(h, "provider:%s\n", providerAddr.String())
 	fmt.Fprintf(h, "provider-key:%s\n", providerKey.String())
+	fmt.Fprintf(h, "resource-schema-version:%d\n", schemaVersion)
 	fmt.Fprintf(h, "create-before-destroy:%t\n", createBeforeDestroy)
 	fmt.Fprintf(h, "skip-destroy:%t\n", skipDestroy)
 	h.Write(configHash)
@@ -162,6 +164,7 @@ func evaluatedResourceRefreshFingerprint(
 		n.ResolvedProvider.ProviderConfig,
 		n.ResolvedProviderKey,
 		providerFingerprint,
+		n.SchemaVersion,
 		n.Dependencies,
 		n.Config.Managed.CreateBeforeDestroy || forceCreateBeforeDestroy,
 		skipDestroy,
