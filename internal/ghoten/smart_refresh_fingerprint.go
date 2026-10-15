@@ -140,6 +140,17 @@ func evaluatedResourceRefreshFingerprint(
 	if n == nil || n.Config == nil || n.Config.Managed == nil || n.Schema == nil {
 		return nil, false, diags
 	}
+	// Advanced lifecycle/condition semantics can change planning independently
+	// of the resource configuration value. Until their evaluated semantics are
+	// represented explicitly in the fingerprint, refresh these resources
+	// conservatively rather than hashing HCL source ranges.
+	if n.Config.Managed.IgnoreAllChanges ||
+		len(n.Config.Managed.IgnoreChanges) != 0 ||
+		n.Config.Managed.PreventDestroy != nil ||
+		len(n.Config.TriggersReplacement) != 0 ||
+		n.Config.HasCustomConditions() {
+		return nil, false, diags
+	}
 	if n.ResolvedProvider.ConfigFingerprint == nil {
 		return nil, false, diags
 	}
