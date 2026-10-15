@@ -63,7 +63,7 @@ type ResourceInstanceObject struct {
 	RefreshFingerprint []byte
 
 	// LastRefreshTime is the Unix timestamp of the last successful remote
-	// ReadResource for this object. Smart Refresh uses it to bound how long
+	// synchronization for this object (refresh, import, create, or update). Smart Refresh uses it to bound how long
 	// drift can remain undetected when a fingerprint stays unchanged.
 	LastRefreshTime int64
 }
