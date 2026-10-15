@@ -347,10 +347,19 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
 			}
 			instanceRefreshState.SkipDestroy = skipDestroy
 
-			refreshFingerprint, fingerprintOK, fingerprintDiags := n.evaluatedRefreshFingerprint(ctx, evalCtx, skipDestroy)
-			diags = diags.Append(fingerprintDiags)
-			if fingerprintDiags.HasErrors() {
-				return diags
+			var refreshFingerprint []byte
+			fingerprintOK := false
+			// Only evaluate the pre-refresh fingerprint when Smart Refresh needs
+			// to make a skip decision, or when import already performed the remote
+			// synchronization. In particular, -refresh=false must not introduce
+			// extra configuration evaluation solely for Smart Refresh metadata.
+			if n.smartRefresh || importing {
+				var fingerprintDiags tfdiags.Diagnostics
+				refreshFingerprint, fingerprintOK, fingerprintDiags = n.evaluatedRefreshFingerprint(ctx, evalCtx, skipDestroy)
+				diags = diags.Append(fingerprintDiags)
+				if fingerprintDiags.HasErrors() {
+					return diags
+				}
 			}
 
 			// The graph transformer only identifies resources that are candidates
