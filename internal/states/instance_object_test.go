@@ -204,3 +204,26 @@ func TestResourceInstanceObject_DeepCopy_NilConfigExprHash(t *testing.T) {
 		t.Errorf("DeepCopy should preserve nil ConfigExprHash, got %v", copied.ConfigExprHash)
 	}
 }
+
+func TestResourceInstanceObject_DeepCopy_RefreshMetadata(t *testing.T) {
+	originalFingerprint := []byte{0x10, 0x20, 0x30, 0x40}
+	obj := &ResourceInstanceObject{
+		Value:              cty.NilVal,
+		Status:             ObjectReady,
+		RefreshFingerprint: originalFingerprint,
+		LastRefreshTime:    123456789,
+	}
+
+	copied := obj.DeepCopy()
+	if !bytes.Equal(copied.RefreshFingerprint, originalFingerprint) {
+		t.Errorf("DeepCopy RefreshFingerprint mismatch: got %v, want %v", copied.RefreshFingerprint, originalFingerprint)
+	}
+	if copied.LastRefreshTime != obj.LastRefreshTime {
+		t.Errorf("DeepCopy LastRefreshTime mismatch: got %d, want %d", copied.LastRefreshTime, obj.LastRefreshTime)
+	}
+
+	copied.RefreshFingerprint[0] = 0xFF
+	if !bytes.Equal(obj.RefreshFingerprint, originalFingerprint) {
+		t.Errorf("Original RefreshFingerprint was mutated by copy modification: got %v, want %v", obj.RefreshFingerprint, originalFingerprint)
+	}
+}
