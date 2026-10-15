@@ -303,13 +303,14 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		o.PlanMode = plans.DestroyMode
 	case o.refreshOnlyRaw:
 		o.PlanMode = plans.RefreshOnlyMode
-		if o.RefreshMode == plans.RefreshNone {
+		switch o.RefreshMode {
+		case plans.RefreshNone:
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Error,
 				"Incompatible refresh options",
 				"It doesn't make sense to use -refresh-only at the same time as -refresh=false, because Ghoten would have nothing to do.",
 			))
-		} else if o.RefreshMode == plans.RefreshSmart {
+		case plans.RefreshSmart:
 			// refresh-only promises a full reconciliation of state with remote
 			// reality, so selective refresh is deliberately normalized to all.
 			o.RefreshMode = plans.RefreshAll
