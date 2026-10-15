@@ -11,6 +11,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/states"
 )
@@ -84,6 +85,22 @@ func TestResourceRefreshFingerprintDependencyOrderIndependent(t *testing.T) {
 	b, _ := resourceRefreshFingerprint(resourceAddr, config, providerAddr, addrs.NoKey, providerFingerprint, 0, []addrs.ConfigResource{depB, depA}, false, false)
 	if !bytes.Equal(a, b) {
 		t.Fatal("dependency order must not affect the fingerprint")
+	}
+}
+
+func TestSmartRefreshSupportsConfigIsConservativeForLifecycle(t *testing.T) {
+	config := &configs.Resource{Managed: &configs.ManagedResource{}}
+	if !smartRefreshSupportsConfig(config) {
+		t.Fatal("plain managed resource should be eligible for Smart Refresh")
+	}
+
+	config.Managed.IgnoreAllChanges = true
+	if smartRefreshSupportsConfig(config) {
+		t.Fatal("ignore_changes=all must force conservative refresh")
+	}
+
+	if smartRefreshSupportsConfig(&configs.Resource{}) {
+		t.Fatal("non-managed/incomplete resource config must not be eligible")
 	}
 }
 
