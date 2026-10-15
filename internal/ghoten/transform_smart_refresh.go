@@ -50,7 +50,12 @@ func (t *SmartRefreshTransformer) Transform(_ context.Context, g *Graph) error {
 
 	for _, v := range g.Vertices() {
 		sr, ok := v.(GraphNodeSkipRefresh)
-		if !ok || isDataSource(v) {
+		if !ok {
+			continue
+		}
+		if rn, ok := v.(GraphNodeConfigResource); ok && rn.ResourceAddr().Resource.Mode != addrs.ManagedResourceMode {
+			// Data sources are always re-read and ephemeral resources do not have
+			// persistent remote state to refresh.
 			continue
 		}
 
@@ -70,13 +75,3 @@ func (t *SmartRefreshTransformer) Transform(_ context.Context, g *Graph) error {
 	return nil
 }
 
-// isDataSource returns true if the given graph vertex represents a data source.
-// Data sources are always re-read during planning and therefore are never
-// candidates for managed-resource refresh skipping.
-func isDataSource(v dag.Vertex) bool {
-	rn, ok := v.(GraphNodeConfigResource)
-	if !ok {
-		return false
-	}
-	return rn.ResourceAddr().Resource.Mode == addrs.DataResourceMode
-}
