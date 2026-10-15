@@ -83,7 +83,7 @@ type ResourceInstanceObjectSrc struct {
 	RefreshFingerprint []byte
 
 	// LastRefreshTime is the Unix timestamp of the last successful remote
-	// refresh for this object. Zero means unknown and therefore forces refresh.
+	// synchronization for this object. Zero means unknown and therefore forces refresh.
 	LastRefreshTime int64
 }
 
