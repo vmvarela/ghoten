@@ -662,3 +662,38 @@ func TestParsePlan_vars(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePlanSmartRefreshModes(t *testing.T) {
+	t.Run("normal smart refresh", func(t *testing.T) {
+		got, _, diags := ParsePlan([]string{"-refresh=smart"})
+		if diags.HasErrors() {
+			t.Fatalf("unexpected diagnostics: %s", diags.Err())
+		}
+		if got.Operation.RefreshMode != plans.RefreshSmart {
+			t.Fatalf("got refresh mode %v, want smart", got.Operation.RefreshMode)
+		}
+	})
+
+	t.Run("refresh-only normalizes smart to full refresh", func(t *testing.T) {
+		got, _, diags := ParsePlan([]string{"-refresh-only", "-refresh=smart"})
+		if diags.HasErrors() {
+			t.Fatalf("unexpected diagnostics: %s", diags.Err())
+		}
+		if got.Operation.PlanMode != plans.RefreshOnlyMode {
+			t.Fatalf("got plan mode %v, want refresh-only", got.Operation.PlanMode)
+		}
+		if got.Operation.RefreshMode != plans.RefreshAll {
+			t.Fatalf("got refresh mode %v, want full refresh", got.Operation.RefreshMode)
+		}
+	})
+
+	t.Run("destroy rejects smart refresh", func(t *testing.T) {
+		_, _, diags := ParsePlan([]string{"-destroy", "-refresh=smart"})
+		if !diags.HasErrors() {
+			t.Fatal("expected destroy + smart refresh to be rejected")
+		}
+		if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -destroy") {
+			t.Fatalf("unexpected diagnostic: %s", got)
+		}
+	})
+}
