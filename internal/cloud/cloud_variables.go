@@ -9,8 +9,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/vmvarela/ghoten/internal/backend"
 	"github.com/vmvarela/ghoten/internal/configs"
-	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
 func allowedSourceType(source ghoten.ValueSourceType) bool {

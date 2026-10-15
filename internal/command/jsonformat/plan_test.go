@@ -21,12 +21,12 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/jsonplan"
 	"github.com/vmvarela/ghoten/internal/command/jsonprovider"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/lang/marks"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/terminal"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 func TestRenderHuman_EmptyPlan(t *testing.T) {

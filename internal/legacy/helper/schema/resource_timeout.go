@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/mitchellh/copystructure"
-	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
+	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 )
 
 const TimeoutKey = "e2bfb730-ecaa-11e6-8f88-34363bc7c4c0"

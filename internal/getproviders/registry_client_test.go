@@ -16,9 +16,9 @@ import (
 
 	"github.com/apparentlymart/go-versions/versions"
 	"github.com/google/go-cmp/cmp"
-	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/opentofu/svchost"
 	disco "github.com/opentofu/svchost/disco"
+	"github.com/vmvarela/ghoten/internal/addrs"
 )
 
 // testRegistryServices starts up a local HTTP server running a fake provider registry

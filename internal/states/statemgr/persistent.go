@@ -10,8 +10,8 @@ import (
 
 	version "github.com/hashicorp/go-version"
 
-	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/states"
 )
 
 // Persistent is a union of the Refresher and Persistent interfaces, for types

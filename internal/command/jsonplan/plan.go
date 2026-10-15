@@ -21,10 +21,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/jsonconfig"
 	"github.com/vmvarela/ghoten/internal/command/jsonstate"
 	"github.com/vmvarela/ghoten/internal/configs"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/version"
 )
 

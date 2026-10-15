@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
+	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"

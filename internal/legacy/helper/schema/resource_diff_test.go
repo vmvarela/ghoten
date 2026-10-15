@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 	"github.com/vmvarela/ghoten/internal/legacy/ghoten"
+	"github.com/vmvarela/ghoten/internal/legacy/hcl2shim"
 )
 
 // testSetFunc is a very simple function we use to test a foo/bar complex set.

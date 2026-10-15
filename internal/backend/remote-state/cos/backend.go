@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vmvarela/ghoten/internal/backend"
-	"github.com/vmvarela/ghoten/internal/encryption"
-	"github.com/vmvarela/ghoten/internal/legacy/helper/schema"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	sts "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/sts/v20180813"
 	tag "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tag/v20180813"
 	"github.com/tencentyun/cos-go-sdk-v5"
+	"github.com/vmvarela/ghoten/internal/backend"
+	"github.com/vmvarela/ghoten/internal/encryption"
+	"github.com/vmvarela/ghoten/internal/legacy/helper/schema"
 )
 
 // Default value from environment variable

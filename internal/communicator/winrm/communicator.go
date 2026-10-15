@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/masterzen/winrm"
+	"github.com/packer-community/winrmcp/winrmcp"
 	"github.com/vmvarela/ghoten/internal/communicator/remote"
 	"github.com/vmvarela/ghoten/internal/provisioners"
-	"github.com/packer-community/winrmcp/winrmcp"
 	"github.com/zclconf/go-cty/cty"
 )
 

@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statemgr"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // StateHook is a hook that continuously updates the state by calling

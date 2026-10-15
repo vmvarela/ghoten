@@ -8,8 +8,8 @@ package statemgr
 import (
 	"context"
 
-	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/states"
 )
 
 // LockDisabled implements State and Locker but disables state locking.

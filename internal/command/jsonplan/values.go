@@ -16,9 +16,9 @@ import (
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/jsonstate"
 	"github.com/vmvarela/ghoten/internal/configs/configschema"
+	"github.com/vmvarela/ghoten/internal/ghoten"
 	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/states"
-	"github.com/vmvarela/ghoten/internal/ghoten"
 )
 
 // StateValues is the common representation of resolved values for both the

@@ -10,8 +10,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/vmvarela/ghoten/internal/getmodules"
 	regaddr "github.com/opentofu/registry-address/v2"
+	"github.com/vmvarela/ghoten/internal/getmodules"
 )
 
 // ModuleSource is the general type for all three of the possible module source

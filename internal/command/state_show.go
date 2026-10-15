@@ -19,10 +19,10 @@ import (
 	"github.com/vmvarela/ghoten/internal/command/jsonformat"
 	"github.com/vmvarela/ghoten/internal/command/jsonprovider"
 	"github.com/vmvarela/ghoten/internal/command/jsonstate"
+	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
-	"github.com/vmvarela/ghoten/internal/ghotenmigrate"
 )
 
 // StateShowCommand is a Command implementation that shows a single resource.

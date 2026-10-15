@@ -10,8 +10,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/ghoten"
+	"github.com/vmvarela/ghoten/internal/states"
 )
 
 // NewFullFake returns a full state manager that really only supports transient
