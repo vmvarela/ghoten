@@ -61,6 +61,11 @@ func TestResourceRefreshFingerprintTracksEvaluatedInputs(t *testing.T) {
 		t.Fatal("evaluated provider configuration changes must change the fingerprint")
 	}
 
+	schemaChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 1, []addrs.ConfigResource{depA}, false, false)
+	if bytes.Equal(base, schemaChanged) {
+		t.Fatal("resource schema version changes must change the fingerprint")
+	}
+
 	depsChanged, _ := resourceRefreshFingerprint(resourceAddr, configA, providerAddr, addrs.NoKey, providerFingerprintA, 0, []addrs.ConfigResource{depA, depB}, false, false)
 	if bytes.Equal(base, depsChanged) {
 		t.Fatal("dependency changes must change the fingerprint")
