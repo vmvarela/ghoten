@@ -71,7 +71,7 @@ type Operation struct {
 	Refresh bool
 
 	// RefreshMode controls how resource state is refreshed during planning.
-	// Defaults to RefreshSmart.
+	// Defaults to RefreshAll; RefreshSmart is opt-in.
 	RefreshMode plans.RefreshMode
 
 	// Targets allow limiting an operation to a set of resource addresses and
