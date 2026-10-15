@@ -1968,3 +1968,65 @@ resource "test_resource" "foo" {
 		t.Fatalf("invalid state\nexpected: %s\ngot: %s\n", expected, jsonState)
 	}
 }
+
+
+func TestContext2SmartRefreshSkipsUnchangedRemoteRead(t *testing.T) {
+	p := testProvider("aws")
+	m := testModule(t, "refresh-basic")
+
+	state := states.NewState()
+	root := state.EnsureModule(addrs.RootModuleInstance)
+	root.SetResourceInstanceCurrent(
+		mustResourceInstanceAddr("aws_instance.web").Resource,
+		&states.ResourceInstanceObjectSrc{
+			Status:    states.ObjectReady,
+			AttrsJSON: []byte(`{"id":"foo","foo":"bar"}`),
+		},
+		mustProviderConfig(`provider["registry.opentofu.org/hashicorp/aws"]`),
+		addrs.NoKey,
+	)
+
+	readCalls := 0
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		readCalls++
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+
+	newContext := func() *Context {
+		return testContext2(t, &ContextOpts{
+			Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("aws"): testProviderFuncFixed(p),
+			}, nil),
+		})
+	}
+
+	// Legacy state has no evaluated Smart Refresh metadata, so the first smart
+	// run must refresh conservatively and seed a fingerprint + freshness time.
+	firstState, diags := newContext().Refresh(context.Background(), m, state, &PlanOpts{
+		Mode:        plans.NormalMode,
+		RefreshMode: plans.RefreshSmart,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("first smart refresh failed: %s", diags.Err())
+	}
+	if readCalls != 1 {
+		t.Fatalf("first smart refresh made %d ReadResource calls, want 1", readCalls)
+	}
+
+	current := firstState.RootModule().Resources["aws_instance.web"].Instances[addrs.NoKey].Current
+	if current == nil || len(current.RefreshFingerprint) == 0 || current.LastRefreshTime == 0 {
+		t.Fatal("first smart refresh did not persist evaluated refresh metadata")
+	}
+
+	readCalls = 0
+	_, diags = newContext().Refresh(context.Background(), m, firstState, &PlanOpts{
+		Mode:        plans.NormalMode,
+		RefreshMode: plans.RefreshSmart,
+	})
+	if diags.HasErrors() {
+		t.Fatalf("second smart refresh failed: %s", diags.Err())
+	}
+	if readCalls != 0 {
+		t.Fatalf("unchanged fresh smart refresh made %d ReadResource calls, want 0", readCalls)
+	}
+}
