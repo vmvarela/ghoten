@@ -9,13 +9,17 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/configs"
 	"github.com/vmvarela/ghoten/internal/configs/configload"
 	"github.com/vmvarela/ghoten/internal/depsfile"
 	"github.com/vmvarela/ghoten/internal/encryption"
 	"github.com/vmvarela/ghoten/internal/plans"
+	"github.com/vmvarela/ghoten/internal/providers"
 	"github.com/vmvarela/ghoten/internal/states/statefile"
 )
 
@@ -46,6 +50,22 @@ type CreateArgs struct {
 	// checked prior to creating the plan, so we can make sure that all of the
 	// same dependencies are still available when applying the plan.
 	DependencyLocks *depsfile.Locks
+
+	// Schemas is the full set of provider schemas that were in memory at
+	// the time the plan was created. If set, a trimmed-down subset
+	// of these schemas is stored alongside the plan.
+	// This is deliberately typed as a plain map, rather than as
+	// *ghoten.Schemas, so that this package doesn't need to depend on
+	// the package that collects all of the schemas together.
+	Schemas map[addrs.Provider]providers.ProviderSchema
+
+	// Config is the parsed configuration that the plan was created from.
+	// It's used only to determine which parts of Schemas are actually
+	// needed to render the plan (see Schemas above); it is not itself
+	// written to the plan file; ConfigSnapshot is used for that.
+	//
+	// This may be left nil if Schemas is also nil.
+	Config *configs.Config
 }
 
 // Create creates a new plan file with the given filename, overwriting any
@@ -133,6 +153,29 @@ func Create(filename string, args CreateArgs, enc encryption.PlanEncryption) err
 		_, err = w.Write(src)
 		if err != nil {
 			return fmt.Errorf("failed to write embedded dependency lock file: %w", err)
+		}
+	}
+
+	// tfschemas file, containing the trimmed provider schemas needed to
+	// render the plan as JSON
+	{
+		trimmed := prepareSchemasForWrite(args.Plan, args.Config, args.Schemas)
+		if len(trimmed) == 0 {
+			log.Printf("[TRACE] planfile: no schemas embedded in plan file; show will need to fetch schemas from providers instead")
+		} else {
+			log.Printf("[TRACE] planfile: embedding trimmed schemas for %d provider(s) in plan file", len(trimmed))
+			w, err := zw.CreateHeader(&zip.FileHeader{
+				Name:     tfschemasFilename,
+				Method:   zip.Deflate,
+				Modified: time.Now(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create embedded schemas file: %w", err)
+			}
+			err = writeSchemas(trimmed, w)
+			if err != nil {
+				return fmt.Errorf("failed to write embedded schemas file: %w", err)
+			}
 		}
 	}
 
