@@ -6,10 +6,13 @@
 package statefile
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/vmvarela/ghoten/internal/addrs"
+	"github.com/vmvarela/ghoten/internal/states"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -259,5 +262,52 @@ func TestVersion4_marshalPaths(t *testing.T) {
 				t.Fatalf("wrong JSON output\n got: %s\nwant: %s\n", got, want)
 			}
 		})
+	}
+}
+
+func TestVersion4RoundtripSmartRefreshMetadata(t *testing.T) {
+	fingerprint := []byte{0xde, 0xad, 0xbe, 0xef}
+	addr := addrs.Resource{
+		Mode: addrs.ManagedResourceMode,
+		Type: "test_instance",
+		Name: "example",
+	}
+	provider := addrs.AbsProviderConfig{
+		Module:   addrs.RootModule,
+		Provider: addrs.NewDefaultProvider("test"),
+	}
+
+	state := states.BuildState(func(s *states.SyncState) {
+		s.SetResourceInstanceCurrent(
+			addr.Instance(addrs.NoKey).Absolute(addrs.RootModuleInstance),
+			&states.ResourceInstanceObjectSrc{
+				Status:             states.ObjectReady,
+				AttrsJSON:          []byte(`{"id":"example"}`),
+				RefreshFingerprint: fingerprint,
+				LastRefreshTime:    1_797_500_000,
+			},
+			provider,
+			addrs.NoKey,
+		)
+	})
+
+	var buf bytes.Buffer
+	if err := WriteForTest(New(state, "smart-refresh-test", 1), &buf); err != nil {
+		t.Fatalf("failed to write state: %s", err)
+	}
+
+	got, diags := readStateV4(buf.Bytes())
+	if diags.HasErrors() {
+		t.Fatalf("failed to read state: %s", diags.Err())
+	}
+	instance := got.State.RootModule().Resource(addr).Instance(addrs.NoKey)
+	if instance == nil || instance.Current == nil {
+		t.Fatal("resource instance missing after roundtrip")
+	}
+	if !bytes.Equal(instance.Current.RefreshFingerprint, fingerprint) {
+		t.Fatalf("refresh fingerprint mismatch: got %x, want %x", instance.Current.RefreshFingerprint, fingerprint)
+	}
+	if got, want := instance.Current.LastRefreshTime, int64(1_797_500_000); got != want {
+		t.Fatalf("last refresh time mismatch: got %d, want %d", got, want)
 	}
 }
