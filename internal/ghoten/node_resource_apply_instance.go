@@ -398,9 +398,26 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 		if applyDiags.HasErrors() {
 			state.RefreshFingerprint = nil
 			state.LastRefreshTime = 0
-		} else {
+		} else if len(priorRefreshFingerprint) != 0 {
 			state.RefreshFingerprint = cloneBytes(priorRefreshFingerprint)
 			state.LastRefreshTime = priorLastRefreshTime
+		} else if n.Config != nil && n.Config.Managed != nil {
+			// New objects have no refreshed prior object to inherit metadata from.
+			// A successful create/update is itself a synchronization point, so seed
+			// Smart Refresh metadata without forcing an extra read next run.
+			skipDestroy, skipDiags := n.shouldSkipDestroy()
+			if !skipDiags.HasErrors() {
+				fingerprint, ok, fingerprintDiags := evaluatedResourceRefreshFingerprint(
+					ctx, evalCtx, n.NodeAbstractResourceInstance, n.ForceCreateBeforeDestroy, skipDestroy,
+				)
+				if !fingerprintDiags.HasErrors() && ok {
+					state.RefreshFingerprint = cloneBytes(fingerprint)
+					state.LastRefreshTime = smartRefreshNow().Unix()
+				} else {
+					state.RefreshFingerprint = nil
+					state.LastRefreshTime = 0
+				}
+			}
 		}
 	}
 	err = n.writeResourceInstanceState(ctx, evalCtx, state, workingState)
