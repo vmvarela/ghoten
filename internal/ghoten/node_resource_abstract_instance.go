@@ -153,6 +153,11 @@ func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx cont
 		log.Printf("[DEBUG] SmartRefresh: provider fingerprint unavailable for %s", n.Addr)
 		return nil, diags
 	}
+	if m, ok := n.ProviderMetas[n.ResolvedProvider.ProviderConfig.Provider]; ok && m != nil {
+		// provider_meta is passed to ReadResource but not part of the fingerprint, so always refresh.
+		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its module sets provider_meta", n.Addr)
+		return nil, diags
+	}
 
 	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.ResourceAddr())
 	diags = diags.Append(forEachDiags)
