@@ -18,7 +18,7 @@ git -C "$LEGACY" remote add opentofu https://github.com/opentofu/opentofu.git
 git -C "$LEGACY" fetch --quiet --depth=1 opentofu "$OPENTOFU_COMMIT"
 
 # Normalize historical fork-wide renames so the patch contains Ghoten
-# behavior, not thousands of mechanical package/module-name differences.
+# behavior rather than mechanical module/package renames.
 if [[ -d "$LEGACY/cmd/ghoten" ]]; then
   git -C "$LEGACY" mv cmd/ghoten cmd/tofu
 fi
@@ -26,31 +26,12 @@ if [[ -d "$LEGACY/internal/ghoten" ]]; then
   git -C "$LEGACY" mv internal/ghoten internal/tofu
 fi
 
-# Rewrite only the fork module itself. Do not touch similarly-named external
-# modules such as github.com/vmvarela/ghoten-oras-backend.
-if grep -q '^module github.com/vmvarela/ghoten
-
-while IFS= read -r -d '' file; do
-  sed -i 's/^package ghoten$/package tofu/' "$LEGACY/$file"
-done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu 2>/dev/null || true)
-
-git -C "$LEGACY" add -A
-
-# Runtime/build delta only. Repository docs, release automation and other fork
-# scaffolding deliberately do not become part of the OpenTofu patch.
-git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
-
-if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
-  echo "ERROR: generated patch is empty" >&2
-  exit 1
-fi
-
-echo "Generated patches/ghoten.patch"
-echo "  Ghoten:  $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
-echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
- "$LEGACY/go.mod"; then
+# Rewrite only the fork module itself. Keep similarly named external modules,
+# especially github.com/vmvarela/ghoten-oras-backend, unchanged.
+if grep -q '^module github.com/vmvarela/ghoten$' "$LEGACY/go.mod"; then
   sed -i 's#^module github.com/vmvarela/ghoten$#module github.com/opentofu/opentofu#' "$LEGACY/go.mod"
 fi
+
 while IFS= read -r -d '' file; do
   sed -i 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/vmvarela/ghoten/' -- . || true)
@@ -61,8 +42,8 @@ done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu 2>/dev/n
 
 git -C "$LEGACY" add -A
 
-# Runtime/build delta only. Repository docs, release automation and other fork
-# scaffolding deliberately do not become part of the OpenTofu patch.
+# Runtime/build delta only. Repository docs and historical release scaffolding
+# deliberately stay outside the maintained OpenTofu patch.
 git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
 
 if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
@@ -71,5 +52,5 @@ if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
 fi
 
 echo "Generated patches/ghoten.patch"
-echo "  Ghoten:  $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
+echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
 echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
