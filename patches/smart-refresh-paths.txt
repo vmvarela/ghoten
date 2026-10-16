@@ -1,9 +1,3 @@
-internal/backend/backend.go
-internal/backend/local/backend_local.go
-internal/command/apply.go
-internal/command/arguments/apply.go
-internal/command/arguments/extended.go
-internal/command/plan.go
 internal/ghoten/context_apply.go
 internal/ghoten/context_plan.go
 internal/ghoten/graph_builder_plan.go
