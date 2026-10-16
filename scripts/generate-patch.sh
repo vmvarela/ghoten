@@ -25,6 +25,9 @@ fi
 if [[ -d "$LEGACY/internal/ghoten" ]]; then
   git -C "$LEGACY" mv internal/ghoten internal/tofu
 fi
+if [[ -d "$LEGACY/internal/ghotenmigrate" ]]; then
+  git -C "$LEGACY" mv internal/ghotenmigrate internal/tofumigrate
+fi
 
 # Rewrite only the fork module itself. Keep similarly named external modules,
 # especially github.com/vmvarela/ghoten-oras-backend, unchanged.
@@ -43,12 +46,52 @@ while IFS= read -r -d '' file; do
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghoten' -- . || true)
 
 while IFS= read -r -d '' file; do
-  sed -i 's/\bghoten\./tofu./g' "$file"
+  sed -i 's#github.com/opentofu/opentofu/internal/ghotenmigrate#github.com/opentofu/opentofu/internal/tofumigrate#g' "$LEGACY/$file"
+done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghotenmigrate' -- . || true)
+
+while IFS= read -r -d '' file; do
+  sed -i -e 's/\bghotenmigrate\./tofumigrate./g' -e 's/\bghoten\./tofu./g' "$file"
 done < <(find "$LEGACY" -type f -name '*.go' -print0)
 
 while IFS= read -r -d '' file; do
   sed -i 's/^package ghoten$/package tofu/' "$LEGACY/$file"
-done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu 2>/dev/null || true)
+done < <(git -C "$LEGACY" grep -Ilz '^package ghoten
+
+git -C "$LEGACY" add -A
+
+# Runtime/build delta only. Repository docs and historical release scaffolding
+# deliberately stay outside the maintained OpenTofu patch.
+git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
+
+if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
+  echo "ERROR: generated patch is empty" >&2
+  exit 1
+fi
+
+echo "Generated patches/ghoten.patch"
+echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
+echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
+ -- internal/tofu 2>/dev/null || true)
+
+while IFS= read -r -d '' file; do
+  sed -i 's/^package ghotenmigrate$/package tofumigrate/' "$LEGACY/$file"
+done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate
+
+git -C "$LEGACY" add -A
+
+# Runtime/build delta only. Repository docs and historical release scaffolding
+# deliberately stay outside the maintained OpenTofu patch.
+git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
+
+if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
+  echo "ERROR: generated patch is empty" >&2
+  exit 1
+fi
+
+echo "Generated patches/ghoten.patch"
+echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
+echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
+ -- internal/tofumigrate 2>/dev/null || true)
 
 git -C "$LEGACY" add -A
 
