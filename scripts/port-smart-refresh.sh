@@ -37,13 +37,33 @@ while read -r from to; do
   fi
 
   echo "Applying Smart Refresh delta $n: $from -> $to"
-  if ! git -C "$BASE" apply --check "$normalized"; then
-    echo "ERROR: Smart Refresh delta $n does not apply cleanly." >&2
+  if git -C "$BASE" apply --check "$normalized"; then
+    git -C "$BASE" apply "$normalized"
+  else
     git -C "$BASE" apply --reject --whitespace=nowarn "$normalized" || true
-    find "$BASE" -name '*.rej' -print -exec cat {} \;
-    exit 1
+    if [[ "$n" -eq 4 ]]; then
+      mapfile -t rejects < <(find "$BASE" -name '*.rej' -print)
+      allowed=1
+      for reject in "${rejects[@]}"; do
+        case "$reject" in
+          */internal/tofu/context_apply.go.rej|*/internal/tofu/transform_smart_refresh.go.rej) ;;
+          *) allowed=0 ;;
+        esac
+      done
+      if [[ "$allowed" -eq 1 && "${#rejects[@]}" -eq 2 ]]; then
+        python3 "$ROOT/scripts/port-smart-refresh-cleanup.py" "$BASE"
+        rm -f "${rejects[@]}"
+      else
+        echo "ERROR: unexpected rejects while applying Smart Refresh delta $n" >&2
+        find "$BASE" -name '*.rej' -print -exec cat {} \;
+        exit 1
+      fi
+    else
+      echo "ERROR: Smart Refresh delta $n does not apply cleanly." >&2
+      find "$BASE" -name '*.rej' -print -exec cat {} \;
+      exit 1
+    fi
   fi
-  git -C "$BASE" apply "$normalized"
 done < "$ROOT/patches/smart-refresh-series.txt"
 
 python3 "$ROOT/scripts/port-smart-refresh-state.py" "$BASE"
