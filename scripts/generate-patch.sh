@@ -68,7 +68,30 @@ done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu || true)
 
 while IFS= read -r -d '' file; do
   sed -i 's/^package ghotenmigrate$/package tofumigrate/' "$LEGACY/$file"
-done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate$' -- internal/tofumigrate || true)
+done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate
+
+# Product delta only. The allowlist is the architecture boundary: if a
+# Ghoten feature requires another upstream file, it must be added explicitly.
+mapfile -t PATCH_PATHS < <(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/patches/include.txt")
+git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" -- "${PATCH_PATHS[@]}" > "$ROOT/patches/ghoten.patch"
+
+if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
+  echo "ERROR: generated patch is empty" >&2
+  exit 1
+fi
+
+echo "Generated patches/ghoten.patch"
+echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
+echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
+ -- internal/tofumigrate || true)
+
+# Pin the external ORAS adapter/state engine used by the new architecture.
+# Downloading the exact module revision also records its checksums in go.sum.
+(
+  cd "$LEGACY"
+  GOWORK=off go mod edit -require="github.com/vmvarela/ghoten-oras-backend@$ORAS_BACKEND_VERSION"
+  GOWORK=off go mod download "github.com/vmvarela/ghoten-oras-backend@$ORAS_BACKEND_VERSION"
+)
 
 git -C "$LEGACY" add -A
 
