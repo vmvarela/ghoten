@@ -204,3 +204,58 @@ func TestResourceInstanceObject_DeepCopy_NilConfigExprHash(t *testing.T) {
 		t.Errorf("DeepCopy should preserve nil ConfigExprHash, got %v", copied.ConfigExprHash)
 	}
 }
+
+func TestResourceInstanceObject_EncodeRefreshMetadata(t *testing.T) {
+	fingerprint := []byte{0xaa, 0xbb, 0xcc}
+	obj := &ResourceInstanceObject{
+		Value:              cty.EmptyObjectVal,
+		Status:             ObjectReady,
+		RefreshFingerprint: fingerprint,
+		LastRefreshUnix:    1_700_000_000,
+	}
+
+	src, err := obj.Encode(cty.EmptyObject, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(src.RefreshFingerprint, fingerprint) {
+		t.Fatalf("refresh fingerprint not encoded: got %x, want %x", src.RefreshFingerprint, fingerprint)
+	}
+	if src.LastRefreshUnix != obj.LastRefreshUnix {
+		t.Fatalf("last refresh timestamp not encoded: got %d, want %d", src.LastRefreshUnix, obj.LastRefreshUnix)
+	}
+
+	decoded, err := src.Decode(cty.EmptyObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.RefreshFingerprint, fingerprint) {
+		t.Fatalf("refresh fingerprint not decoded: got %x, want %x", decoded.RefreshFingerprint, fingerprint)
+	}
+	if decoded.LastRefreshUnix != obj.LastRefreshUnix {
+		t.Fatalf("last refresh timestamp not decoded: got %d, want %d", decoded.LastRefreshUnix, obj.LastRefreshUnix)
+	}
+}
+
+func TestResourceInstanceObject_DeepCopyRefreshMetadata(t *testing.T) {
+	originalFingerprint := []byte{0x01, 0x02, 0x03}
+	obj := &ResourceInstanceObject{
+		Value:              cty.NilVal,
+		Status:             ObjectReady,
+		RefreshFingerprint: originalFingerprint,
+		LastRefreshUnix:    1_700_000_000,
+	}
+
+	copied := obj.DeepCopy()
+	if !bytes.Equal(copied.RefreshFingerprint, originalFingerprint) {
+		t.Fatalf("DeepCopy refresh fingerprint mismatch: got %x, want %x", copied.RefreshFingerprint, originalFingerprint)
+	}
+	if copied.LastRefreshUnix != obj.LastRefreshUnix {
+		t.Fatalf("DeepCopy last refresh mismatch: got %d, want %d", copied.LastRefreshUnix, obj.LastRefreshUnix)
+	}
+
+	copied.RefreshFingerprint[0] = 0xff
+	if !bytes.Equal(obj.RefreshFingerprint, originalFingerprint) {
+		t.Fatalf("original refresh fingerprint mutated through copy")
+	}
+}

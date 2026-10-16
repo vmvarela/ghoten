@@ -247,8 +247,9 @@ func (b *PlanGraphBuilder) Steps() []GraphTransformer {
 
 		&ReferenceTransformer{},
 
-		// If smart refresh is enabled, selectively mark resources for refresh
-		// based on configuration changes and the dependency graph.
+		// If smart refresh is enabled, use the dependency graph as a coarse
+		// prefilter. Concrete instances perform the authoritative evaluated
+		// fingerprint/freshness check before a ReadResource can be skipped.
 		// This must come after ReferenceTransformer (needs edges) and before
 		// TargetingTransformer (targeting further narrows the graph).
 		&SmartRefreshTransformer{
@@ -313,6 +314,7 @@ func (b *PlanGraphBuilder) initPlan() {
 		return &nodeExpandPlannableResource{
 			NodeAbstractResource: a,
 			skipRefresh:          b.skipRefresh && !b.smartRefresh,
+			smartRefresh:         b.smartRefresh && !b.skipRefresh,
 			skipPlanChanges:      b.skipPlanChanges,
 			preDestroyRefresh:    b.preDestroyRefresh,
 			forceReplace:         b.ForceReplace,

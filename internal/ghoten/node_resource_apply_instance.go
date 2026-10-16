@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/configs"
@@ -381,8 +382,30 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
 		return diags.Append(n.managedResourcePostconditions(ctx, evalCtx, repeatData))
 	}
 
+	// Compute the configuration/provider context associated with this apply.
+	// A successful provider mutation becomes a fresh trust point for Smart
+	// Refresh. A failed mutation invalidates cached metadata because the remote
+	// object may have been partially modified after the last ReadResource.
+	var applyRefreshFingerprint []byte
+	skipDestroy, skipDestroyDiags := n.shouldSkipDestroy()
+	if fingerprint, fingerprintDiags := n.evaluatedSmartRefreshFingerprint(ctx, evalCtx, n.CreateBeforeDestroy(), skipDestroy); !fingerprintDiags.Append(skipDestroyDiags).HasErrors() {
+		applyRefreshFingerprint = fingerprint
+	} else {
+		log.Printf("[DEBUG] SmartRefresh: unable to fingerprint apply result for %s; next plan will refresh conservatively", n.Addr)
+	}
+
 	state, applyDiags := n.apply(ctx, evalCtx, state, diffApply, n.Config, repeatData, n.CreateBeforeDestroy())
 	diags = diags.Append(applyDiags)
+
+	if state != nil {
+		if applyDiags.HasErrors() {
+			state.RefreshFingerprint = nil
+			state.LastRefreshUnix = 0
+		} else if len(applyRefreshFingerprint) > 0 {
+			state.RefreshFingerprint = applyRefreshFingerprint
+			state.LastRefreshUnix = time.Now().UTC().Unix()
+		}
+	}
 
 	// We clear the change out here so that future nodes don't see a change
 	// that is already complete.

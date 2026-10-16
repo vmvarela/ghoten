@@ -17,17 +17,11 @@ import (
 	"github.com/vmvarela/ghoten/internal/states"
 )
 
-// configExprHash computes a deterministic SHA-256 fingerprint over the
-// structural meta-arguments of a resource configuration block:
-//
-//   - The source ranges of count and for_each expressions (filename + byte
-//     offsets).  If either expression changes its source location the byte
-//     offsets shift and the digest changes.
-//   - The sorted list of depends_on traversal source ranges.
-//
-// Attribute values (e.g. ami = "…") are intentionally excluded: attribute
-// changes are caught by the plan diff, and we only need a cheap pre-signal
-// that the *structural* parts have changed.
+// configExprHash computes a cheap, coarse-grained fingerprint used only to
+// seed graph-level Smart Refresh pruning. It is intentionally not authoritative:
+// source ranges can miss same-length expression edits and ordinary attributes
+// are not represented here. The per-instance evaluated RefreshFingerprint is
+// the correctness boundary before ReadResource can be skipped.
 //
 // The returned slice is always 32 bytes (sha256.Size).
 func configExprHash(r *configs.Resource) []byte {
@@ -191,62 +185,7 @@ func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
 		}
 	}
 
-	// Second pass: add nodes that reference a changed node via attribute
-	// expressions. If aws_instance.web has ami = aws_instance.base.ami and
-	// base is in changed, web must also be refreshed — its evaluated value
-	// may differ when base is read from remote.
-	//
-	// This is done iteratively (fixed-point) to handle chains: if A → B → C
-	// and C changes, both B and A must be marked as changed. A single pass
-	// would only catch B if it processes A before B is added to changed.
-	//
-	// ReferenceTransformer already built the necessary edges (it covers
-	// attribute references, not just depends_on), so g.Ancestors(v) gives
-	// us the full closure.
-	for {
-		newlyAdded := make(dag.Set)
-		for _, v := range g.Vertices() {
-			if changed.Include(v) {
-				continue // already in changed set
-			}
-			rn, ok := v.(GraphNodeConfigResource)
-			if !ok {
-				continue
-			}
-			if rn.ResourceAddr().Resource.Mode != addrs.ManagedResourceMode {
-				continue // only managed resources need refresh
-			}
-			if t.referencesChangedNode(g, v, changed) {
-				newlyAdded.Add(v)
-				log.Printf("[DEBUG] SmartRefreshTransformer: %q references a changed node, marking for refresh", dag.VertexName(v))
-			}
-		}
-		if len(newlyAdded) == 0 {
-			break // fixed point reached
-		}
-		for _, v := range newlyAdded {
-			changed.Add(v)
-		}
-	}
-
 	return changed
-}
-
-// referencesChangedNode returns true if the given vertex has at least one
-// ancestor that is already in changedNodes. The dependency edges exist
-// because ReferenceTransformer ran before this transformer, connecting
-// attribute-level references (e.g. ami = base.ami), not just depends_on.
-func (t *SmartRefreshTransformer) referencesChangedNode(g *Graph, v dag.Vertex, changedNodes dag.Set) bool {
-	ancestors, err := g.Ancestors(v)
-	if err != nil {
-		return false
-	}
-	for _, a := range ancestors {
-		if changedNodes.Include(a) {
-			return true
-		}
-	}
-	return false
 }
 
 // configBodyChanged returns true if the resource's structural meta-arguments
@@ -291,14 +230,24 @@ func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
 	}
 
 	currentHash := configExprHash(rc)
+	foundCurrent := false
 
 	// Compare against every instance's stored hash. If any instance has
 	// a nil hash (old state) or a different hash, mark as changed.
 	for _, rs := range t.State.Resources(addr) {
-		for _, is := range rs.Instances {
+		keys := make([]addrs.InstanceKey, 0, len(rs.Instances))
+		for key := range rs.Instances {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return addrs.InstanceKeyLess(keys[i], keys[j])
+		})
+		for _, key := range keys {
+			is := rs.Instances[key]
 			if is.Current == nil {
 				continue
 			}
+			foundCurrent = true
 			if is.Current.ConfigExprHash == nil {
 				// No fingerprint stored — conservative fallback.
 				log.Printf("[DEBUG] SmartRefreshTransformer: %q has no stored fingerprint, assuming changed", addr)
@@ -308,14 +257,17 @@ func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
 				log.Printf("[DEBUG] SmartRefreshTransformer: %q fingerprint mismatch, config body changed", addr)
 				return true
 			}
-			// Only need to check the first instance — structural attrs are
-			// per-resource, not per-instance.
-			return false
 		}
 	}
 
-	// No instances in state — treat as new/changed.
-	return true
+	if !foundCurrent {
+		// No current instances in state — treat as new/changed.
+		return true
+	}
+
+	// Every current instance that exists has the same coarse structural hash.
+	// The authoritative per-instance evaluated fingerprint is checked later.
+	return false
 }
 
 // isDataSource returns true if the given graph vertex represents a data source
@@ -338,31 +290,59 @@ func isDataSource(v dag.Vertex) bool {
 // during the plan phase and do not have remote state that can drift, so
 // including them in the refresh set is wasteful.
 func (t *SmartRefreshTransformer) buildRefreshSet(g *Graph, changedNodes dag.Set) dag.Set {
-	refreshSet := make(dag.Set)
-
+	// Phase 1: walk upstream in graph edge direction from dirty seeds to find
+	// every dependent. ReferenceTransformer connects depender -> dependency,
+	// so UpEdges are the reverse links: dependency -> dependers.
+	affected := make(dag.Set)
+	queue := make([]dag.Vertex, 0, len(changedNodes))
 	for _, v := range changedNodes {
-		if !isDataSource(v) {
-			refreshSet.Add(v)
+		if !affected.Include(v) {
+			affected.Add(v)
+			queue = append(queue, v)
 		}
-
-		// Add all ancestors (dependencies), excluding data sources.
-		ancestors, _ := g.Ancestors(v)
-		for _, a := range ancestors {
-			if !isDataSource(a) {
-				refreshSet.Add(a)
+	}
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		for _, next := range g.UpEdges(v) {
+			if affected.Include(next) {
+				continue
 			}
-		}
-
-		// Add all descendants (dependents) — conservative approach:
-		// refresh everything downstream, excluding data sources.
-		descendants, _ := g.Descendents(v)
-		for _, d := range descendants {
-			if !isDataSource(d) {
-				refreshSet.Add(d)
-			}
+			affected.Add(next)
+			queue = append(queue, next)
 		}
 	}
 
+	// Phase 2: every affected node may have other dependencies that are needed
+	// to evaluate it safely. Walk dependency edges from all affected nodes in
+	// one multi-source traversal. Each vertex/edge is considered at most a
+	// constant number of times, avoiding repeated Ancestors/Descendents DFS.
+	closure := make(dag.Set)
+	queue = queue[:0]
+	for _, v := range affected {
+		if !closure.Include(v) {
+			closure.Add(v)
+			queue = append(queue, v)
+		}
+	}
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		for _, next := range g.DownEdges(v) {
+			if closure.Include(next) {
+				continue
+			}
+			closure.Add(next)
+			queue = append(queue, next)
+		}
+	}
+
+	refreshSet := make(dag.Set)
+	for _, v := range closure {
+		if !isDataSource(v) {
+			refreshSet.Add(v)
+		}
+	}
 	return refreshSet
 }
 
@@ -371,65 +351,6 @@ func (t *SmartRefreshTransformer) skipAllRefresh(g *Graph) {
 	for _, v := range g.Vertices() {
 		if sr, ok := v.(GraphNodeSkipRefresh); ok && !isDataSource(v) {
 			sr.SetSkipRefresh(true)
-		}
-	}
-}
-
-// backfillConfigExprHashes iterates over all resource instances in the state
-// and ensures each one has a ConfigExprHash computed from the current
-// configuration. This is needed because resources with no planned changes
-// (NoOp) are not visited by the apply graph walker, so their hashes would
-// never be populated otherwise.
-func backfillConfigExprHashes(state *states.State, config *configs.Config) {
-	if state == nil || config == nil {
-		return
-	}
-
-	for _, ms := range state.Modules {
-		modCfg := config.Descendent(ms.Addr.Module())
-		if modCfg == nil {
-			continue
-		}
-
-		for _, rs := range ms.Resources {
-			// Find the matching config resource.
-			var rc *configs.Resource
-			switch rs.Addr.Resource.Mode {
-			case addrs.ManagedResourceMode:
-				for _, r := range modCfg.Module.ManagedResources {
-					if r.Type == rs.Addr.Resource.Type && r.Name == rs.Addr.Resource.Name {
-						rc = r
-						break
-					}
-				}
-			case addrs.DataResourceMode:
-				for _, r := range modCfg.Module.DataResources {
-					if r.Type == rs.Addr.Resource.Type && r.Name == rs.Addr.Resource.Name {
-						rc = r
-						break
-					}
-				}
-			}
-			if rc == nil {
-				continue // orphan resource, no config to hash
-			}
-
-			hash := configExprHash(rc)
-			for key, is := range rs.Instances {
-				if is.Current != nil {
-					if !bytes.Equal(is.Current.ConfigExprHash, hash) {
-						is.Current.ConfigExprHash = hash
-						log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s]", rs.Addr, key)
-					}
-				}
-				// Also update deposed objects — they need hashes for correct smart-refresh behavior.
-				for dk, dep := range is.Deposed {
-					if dep != nil && !bytes.Equal(dep.ConfigExprHash, hash) {
-						dep.ConfigExprHash = hash
-						log.Printf("[DEBUG] backfillConfigExprHashes: updated hash for %s[%s] (deposed %s)", rs.Addr, key, dk)
-					}
-				}
-			}
 		}
 	}
 }

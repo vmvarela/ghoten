@@ -140,6 +140,62 @@ func (n *NodeAbstractResourceInstance) Path() addrs.ModuleInstance {
 	return n.Addr.Module
 }
 
+func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext, createBeforeDestroy, skipDestroy bool) ([]byte, tfdiags.Diagnostics) {
+	var diags tfdiags.Diagnostics
+	if n.Config == nil || n.Schema == nil {
+		return nil, diags
+	}
+	if !smartRefreshSupportsConfig(n.Config) {
+		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its config uses advanced lifecycle settings", n.Addr)
+		return nil, diags
+	}
+	if n.ResolvedProvider.ConfigFingerprint == nil {
+		log.Printf("[DEBUG] SmartRefresh: provider fingerprint unavailable for %s", n.Addr)
+		return nil, diags
+	}
+	if m, ok := n.ProviderMetas[n.ResolvedProvider.ProviderConfig.Provider]; ok && m != nil {
+		// provider_meta is passed to ReadResource but not part of the fingerprint, so always refresh.
+		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its module sets provider_meta", n.Addr)
+		return nil, diags
+	}
+
+	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.ResourceAddr())
+	diags = diags.Append(forEachDiags)
+	if forEachDiags.HasErrors() {
+		return nil, diags
+	}
+
+	keyData := EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
+	configVal, _, configDiags := evalCtx.EvaluateBlock(ctx, n.Config.Config, n.Schema, nil, keyData)
+	diags = diags.Append(configDiags.InConfigBody(n.Config.Config, n.Addr.String()))
+	if configDiags.HasErrors() {
+		return nil, diags
+	}
+	if smartRefreshSchemaContainsPersistUnsafeValue(n.Schema, configVal) {
+		log.Printf("[DEBUG] SmartRefresh: refusing to persist a fingerprint derived from sensitive, ephemeral, or write-only config for %s", n.Addr)
+		return nil, diags
+	}
+
+	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
+	fingerprint, err := smartRefreshInstanceFingerprint(
+		configVal,
+		n.Addr,
+		n.ResolvedProvider.ProviderConfig,
+		n.ResolvedProviderKey,
+		providerFingerprint,
+		n.SchemaVersion,
+		n.Dependencies,
+		createBeforeDestroy,
+		skipDestroy,
+	)
+	if err != nil {
+		log.Printf("[DEBUG] SmartRefresh: cannot fingerprint %s: %s", n.Addr, err)
+		return nil, diags
+	}
+
+	return fingerprint, diags
+}
+
 // GraphNodeReferenceable
 func (n *NodeAbstractResourceInstance) ReferenceableAddrs() []addrs.Referenceable {
 	addr := n.ResourceInstanceAddr()

@@ -175,6 +175,12 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
 		copy(configExprHash, os.ConfigExprHash)
 	}
 
+	var refreshFingerprint []byte
+	if os.RefreshFingerprint != nil {
+		refreshFingerprint = make([]byte, len(os.RefreshFingerprint))
+		copy(refreshFingerprint, os.RefreshFingerprint)
+	}
+
 	// Some addrs.Referenceable implementations are technically mutable, but
 	// we treat them as immutable by convention and so we don't deep-copy here.
 	var dependencies []addrs.ConfigResource
@@ -195,6 +201,8 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
 		CreateBeforeDestroy:     os.CreateBeforeDestroy,
 		SkipDestroy:             os.SkipDestroy,
 		ConfigExprHash:          configExprHash,
+		RefreshFingerprint:      refreshFingerprint,
+		LastRefreshUnix:         os.LastRefreshUnix,
 	}
 }
 
@@ -231,6 +239,12 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
 		copy(configExprHash, o.ConfigExprHash)
 	}
 
+	var refreshFingerprint []byte
+	if o.RefreshFingerprint != nil {
+		refreshFingerprint = make([]byte, len(o.RefreshFingerprint))
+		copy(refreshFingerprint, o.RefreshFingerprint)
+	}
+
 	return &ResourceInstanceObject{
 		Value:               o.Value,
 		Status:              o.Status,
@@ -239,6 +253,8 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
 		CreateBeforeDestroy: o.CreateBeforeDestroy,
 		SkipDestroy:         o.SkipDestroy,
 		ConfigExprHash:      configExprHash,
+		RefreshFingerprint:  refreshFingerprint,
+		LastRefreshUnix:     o.LastRefreshUnix,
 	}
 }
 

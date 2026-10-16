@@ -50,6 +50,10 @@ func transformProviders(concrete ConcreteProviderNodeFunc, config *configs.Confi
 // satisfies, which is relative to the path returned by method Path().
 //
 // Name returns the full name of the provider in the config.
+type GraphNodeProviderConfigFingerprint interface {
+	ProviderConfigFingerprint(addrs.InstanceKey) []byte
+}
+
 type GraphNodeProvider interface {
 	GraphNodeModulePath
 	ProviderAddr() addrs.AbsProviderConfig
@@ -93,6 +97,11 @@ type ResolvedProvider struct {
 	// Instance gets the provider instance (already initialized)
 	// or returns nil and an error if the provider isn't initialized.
 	Instance func(addrs.InstanceKey) (providers.Configured, error)
+
+	// ConfigFingerprint returns the fingerprint of the evaluated provider
+	// configuration for a concrete provider instance. A nil result makes
+	// Smart Refresh fall back to a conservative remote refresh.
+	ConfigFingerprint func(addrs.InstanceKey) []byte
 
 	// Test overrides
 	IsMocked          bool
@@ -200,6 +209,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
 				KeyResource:   req.KeyResource,
 				KeyExact:      req.KeyExact,
 			}
+			if fp, ok := target.(GraphNodeProviderConfigFingerprint); ok {
+				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
+			}
 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
 			pv.SetProvider(resolved)
 
@@ -270,6 +282,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
 			}
 			resolved.ProviderConfig = target.ProviderAddr()
 			resolved.Instance = target.Instance
+			if fp, ok := target.(GraphNodeProviderConfigFingerprint); ok {
+				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
+			}
 
 			// Include test mocking and override extensions
 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
@@ -758,6 +773,13 @@ func (n *graphNodeProxyProvider) MocksAndOverrides() (IsMocked bool, MockResourc
 
 func (n *graphNodeProxyProvider) Instance(key addrs.InstanceKey) (providers.Configured, error) {
 	return n.Target().Instance(key)
+}
+
+func (n *graphNodeProxyProvider) ProviderConfigFingerprint(key addrs.InstanceKey) []byte {
+	if provider, ok := n.Target().(GraphNodeProviderConfigFingerprint); ok {
+		return provider.ProviderConfigFingerprint(key)
+	}
+	return nil
 }
 
 func (n *graphNodeProxyProvider) Close(ctx context.Context) error {

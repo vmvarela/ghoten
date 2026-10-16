@@ -71,7 +71,7 @@ type Operation struct {
 	Refresh bool
 
 	// RefreshMode controls how resource state is refreshed during planning.
-	// Defaults to RefreshSmart.
+	// Defaults to RefreshAll; Smart Refresh is explicitly opt-in.
 	RefreshMode plans.RefreshMode
 
 	// Targets allow limiting an operation to a set of resource addresses and
@@ -272,7 +272,8 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		o.RefreshMode = plans.RefreshNone
 		o.Refresh = false
 	case "smart":
-		// Smart refresh: skip refresh for resources with unchanged structural config.
+		// Smart refresh: graph-prune obvious unaffected resources and verify the
+		// final skip decision with evaluated per-instance fingerprints.
 		o.RefreshMode = plans.RefreshSmart
 		o.Refresh = true
 	default:
@@ -294,8 +295,22 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		))
 	case o.destroyRaw:
 		o.PlanMode = plans.DestroyMode
+		if o.RefreshMode == plans.RefreshSmart {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Incompatible refresh options",
+				"Smart refresh is not supported with -destroy. Use -refresh=true so Ghoten refreshes all objects before planning destruction.",
+			))
+		}
 	case o.refreshOnlyRaw:
 		o.PlanMode = plans.RefreshOnlyMode
+		if o.RefreshMode == plans.RefreshSmart {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Incompatible refresh options",
+				"Smart refresh is not supported with -refresh-only because refresh-only is intended to synchronize the complete state with remote objects. Use -refresh=true.",
+			))
+		}
 		if o.RefreshMode == plans.RefreshNone {
 			diags = diags.Append(tfdiags.Sourceless(
 				tfdiags.Error,

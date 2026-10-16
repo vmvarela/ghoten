@@ -9474,6 +9474,30 @@ func TestContext2Plan_smartRefreshNodeExecution(t *testing.T) {
 	}
 
 	t.Run("unchanged config skips refresh and preserves hashes and dependencies", func(t *testing.T) {
+		// Smart Refresh only trusts the evaluated RefreshFingerprint that an
+		// earlier run recorded, so bootstrap it through the implementation
+		// itself: an initial plan with no stored fingerprints refreshes both
+		// instances and persists their fingerprints, which the second plan
+		// can then reuse to take the skip path for real.
+		bootstrap := smartRefreshTestProvider(false)
+		bootstrap.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+			val := req.PriorState.AsValueMap()
+			return providers.ReadResourceResponse{NewState: cty.ObjectVal(val)}
+		}
+		bootstrapCtx := testContext2(t, &ContextOpts{
+			Plugins: plugins.NewLibrary(map[addrs.Provider]providers.Factory{
+				addrs.NewDefaultProvider("test"): testProviderFuncFixed(bootstrap),
+			}, nil),
+		})
+		bootstrapPlan, diags := bootstrapCtx.Plan(context.Background(), m, seedState(nil, nil), planOpts)
+		assertNoErrors(t, diags)
+		for _, name := range []string{"base", "a"} {
+			current := bootstrapPlan.PriorState.ResourceInstance(mustResourceInstanceAddr("test_object." + name)).Current
+			if current == nil || len(current.RefreshFingerprint) == 0 || current.LastRefreshUnix == 0 {
+				t.Fatalf("bootstrap plan did not seed evaluated refresh fingerprint metadata for test_object.%s", name)
+			}
+		}
+
 		p := smartRefreshTestProvider(false)
 		readCalled := false
 		p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
@@ -9489,7 +9513,7 @@ func TestContext2Plan_smartRefreshNodeExecution(t *testing.T) {
 			Hooks: []Hook{h},
 		})
 
-		plan, diags := ctx.Plan(context.Background(), m, seedState(configHashes["base"], configHashes["a"]), planOpts)
+		plan, diags := ctx.Plan(context.Background(), m, bootstrapPlan.PriorState, planOpts)
 		assertNoErrors(t, diags)
 
 		if readCalled || p.ReadResourceCalled {

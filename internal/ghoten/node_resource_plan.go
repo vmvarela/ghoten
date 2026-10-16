@@ -29,8 +29,11 @@ type nodeExpandPlannableResource struct {
 	// on regardless of what the configuration says.
 	ForceCreateBeforeDestroy *bool
 
-	// skipRefresh indicates that we should skip refreshing individual instances
+	// skipRefresh indicates that we should skip refreshing individual instances.
 	skipRefresh bool
+
+	// smartRefresh enables the per-instance evaluated fingerprint safety check.
+	smartRefresh bool
 
 	preDestroyRefresh bool
 
@@ -151,8 +154,11 @@ func (n *nodeExpandPlannableResource) DynamicExpand(evalCtx EvalContext) (*Graph
 
 		return &NodePlannableResourceInstanceOrphan{
 			NodeAbstractResourceInstance: a,
-			skipRefresh:                  n.skipRefresh,
-			skipPlanChanges:              n.skipPlanChanges,
+			// An orphan has no desired instance configuration to fingerprint.
+			// In Smart Refresh mode it must therefore be refreshed conservatively
+			// before we plan its removal.
+			skipRefresh:     n.skipRefresh && !n.smartRefresh,
+			skipPlanChanges: n.skipPlanChanges,
 		}
 	}
 
@@ -390,6 +396,7 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx context.Conte
 			// nodes that have it.
 			ForceCreateBeforeDestroy: n.CreateBeforeDestroy(),
 			skipRefresh:              n.skipRefresh,
+			smartRefresh:             n.smartRefresh,
 			skipPlanChanges:          n.skipPlanChanges,
 			forceReplace:             n.forceReplace,
 		}
