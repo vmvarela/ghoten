@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2262,3 +2263,61 @@ foo = "bar"
 variable "nope" {
 }
 `
+
+// TestPlan_smartRefreshEndToEndReadResourceCount verifies through the CLI that
+// a smart apply persists refresh metadata to the local state file, and that
+// the next smart plans read the provider only when the evaluated config changes.
+func TestPlan_smartRefreshEndToEndReadResourceCount(t *testing.T) {
+	td := t.TempDir()
+	t.Chdir(td)
+	if err := os.WriteFile("main.tf", []byte(`
+variable "ami" {
+  type = string
+}
+
+resource "test_instance" "foo" {
+  ami = var.ami
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := applyFixtureProvider()
+	// An empty provider block lets Smart Refresh fingerprint the provider config.
+	p.GetProviderSchemaResponse.Provider = providers.Schema{Block: &configschema.Block{}}
+	var reads atomic.Int32
+	p.ReadResourceFn = func(req providers.ReadResourceRequest) providers.ReadResourceResponse {
+		reads.Add(1)
+		return providers.ReadResourceResponse{NewState: req.PriorState}
+	}
+	view, done := testView(t)
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
+	}
+
+	apply := &ApplyCommand{Meta: meta}
+	if code := apply.Run([]string{"-auto-approve", "-refresh=smart", "-var", "ami=ami-1"}); code != 0 {
+		t.Fatalf("apply exited with %d\n\n%s", code, done(t).Stderr())
+	}
+
+	runPlan := func(ami string) int32 {
+		t.Helper()
+		reads.Store(0)
+		view, done := testView(t)
+		plan := &PlanCommand{Meta: meta}
+		plan.Meta.View = view
+		if code := plan.Run([]string{"-refresh=smart", "-var", "ami=" + ami}); code != 0 {
+			t.Fatalf("plan exited with %d\n\n%s", code, done(t).Stderr())
+		}
+		return reads.Load()
+	}
+
+	if got := runPlan("ami-1"); got != 0 {
+		t.Fatalf("unchanged smart plan read %d times; want 0", got)
+	}
+	if got := runPlan("ami-2"); got != 1 {
+		t.Fatalf("changed smart plan read %d times; want 1", got)
+	}
+}
