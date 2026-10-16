@@ -66,15 +66,18 @@ mapfile -t PATCH_PATHS < <(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/patches/include.
 # Product code comes from Ghoten; module metadata never does.
 git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" -- "${PATCH_PATHS[@]}" > "$PRODUCT_PATCH"
 
-# Module metadata is derived independently from the exact clean OpenTofu base.
+# Module metadata is derived from the exact clean OpenTofu base after
+# applying only the product delta. This makes go.mod/go.sum a consequence of
+# Ghoten features rather than inherited fork history.
 git clone --quiet --filter=blob:none https://github.com/opentofu/opentofu.git "$BASE"
 git -C "$BASE" checkout --quiet "$OPENTOFU_COMMIT"
+git -C "$BASE" apply "$PRODUCT_PATCH"
 (
   cd "$BASE"
   GOWORK=off go mod edit -require="github.com/vmvarela/ghoten-oras-backend@$ORAS_BACKEND_VERSION"
-  GOWORK=off go mod download "github.com/vmvarela/ghoten-oras-backend@$ORAS_BACKEND_VERSION"
+  GOWORK=off go mod tidy
 )
-git -C "$BASE" diff --binary -- go.mod go.sum > "$DEPS_PATCH"
+git -C "$BASE" diff --binary "$OPENTOFU_COMMIT" -- go.mod go.sum > "$DEPS_PATCH"
 
 cat "$PRODUCT_PATCH" "$DEPS_PATCH" > "$ROOT/patches/ghoten.patch"
 
