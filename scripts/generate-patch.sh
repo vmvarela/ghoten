@@ -37,6 +37,9 @@ if grep -q '^module github.com/vmvarela/ghoten$' "$LEGACY/go.mod"; then
 fi
 
 while IFS= read -r -d '' file; do
+  case "$file" in
+    *.pb.go|*.proto) continue ;;
+  esac
   sed -i 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/vmvarela/ghoten/' -- . || true)
 
