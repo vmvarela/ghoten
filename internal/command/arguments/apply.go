@@ -112,6 +112,19 @@ func ParseApplyDestroy(args []string) (*Apply, func(), tfdiags.Diagnostics) {
 		// all, which is correct, although we know from the command that
 		// they actually intended to use DestroyMode here.
 		apply.Operation.PlanMode = plans.DestroyMode
+		if apply.Operation.RefreshMode == plans.RefreshSmart {
+			if apply.Operation.refreshSet {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Incompatible refresh options",
+					"Smart refresh is not supported with -destroy. Use -refresh=true so Ghoten refreshes all objects before planning destruction.",
+				))
+			} else {
+				// Destroy mode requires complete remote-state synchronization,
+				// so the implicit smart default becomes a full refresh.
+				apply.Operation.RefreshMode = plans.RefreshAll
+			}
+		}
 	case plans.DestroyMode:
 		diags = diags.Append(tfdiags.Sourceless(
 			tfdiags.Error,

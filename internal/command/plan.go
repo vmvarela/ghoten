@@ -231,11 +231,17 @@ Plan Customization Options:
                           most recent Ghoten apply but does not propose any
                           actions to undo any changes made outside of Ghoten.
 
-  -refresh=false          Skip checking for external changes to remote objects
-                          while creating the plan. This can potentially make
-                          planning faster, but at the expense of possibly
-                          planning against a stale record of the remote system
-                          state.
+  -refresh=<mode>         Control how Ghoten checks for external changes to
+                          remote objects while creating the plan: "true"
+                          refreshes every remote object, "smart" (the default)
+                          reuses remote object state that Smart Refresh can
+                          prove is still safe and refreshes the remaining
+                          objects, and "false" skips the check entirely. Using
+                          "false" can potentially make planning faster, but at
+                          the expense of possibly planning against a stale
+                          record of the remote system state. Smart Refresh is
+                          not supported with -destroy or -refresh-only; those
+                          modes use a full refresh.
 
   -replace=resource       Force replacement of a particular resource instance
                           using its resource address. If the plan would've

@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/vmvarela/ghoten/internal/addrs"
 	"github.com/vmvarela/ghoten/internal/command/flags"
+	"github.com/vmvarela/ghoten/internal/plans"
 	"github.com/vmvarela/ghoten/internal/tfdiags"
 )
 
@@ -63,6 +64,47 @@ func TestParseRefresh_basicValid(t *testing.T) {
 			got.ViewOptions.jsonFlag = tc.want.ViewOptions.jsonFlag
 			if *got != *tc.want {
 				t.Fatalf("unexpected result\n got: %#v\nwant: %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseRefresh_defaultIsSmart(t *testing.T) {
+	got, _, diags := ParseRefresh(nil)
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	if got.Operation.RefreshMode != plans.RefreshSmart {
+		t.Fatalf("expected smart refresh to be the default, got %s", got.Operation.RefreshMode.UIName())
+	}
+}
+
+func TestParseRefresh_refreshModes(t *testing.T) {
+	testCases := map[string]struct {
+		args []string
+		want plans.RefreshMode
+	}{
+		"full refresh": {
+			args: []string{"-refresh=true"},
+			want: plans.RefreshAll,
+		},
+		"no refresh": {
+			args: []string{"-refresh=false"},
+			want: plans.RefreshNone,
+		},
+		"smart refresh": {
+			args: []string{"-refresh=smart"},
+			want: plans.RefreshSmart,
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, _, diags := ParseRefresh(tc.args)
+			if len(diags) > 0 {
+				t.Fatalf("unexpected diags: %v", diags)
+			}
+			if got.Operation.RefreshMode != tc.want {
+				t.Fatalf("expected refresh mode %s, got %s", tc.want.UIName(), got.Operation.RefreshMode.UIName())
 			}
 		})
 	}

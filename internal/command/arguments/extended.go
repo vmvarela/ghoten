@@ -71,7 +71,8 @@ type Operation struct {
 	Refresh bool
 
 	// RefreshMode controls how resource state is refreshed during planning.
-	// Defaults to RefreshAll; Smart Refresh is explicitly opt-in.
+	// Defaults to RefreshSmart; -destroy and -refresh-only default to
+	// RefreshAll.
 	RefreshMode plans.RefreshMode
 
 	// Targets allow limiting an operation to a set of resource addresses and
@@ -105,6 +106,7 @@ type Operation struct {
 	destroyRaw       bool
 	refreshOnlyRaw   bool
 	refreshModeRaw   string // raw flag value for -refresh, used to parse RefreshMode
+	refreshSet       bool   // whether -refresh was explicitly provided on the command line
 }
 
 // parseDirectTargetables gets a list of strings passed from directly from the CLI
@@ -262,16 +264,22 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 		o.ForceReplace = append(o.ForceReplace, addr)
 	}
 
-	// Parse -refresh flag: supports "true", "false", and "smart".
-	switch o.refreshModeRaw {
-	case "true", "":
-		// Default behavior: refresh everything (traditional behavior).
+	// Parse -refresh flag: supports "true", "false", and "smart". When the
+	// flag is not provided, smart refresh is the default.
+	switch {
+	case !o.refreshSet && o.refreshModeRaw == "":
+		// Default: Smart Refresh, unless the plan mode requires a full
+		// refresh (resolved below).
+		o.RefreshMode = plans.RefreshSmart
+		o.Refresh = true
+	case o.refreshModeRaw == "true":
+		// Traditional behavior: refresh everything.
 		o.RefreshMode = plans.RefreshAll
 		o.Refresh = true
-	case "false":
+	case o.refreshModeRaw == "false":
 		o.RefreshMode = plans.RefreshNone
 		o.Refresh = false
-	case "smart":
+	case o.refreshModeRaw == "smart":
 		// Smart refresh: graph-prune obvious unaffected resources and verify the
 		// final skip decision with evaluated per-instance fingerprints.
 		o.RefreshMode = plans.RefreshSmart
@@ -296,20 +304,33 @@ func (o *Operation) Parse() tfdiags.Diagnostics {
 	case o.destroyRaw:
 		o.PlanMode = plans.DestroyMode
 		if o.RefreshMode == plans.RefreshSmart {
-			diags = diags.Append(tfdiags.Sourceless(
-				tfdiags.Error,
-				"Incompatible refresh options",
-				"Smart refresh is not supported with -destroy. Use -refresh=true so Ghoten refreshes all objects before planning destruction.",
-			))
+			if o.refreshSet {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Incompatible refresh options",
+					"Smart refresh is not supported with -destroy. Use -refresh=true so Ghoten refreshes all objects before planning destruction.",
+				))
+			} else {
+				// Destroy mode requires complete remote-state synchronization,
+				// so the implicit smart default becomes a full refresh.
+				o.RefreshMode = plans.RefreshAll
+			}
 		}
 	case o.refreshOnlyRaw:
 		o.PlanMode = plans.RefreshOnlyMode
 		if o.RefreshMode == plans.RefreshSmart {
-			diags = diags.Append(tfdiags.Sourceless(
-				tfdiags.Error,
-				"Incompatible refresh options",
-				"Smart refresh is not supported with -refresh-only because refresh-only is intended to synchronize the complete state with remote objects. Use -refresh=true.",
-			))
+			if o.refreshSet {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Incompatible refresh options",
+					"Smart refresh is not supported with -refresh-only because refresh-only is intended to synchronize the complete state with remote objects. Use -refresh=true.",
+				))
+			} else {
+				// Refresh-only mode requires complete remote-state
+				// synchronization, so the implicit smart default becomes a
+				// full refresh.
+				o.RefreshMode = plans.RefreshAll
+			}
 		}
 		if o.RefreshMode == plans.RefreshNone {
 			diags = diags.Append(tfdiags.Sourceless(
@@ -349,6 +370,23 @@ func (v *Vars) Empty() bool {
 	return v.vars.Empty()
 }
 
+// refreshModeValue records the raw -refresh value and whether the flag was
+// explicitly provided, because the default refresh mode depends on the plan
+// mode when the flag is absent.
+type refreshModeValue struct {
+	op *Operation
+}
+
+func (v refreshModeValue) String() string {
+	return v.op.refreshModeRaw
+}
+
+func (v refreshModeValue) Set(raw string) error {
+	v.op.refreshModeRaw = raw
+	v.op.refreshSet = true
+	return nil
+}
+
 // extendedFlagSet creates a FlagSet with common backend, operation, and vars
 // flags used in many commands. Target structs for each subset of flags must be
 // provided in order to support those flags.
@@ -370,7 +408,7 @@ func extendedFlagSet(name string, state *State, operation *Operation, vars *Vars
 	if operation != nil {
 		f.IntVar(&operation.Parallelism, "parallelism", DefaultParallelism, "parallelism")
 		// Use a string value for refresh to support true/false/smart values
-		f.StringVar(&operation.refreshModeRaw, "refresh", "true", "refresh")
+		f.Var(refreshModeValue{operation}, "refresh", "refresh")
 		f.BoolVar(&operation.destroyRaw, "destroy", false, "destroy")
 		f.BoolVar(&operation.refreshOnlyRaw, "refresh-only", false, "refresh-only")
 		f.Var((*flags.FlagStringSlice)(&operation.targetsRaw), "target", "target")
