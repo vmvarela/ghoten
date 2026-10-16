@@ -29,6 +29,7 @@ jobs:
         run: ./dist/ghoten version
 
       - name: Upload generated patch
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: ghoten-parity-patch
