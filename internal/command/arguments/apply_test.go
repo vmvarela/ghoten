@@ -39,7 +39,7 @@ func TestParseApply_basicValid(t *testing.T) {
 					PlanMode:    plans.NormalMode,
 					Parallelism: 10,
 					Refresh:     true,
-					RefreshMode: plans.RefreshAll,
+					RefreshMode: plans.RefreshSmart,
 				},
 			},
 		},
@@ -58,7 +58,7 @@ func TestParseApply_basicValid(t *testing.T) {
 					PlanMode:    plans.NormalMode,
 					Parallelism: 10,
 					Refresh:     true,
-					RefreshMode: plans.RefreshAll,
+					RefreshMode: plans.RefreshSmart,
 				},
 			},
 		},
@@ -77,6 +77,7 @@ func TestParseApply_basicValid(t *testing.T) {
 					PlanMode:    plans.DestroyMode,
 					Parallelism: 10,
 					Refresh:     true,
+					// Destroy mode always uses a full refresh.
 					RefreshMode: plans.RefreshAll,
 				},
 			},
@@ -96,7 +97,7 @@ func TestParseApply_basicValid(t *testing.T) {
 					PlanMode:    plans.NormalMode,
 					Parallelism: 10,
 					Refresh:     true,
-					RefreshMode: plans.RefreshAll,
+					RefreshMode: plans.RefreshSmart,
 				},
 			},
 		},
@@ -845,5 +846,28 @@ func TestParseApply_smartRefreshRejectsDestroy(t *testing.T) {
 	}
 	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -destroy") {
 		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
+
+func TestParseApplyDestroy_smartRefreshRejected(t *testing.T) {
+	_, _, diags := ParseApplyDestroy([]string{"-refresh=smart"})
+	if !diags.HasErrors() {
+		t.Fatal("expected ghoten destroy -refresh=smart to be rejected")
+	}
+	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -destroy") {
+		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
+
+func TestParseApplyDestroy_fullRefreshDefault(t *testing.T) {
+	got, _, diags := ParseApplyDestroy(nil)
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	if got.Operation.PlanMode != plans.DestroyMode {
+		t.Fatalf("expected destroy mode, got %s", got.Operation.PlanMode)
+	}
+	if got.Operation.RefreshMode != plans.RefreshAll {
+		t.Fatalf("expected full refresh default, got %s", got.Operation.RefreshMode.UIName())
 	}
 }

@@ -39,7 +39,7 @@ func TestParsePlan_basicValid(t *testing.T) {
 					PlanMode:    plans.NormalMode,
 					Parallelism: 10,
 					Refresh:     true,
-					RefreshMode: plans.RefreshAll,
+					RefreshMode: plans.RefreshSmart,
 				},
 			},
 		},
@@ -58,6 +58,7 @@ func TestParsePlan_basicValid(t *testing.T) {
 					PlanMode:    plans.DestroyMode,
 					Parallelism: 10,
 					Refresh:     true,
+					// Destroy mode always uses a full refresh.
 					RefreshMode: plans.RefreshAll,
 				},
 			},
@@ -77,7 +78,7 @@ func TestParsePlan_basicValid(t *testing.T) {
 					PlanMode:    plans.NormalMode,
 					Parallelism: 10,
 					Refresh:     true,
-					RefreshMode: plans.RefreshAll,
+					RefreshMode: plans.RefreshSmart,
 				},
 			},
 		},
@@ -680,5 +681,64 @@ func TestParsePlan_smartRefreshRejectsRefreshOnly(t *testing.T) {
 	}
 	if got := diags.Err().Error(); !strings.Contains(got, "Smart refresh is not supported with -refresh-only") {
 		t.Fatalf("unexpected diagnostics: %s", got)
+	}
+}
+
+func TestParsePlan_smartRefreshIsDefault(t *testing.T) {
+	got, _, diags := ParsePlan(nil)
+	if len(diags) > 0 {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	if got.Operation.RefreshMode != plans.RefreshSmart {
+		t.Fatalf("expected smart refresh to be the default, got %s", got.Operation.RefreshMode.UIName())
+	}
+}
+
+func TestParsePlan_refreshModes(t *testing.T) {
+	testCases := map[string]struct {
+		args []string
+		want plans.RefreshMode
+	}{
+		"full refresh": {
+			args: []string{"-refresh=true"},
+			want: plans.RefreshAll,
+		},
+		"no refresh": {
+			args: []string{"-refresh=false"},
+			want: plans.RefreshNone,
+		},
+		"smart refresh": {
+			args: []string{"-refresh=smart"},
+			want: plans.RefreshSmart,
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, _, diags := ParsePlan(tc.args)
+			if len(diags) > 0 {
+				t.Fatalf("unexpected diags: %v", diags)
+			}
+			if got.Operation.RefreshMode != tc.want {
+				t.Fatalf("expected refresh mode %s, got %s", tc.want.UIName(), got.Operation.RefreshMode.UIName())
+			}
+		})
+	}
+}
+
+func TestParsePlan_unrefreshedModesDefaultToFullRefresh(t *testing.T) {
+	testCases := map[string][]string{
+		"destroy":      {"-destroy"},
+		"refresh-only": {"-refresh-only"},
+	}
+	for name, args := range testCases {
+		t.Run(name, func(t *testing.T) {
+			got, _, diags := ParsePlan(args)
+			if len(diags) > 0 {
+				t.Fatalf("unexpected diags: %v", diags)
+			}
+			if got.Operation.RefreshMode != plans.RefreshAll {
+				t.Fatalf("expected full refresh default, got %s", got.Operation.RefreshMode.UIName())
+			}
+		})
 	}
 }
