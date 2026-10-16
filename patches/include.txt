@@ -1,0 +1,49 @@
+# Shared dependency
+go.mod
+go.sum
+
+# ORAS backend integration
+internal/backend/init/init.go
+internal/backend/remote-state/oras
+
+# Smart Refresh CLI/backend plumbing
+internal/backend/backend.go
+internal/backend/local/backend_apply.go
+internal/backend/local/backend_local.go
+internal/backend/local/backend_plan.go
+internal/command/apply.go
+internal/command/plan.go
+internal/command/arguments/apply.go
+internal/command/arguments/extended.go
+internal/command/views/apply.go
+internal/command/views/hook_count.go
+internal/command/views/json/change_summary.go
+internal/command/views/json_view.go
+internal/command/views/operation.go
+internal/command/views/plan.go
+
+# Smart Refresh core
+internal/tofu/context_apply.go
+internal/tofu/context_plan.go
+internal/tofu/graph_builder_plan.go
+internal/tofu/hook.go
+internal/tofu/hook_stop.go
+internal/tofu/node_provider.go
+internal/tofu/node_resource_abstract_instance.go
+internal/tofu/node_resource_apply_instance.go
+internal/tofu/node_resource_deposed.go
+internal/tofu/node_resource_plan.go
+internal/tofu/node_resource_plan_destroy.go
+internal/tofu/node_resource_plan_instance.go
+internal/tofu/node_resource_plan_orphan.go
+internal/tofu/smart_refresh_fingerprint.go
+internal/tofu/transform_provider.go
+internal/tofu/transform_smart_refresh.go
+
+# Plan/state metadata
+internal/plans/mode.go
+internal/plans/plan.go
+internal/states/instance_object.go
+internal/states/instance_object_src.go
+internal/states/state_deepcopy.go
+internal/states/statefile/version4.go
