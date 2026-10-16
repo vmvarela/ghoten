@@ -15,7 +15,3 @@ internal/ghoten/smart_refresh_fingerprint.go
 internal/ghoten/transform_provider.go
 internal/ghoten/transform_smart_refresh.go
 internal/plans/mode.go
-internal/states/instance_object.go
-internal/states/instance_object_src.go
-internal/states/state_deepcopy.go
-internal/states/statefile/version4.go
