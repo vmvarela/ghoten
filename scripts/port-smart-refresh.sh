@@ -21,7 +21,8 @@ mapfile -t PATHS < <(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/patches/smart-refresh-
 
 n=0
 while read -r from to; do
-  [[ -z "${from:-}" || "$from" == #* ]] && continue
+  [[ -z "${from:-}" ]] && continue
+  [[ "${from:0:1}" == "#" ]] && continue
   n=$((n + 1))
   raw="$SERIES_OUT/$n.raw.patch"
   normalized="$SERIES_OUT/$n.patch"
