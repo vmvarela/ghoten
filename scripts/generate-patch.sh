@@ -43,7 +43,7 @@ while IFS= read -r -d '' file; do
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghoten' -- . || true)
 
 while IFS= read -r -d '' file; do
-  sed -i 's/\bghoten\./tofu./g' "$LEGACY/$file"
+  sed -i 's/\bghoten\./tofu./g' "$file"
 done < <(find "$LEGACY" -type f -name '*.go' -print0)
 
 while IFS= read -r -d '' file; do
