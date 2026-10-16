@@ -1,3 +1,0 @@
-output "boop" {
-  value = "beep"
-}

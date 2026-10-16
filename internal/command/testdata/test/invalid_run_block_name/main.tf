@@ -1,3 +1,0 @@
-provider "test" {
-  value = "foo"
-}
