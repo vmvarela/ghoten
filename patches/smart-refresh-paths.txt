@@ -1,17 +1,9 @@
 internal/backend/backend.go
-internal/backend/local/backend_apply.go
 internal/backend/local/backend_local.go
-internal/backend/local/backend_plan.go
 internal/command/apply.go
 internal/command/arguments/apply.go
 internal/command/arguments/extended.go
 internal/command/plan.go
-internal/command/views/apply.go
-internal/command/views/hook_count.go
-internal/command/views/json/change_summary.go
-internal/command/views/json_view.go
-internal/command/views/operation.go
-internal/command/views/plan.go
 internal/ghoten/context_apply.go
 internal/ghoten/context_plan.go
 internal/ghoten/graph_builder_plan.go
@@ -29,7 +21,6 @@ internal/ghoten/smart_refresh_fingerprint.go
 internal/ghoten/transform_provider.go
 internal/ghoten/transform_smart_refresh.go
 internal/plans/mode.go
-internal/plans/plan.go
 internal/states/instance_object.go
 internal/states/instance_object_src.go
 internal/states/state_deepcopy.go
