@@ -36,6 +36,16 @@ while IFS= read -r -d '' file; do
   sed -i 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/vmvarela/ghoten/' -- . || true)
 
+# The historical core package was renamed from OpenTofu's internal/tofu to
+# internal/ghoten. Normalize both import paths and package qualifiers.
+while IFS= read -r -d '' file; do
+  sed -i 's#github.com/opentofu/opentofu/internal/ghoten#github.com/opentofu/opentofu/internal/tofu#g' "$LEGACY/$file"
+done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghoten' -- . || true)
+
+while IFS= read -r -d '' file; do
+  sed -i 's/\bghoten\./tofu./g' "$LEGACY/$file"
+done < <(find "$LEGACY" -type f -name '*.go' -print0)
+
 while IFS= read -r -d '' file; do
   sed -i 's/^package ghoten$/package tofu/' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu 2>/dev/null || true)
