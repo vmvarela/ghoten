@@ -30,7 +30,7 @@ while read -r from to; do
   git -C "$SOURCE" diff --binary "$from" "$to" -- "${PATHS[@]}" > "$raw"
 
   # Normalize the historical fork's core package/module naming to OpenTofu.
-  sed     -e 's#a/internal/ghoten/#a/internal/tofu/#g'     -e 's#b/internal/ghoten/#b/internal/tofu/#g'     -e 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g'     -e 's/\bghoten\./tofu./g'     -e 's/^ package ghoten$/ package tofu/'     -e 's/^-package ghoten$/-package tofu/'     -e 's/^+package ghoten$/+package tofu/'     "$raw" > "$normalized"
+  sed     -e 's#a/internal/ghoten/#a/internal/tofu/#g'     -e 's#b/internal/ghoten/#b/internal/tofu/#g'     -e 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g'     -e 's#github.com/opentofu/opentofu/internal/ghoten#github.com/opentofu/opentofu/internal/tofu#g'     -e 's/\bghoten\./tofu./g'     -e 's/^ package ghoten$/ package tofu/'     -e 's/^-package ghoten$/-package tofu/'     -e 's/^+package ghoten$/+package tofu/'     "$raw" > "$normalized"
 
   if [[ ! -s "$normalized" ]]; then
     continue
