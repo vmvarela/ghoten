@@ -9,6 +9,7 @@ on:
       - ghoten.env
       - patches/smart-refresh-*.txt
       - scripts/port-smart-refresh.sh
+      - scripts/port-smart-refresh-*.py
       - .github/workflows/smart-refresh-port.yml
 
 permissions:
