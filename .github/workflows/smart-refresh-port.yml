@@ -1,0 +1,30 @@
+name: Smart Refresh port
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - refactor/patch-distribution
+    paths:
+      - ghoten.env
+      - patches/smart-refresh-*.txt
+      - scripts/port-smart-refresh.sh
+      - .github/workflows/smart-refresh-port.yml
+
+permissions:
+  contents: read
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Port feature series onto clean OpenTofu
+        run: ./scripts/port-smart-refresh.sh
+      - name: Upload Smart Refresh patch
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smart-refresh-port
+          path: patches/smart-refresh.patch
+          if-no-files-found: ignore
