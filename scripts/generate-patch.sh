@@ -17,8 +17,9 @@ git -C "$LEGACY" checkout --quiet "$LEGACY_GHOTEN_COMMIT"
 git -C "$LEGACY" remote add opentofu https://github.com/opentofu/opentofu.git
 git -C "$LEGACY" fetch --quiet --depth=1 opentofu "$OPENTOFU_COMMIT"
 
-# Normalize historical fork-wide renames so the patch contains Ghoten
-# behavior rather than mechanical module/package renames.
+# Normalize only the historical fork-wide Go package/module renames. Product
+# behavior, branding strings, tests and Ghoten-specific files remain in the
+# generated patch.
 if [[ -d "$LEGACY/cmd/ghoten" ]]; then
   git -C "$LEGACY" mv cmd/ghoten cmd/tofu
 fi
@@ -29,8 +30,8 @@ if [[ -d "$LEGACY/internal/ghotenmigrate" ]]; then
   git -C "$LEGACY" mv internal/ghotenmigrate internal/tofumigrate
 fi
 
-# Rewrite only the fork module itself. Keep similarly named external modules,
-# especially github.com/vmvarela/ghoten-oras-backend, unchanged.
+# Rewrite the fork module itself, but do not touch similarly named external
+# modules such as github.com/vmvarela/ghoten-oras-backend.
 if grep -q '^module github.com/vmvarela/ghoten$' "$LEGACY/go.mod"; then
   sed -i 's#^module github.com/vmvarela/ghoten$#module github.com/opentofu/opentofu#' "$LEGACY/go.mod"
 fi
@@ -39,59 +40,32 @@ while IFS= read -r -d '' file; do
   sed -i 's#github.com/vmvarela/ghoten/#github.com/opentofu/opentofu/#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/vmvarela/ghoten/' -- . || true)
 
-# The historical core package was renamed from OpenTofu's internal/tofu to
-# internal/ghoten. Normalize both import paths and package qualifiers.
+# Normalize the two Go packages that the historical fork renamed. Qualifier
+# rewrites are scoped only to files importing those exact packages so
+# internal/legacy/ghoten and other unrelated names are left untouched.
 while IFS= read -r -d '' file; do
   sed -i 's#github.com/opentofu/opentofu/internal/ghoten#github.com/opentofu/opentofu/internal/tofu#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghoten' -- . || true)
+
+while IFS= read -r -d '' file; do
+  sed -i 's/\bghoten\./tofu./g' "$LEGACY/$file"
+done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/tofu' -- '*.go' || true)
 
 while IFS= read -r -d '' file; do
   sed -i 's#github.com/opentofu/opentofu/internal/ghotenmigrate#github.com/opentofu/opentofu/internal/tofumigrate#g' "$LEGACY/$file"
 done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/ghotenmigrate' -- . || true)
 
 while IFS= read -r -d '' file; do
-  sed -i -e 's/\bghotenmigrate\./tofumigrate./g' -e 's/\bghoten\./tofu./g' "$file"
-done < <(find "$LEGACY" -type f -name '*.go' -print0)
+  sed -i 's/\bghotenmigrate\./tofumigrate./g' "$LEGACY/$file"
+done < <(git -C "$LEGACY" grep -Ilz 'github.com/opentofu/opentofu/internal/tofumigrate' -- '*.go' || true)
 
 while IFS= read -r -d '' file; do
   sed -i 's/^package ghoten$/package tofu/' "$LEGACY/$file"
-done < <(git -C "$LEGACY" grep -Ilz '^package ghoten
-
-git -C "$LEGACY" add -A
-
-# Runtime/build delta only. Repository docs and historical release scaffolding
-# deliberately stay outside the maintained OpenTofu patch.
-git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
-
-if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
-  echo "ERROR: generated patch is empty" >&2
-  exit 1
-fi
-
-echo "Generated patches/ghoten.patch"
-echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
-echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
- -- internal/tofu 2>/dev/null || true)
+done < <(git -C "$LEGACY" grep -Ilz '^package ghoten$' -- internal/tofu || true)
 
 while IFS= read -r -d '' file; do
   sed -i 's/^package ghotenmigrate$/package tofumigrate/' "$LEGACY/$file"
-done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate
-
-git -C "$LEGACY" add -A
-
-# Runtime/build delta only. Repository docs and historical release scaffolding
-# deliberately stay outside the maintained OpenTofu patch.
-git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
-
-if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
-  echo "ERROR: generated patch is empty" >&2
-  exit 1
-fi
-
-echo "Generated patches/ghoten.patch"
-echo "  Ghoten:   $GHOTEN_VERSION @ $LEGACY_GHOTEN_COMMIT"
-echo "  OpenTofu: $OPENTOFU_REF @ $OPENTOFU_COMMIT"
- -- internal/tofumigrate 2>/dev/null || true)
+done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate$' -- internal/tofumigrate || true)
 
 git -C "$LEGACY" add -A
 
