@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Port feature series onto clean OpenTofu
-        run: ./scripts/port-smart-refresh.sh
+        run: bash ./scripts/port-smart-refresh.sh
       - name: Upload Smart Refresh patch
         if: always()
         uses: actions/upload-artifact@v6
