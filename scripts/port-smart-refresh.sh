@@ -46,6 +46,8 @@ while read -r from to; do
   git -C "$BASE" apply "$normalized"
 done < "$ROOT/patches/smart-refresh-series.txt"
 
+python3 "$ROOT/scripts/port-smart-refresh-state.py" "$BASE"
+
 (
   cd "$BASE"
   GOWORK=off go mod tidy
