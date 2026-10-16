@@ -1,7 +1,3 @@
-# Shared dependency
-go.mod
-go.sum
-
 # ORAS backend integration
 internal/backend/init/init.go
 internal/backend/remote-state/oras
