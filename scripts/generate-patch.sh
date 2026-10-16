@@ -72,9 +72,10 @@ done < <(git -C "$LEGACY" grep -Ilz '^package ghotenmigrate$' -- internal/tofumi
 
 git -C "$LEGACY" add -A
 
-# Runtime/build delta only. Repository docs and historical release scaffolding
-# deliberately stay outside the maintained OpenTofu patch.
-git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" --   cmd internal version go.mod go.sum > "$ROOT/patches/ghoten.patch"
+# Product delta only. The allowlist is the architecture boundary: if a
+# Ghoten feature requires another upstream file, it must be added explicitly.
+mapfile -t PATCH_PATHS < <(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/patches/include.txt")
+git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" -- "${PATCH_PATHS[@]}" > "$ROOT/patches/ghoten.patch"
 
 if [[ ! -s "$ROOT/patches/ghoten.patch" ]]; then
   echo "ERROR: generated patch is empty" >&2
