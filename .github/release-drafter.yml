@@ -1,0 +1,50 @@
+# Release Drafter prepares release notes only.
+# The final Ghoten tag is always read from ghoten.env by release.yml so that
+# Ghoten keeps exactly the same version as the OpenTofu release it wraps.
+name-template: "Next Ghoten release"
+tag-template: "v$RESOLVED_VERSION"
+
+categories:
+  - title: "💥 Breaking Changes"
+    semver-increment: "major"
+    exclusive: true
+    when:
+      conventional:
+        breaking: true
+  - title: "🚀 Features"
+    semver-increment: "minor"
+    labels:
+      - "enhancement"
+  - title: "🐛 Bug Fixes"
+    semver-increment: "patch"
+    labels:
+      - "bug"
+  - title: "📖 Documentation"
+    semver-increment: "patch"
+    labels:
+      - "documentation"
+  - title: "🧰 Maintenance"
+    semver-increment: "patch"
+
+change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
+change-title-escapes: "\\<*_&"
+sync-labels: true
+
+autolabeler:
+  - labels:
+      - "enhancement"
+    title:
+      - "/^feat(\\(.+\\))?!?:/i"
+  - labels:
+      - "bug"
+    title:
+      - "/^fix(\\(.+\\))?!?:/i"
+  - labels:
+      - "documentation"
+    title:
+      - "/^docs(\\(.+\\))?!?:/i"
+
+template: |
+  ## What's Changed
+
+  $CHANGES
