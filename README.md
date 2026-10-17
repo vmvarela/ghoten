@@ -3,7 +3,7 @@
 Ghoten is a thin, reproducible distribution of OpenTofu focused on two features:
 
 - **Smart Refresh** — skips safe, fresh provider reads during planning.
-- **OCI state** — adds the `oras` backend, powered by the shared `ghoten-oras-backend` library.
+- **OCI state** — adds the `oras` backend, powered by the shared `oras-state` library.
 
 Ghoten does not vendor or rename the OpenTofu source tree.
 
@@ -59,5 +59,5 @@ A base-version update should not require a fork merge.
 - OpenTofu source is never committed here.
 - Published artifacts contain one executable: `ghoten`.
 - Smart Refresh and ORAS remain independent patches.
-- OCI state semantics live in `ghoten-oras-backend`, not OpenTofu Core.
+- OCI state semantics live in `oras-state`, not OpenTofu Core.
 - Generic OpenTofu changes belong upstream, not in Ghoten.
