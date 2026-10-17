@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index d5f7ac55b..c59026de1 100644
+index d5f7ac55b..a59d2a3d4 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -89,6 +89,7 @@ require (
@@ -10,8 +10,7 @@ index d5f7ac55b..c59026de1 100644
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
-@@ -103,17 +104,18 @@ require (
- 	golang.org/x/crypto v0.56.0
+@@ -104,10 +105,11 @@ require (
  	golang.org/x/mod v0.39.0
  	golang.org/x/net v0.57.0
  	golang.org/x/oauth2 v0.36.0
@@ -24,13 +23,15 @@ index d5f7ac55b..c59026de1 100644
  	google.golang.org/api v0.293.0
  	google.golang.org/grpc v1.83.1
  	google.golang.org/protobuf v1.36.12
- 	k8s.io/api v0.36.3
+@@ -115,7 +117,7 @@ require (
  	k8s.io/apimachinery v0.36.3
  	k8s.io/client-go v0.36.3
  	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 -	oras.land/oras-go/v2 v2.6.2
 +	oras.land/oras-go/v2 v2.6.3
  )
+ 
+ require (
 @@ -256,7 +258,6 @@ require (
  	go.yaml.in/yaml/v3 v3.0.4 // indirect
  	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
@@ -40,7 +41,7 @@ index d5f7ac55b..c59026de1 100644
  	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
  	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 diff --git a/go.sum b/go.sum
-index e87e6830c..054736483 100644
+index e87e6830c..ac3aa0c12 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -575,6 +575,8 @@ github.com/vmihailenco/msgpack/v5 v5.3.5 h1:5gO0H1iULLWGhs2H5tbAHIZTV8/cYafcFOr9
@@ -52,19 +53,28 @@ index e87e6830c..054736483 100644
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
-@@ -701,3 +703,3 @@
+@@ -698,8 +700,8 @@ golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4/go.mod h1:RxMgew5VJxzue5/jJ
+ golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+ golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+ golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 -golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
 -golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
 +golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
 +golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
  golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
-@@ -813,4 +815,4 @@ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 h1:jVkFFVfXdXP74B/zbO3hM3hpSFD
+ golang.org/x/sys v0.0.0-20181116152217-5ac8a444bdc5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+@@ -811,8 +813,8 @@ k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a h1:xCeOEAOoGYl2jnJoHkC3hk
+ k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a/go.mod h1:uGBT7iTA6c6MvqUvSXIaYZo9ukscABYi2btjhvgKGZ0=
+ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 h1:jVkFFVfXdXP74B/zbO3hM3hpSFD0xvhQ5U686DPurkE=
  k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3/go.mod h1:M2s5JB1lIYP3jzZdorPLHXIPJzt9vv2muW5a6L9DtNM=
 -oras.land/oras-go/v2 v2.6.2 h1:N04RXngAp1LJKTG6ifz3xHPipasEkWr+hFmInja5YKo=
 -oras.land/oras-go/v2 v2.6.2/go.mod h1:PlTtg4JTDJkDe8yVHpM2wz7/YDc00GVas+i4jAW2TZ4=
 +oras.land/oras-go/v2 v2.6.3 h1:72z4K9YiDKVB5jieM8cuB1WSVnbZkkD2hd+NmO3HYVI=
 +oras.land/oras-go/v2 v2.6.3/go.mod h1:imXEFiYkTZUVVYkfv/r5GVmWeiLkGtNQA8FU4F/sjKs=
  rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
+ sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 h1:IpInykpT6ceI+QxKBbEflcR5EXP7sU1kvOlxwZh5txg=
+ sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730/go.mod h1:mdzfpAEoE6DHQEN0uh9ZbOCuHbLK5wOm7dK4ctXE9Tg=
 diff --git a/internal/backend/init/init.go b/internal/backend/init/init.go
 index 15dc3cbfd..fb4c99d69 100644
 --- a/internal/backend/init/init.go
