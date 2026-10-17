@@ -1,0 +1,157 @@
+name: Test prerelease
+
+on:
+  push:
+    branches:
+      - prerelease/v1.13.0-rc.1
+    paths:
+      - .github/workflows/prerelease-test.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghoten-prerelease-v1.13.0-rc.1
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: 1ec54ab4cc61f7485cbb8f9a9c027bc35b9171f8
+  PRERELEASE_VERSION: 1.13.0-rc.1
+  PRERELEASE_TAG: v1.13.0-rc.1
+
+jobs:
+  verify:
+    name: Verify prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BASE_SHA }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Validate base version
+        shell: bash
+        run: |
+          source ./ghoten.env
+
+          if [[ "$GHOTEN_VERSION" != "1.13.0" || "$OPENTOFU_REF" != "v1.13.0" ]]; then
+            echo "::error::This prerelease is expected to wrap OpenTofu 1.13.0."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$PRERELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $PRERELEASE_TAG already exists."
+            exit 1
+          fi
+
+      - name: Verify patches and tests
+        run: bash ./scripts/verify.sh
+
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            archive: tar.gz
+          - os: linux
+            arch: arm64
+            archive: tar.gz
+          - os: darwin
+            arch: amd64
+            archive: tar.gz
+          - os: darwin
+            arch: arm64
+            archive: tar.gz
+          - os: windows
+            arch: amd64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BASE_SHA }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: "auto"
+        run: bash ./scripts/build.sh
+
+      - name: Package
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          mkdir -p artifacts
+          BASENAME="ghoten_${PRERELEASE_VERSION}_${TARGET_OS}_${TARGET_ARCH}"
+
+          if [[ "$TARGET_OS" == "windows" ]]; then
+            mv dist/ghoten "dist/ghoten.exe"
+            (cd dist && zip "../artifacts/${BASENAME}.zip" ghoten.exe)
+          else
+            tar -C dist -czf "artifacts/${BASENAME}.tar.gz" ghoten
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghoten-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish prerelease
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > sha256sums.txt
+
+      - name: Publish isolated test prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cat > /tmp/notes.md <<'EOF'
+          Test prerelease for the refactored Ghoten distribution.
+
+          - Base: OpenTofu 1.13.0
+          - Source commit: 1ec54ab4cc61f7485cbb8f9a9c027bc35b9171f8
+          - Includes Smart Refresh and the ORAS backend powered by oras-state v0.1.0
+          - Intended only to validate the current release path
+          EOF
+
+          gh release create "$PRERELEASE_TAG"             --repo "$GITHUB_REPOSITORY"             --target "$BASE_SHA"             --title "$PRERELEASE_TAG"             --notes-file /tmp/notes.md             --prerelease             --latest=false
+
+          gh release upload "$PRERELEASE_TAG" artifacts/*             --repo "$GITHUB_REPOSITORY"
