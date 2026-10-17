@@ -1153,7 +1153,7 @@ diff --git a/internal/command/arguments/history_test.go b/internal/command/argum
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/arguments/history_test.go
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,36 @@
 +package arguments
 +
 +import "testing"
@@ -1185,5 +1185,8 @@ new file mode 100644
 +	args := BindHistoryPull(&cli)
 +	if diags := cli.ParseLegacy([]string{"-output=state.tfstate", "2"}); diags.HasErrors() {
 +		t.Fatalf("ParseLegacy pull: %s", diags.Err())
++	}
++	if args.Output != "state.tfstate" || args.Version != "2" {
++		t.Fatalf("parsed pull args = %#v", args)
 +	}
 +}
