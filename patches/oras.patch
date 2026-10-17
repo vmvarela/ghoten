@@ -10,7 +10,7 @@ index d5f7ac55b..c59026de1 100644
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
-@@ -103,18 +104,19 @@ require (
+@@ -103,17 +104,18 @@ require (
  	golang.org/x/crypto v0.56.0
  	golang.org/x/mod v0.39.0
  	golang.org/x/net v0.57.0
@@ -24,7 +24,6 @@ index d5f7ac55b..c59026de1 100644
  	google.golang.org/api v0.293.0
  	google.golang.org/grpc v1.83.1
  	google.golang.org/protobuf v1.36.12
- 	gopkg.in/yaml.v3 v3.0.1
  	k8s.io/api v0.36.3
  	k8s.io/apimachinery v0.36.3
  	k8s.io/client-go v0.36.3
