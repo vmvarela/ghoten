@@ -35,14 +35,21 @@ else
   [ -n "$location" ] || fail "could not resolve the latest stable Ghoten release"
   tag="${location##*/}"
   case "$tag" in
-    v[0-9]*.[0-9]*.[0-9]*) version="${tag#v}" ;;
+    v*) version="${tag#v}" ;;
     *) fail "unexpected latest release tag: $tag" ;;
   esac
 fi
 
-case "$version" in
-  *[!0-9.]*|*.*.*.*|""|.*|*.) fail "invalid VERSION: $version" ;;
-esac
+old_ifs="$IFS"
+IFS=.
+set -- $version
+IFS="$old_ifs"
+[ "$#" -eq 3 ] || fail "invalid VERSION: $version"
+for component in "$@"; do
+  case "$component" in
+    ""|*[!0-9]*) fail "invalid VERSION: $version" ;;
+  esac
+done
 
 tag="v${version}"
 asset="ghoten_${version}_${os}_${arch}.tar.gz"
