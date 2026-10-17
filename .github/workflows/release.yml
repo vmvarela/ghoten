@@ -96,7 +96,14 @@ jobs:
           echo "Source commit: $SOURCE_SHA"
 
       - name: Verify patches and tests
+        env:
+          GHOTEN_VERIFY_OUTPUT: ${{ runner.temp }}/ghoten
         run: bash ./scripts/verify.sh
+
+      - name: Verify ORAS backend lifecycle
+        env:
+          GHOTEN_BIN: ${{ runner.temp }}/ghoten
+        run: bash ./scripts/e2e-oras.sh
 
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}

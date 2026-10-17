@@ -16,6 +16,16 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - run: bash ./scripts/verify.sh
+
+      - name: Verify patches and focused tests
+        env:
+          GHOTEN_VERIFY_OUTPUT: ${{ runner.temp }}/ghoten
+        run: bash ./scripts/verify.sh
+
+      - name: Verify ORAS backend lifecycle
+        env:
+          GHOTEN_BIN: ${{ runner.temp }}/ghoten
+        run: bash ./scripts/e2e-oras.sh
