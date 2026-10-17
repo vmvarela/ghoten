@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/ghoten.env"
 
+# Migration-only source pins. This generator is deleted once the validated patch
+# is fixed in the repository.
+LEGACY_GHOTEN_COMMIT=e1724745bd295818253103e7a2b342096568dc2a
+ORAS_BACKEND_VERSION=v0.1.2-0.20261017053150-eaa5e0e5419e
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 SOURCE="$WORK/source"
