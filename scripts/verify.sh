@@ -19,6 +19,8 @@ done
 
 (
   cd "$SRC"
+  GOWORK=off go get github.com/vmvarela/oras-state@v0.0.0-20261017122938-0c4285e6f88b
+
   GOWORK=off go test     ./internal/tofu     ./internal/states/...     ./internal/plans     ./internal/command/arguments     ./internal/command/views/...     ./internal/backend/local     ./internal/backend/remote-state/oras     ./internal/backend/init
 
   GOWORK=off go build -trimpath -o "$WORK/ghoten" ./cmd/tofu
