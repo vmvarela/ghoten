@@ -37,7 +37,7 @@ def extended(text):
     parse = '''\tcli.PreHook(func() tfdiags.Diagnostics {
 \t\tvar diags tfdiags.Diagnostics
 
-\t\trefreshExplicit = refreshFlag.IsSet != nil && refreshFlag.IsSet()
+\t\trefreshExplicit := refreshFlag.IsSet != nil && refreshFlag.IsSet()
 \t\tswitch refreshRaw {
 \t\tcase "true":
 \t\t\to.RefreshMode = plans.RefreshAll
