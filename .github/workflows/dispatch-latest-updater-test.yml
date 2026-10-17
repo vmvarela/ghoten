@@ -1,0 +1,24 @@
+name: Dispatch latest updater test
+
+on:
+  push:
+    branches:
+      - ci/dispatch-latest-updater-test
+    paths:
+      - .github/workflows/dispatch-latest-updater-test.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch candidate updater
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run opentofu-update.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref ci/latest-opentofu-only
