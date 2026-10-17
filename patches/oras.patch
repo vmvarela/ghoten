@@ -1149,3 +1149,41 @@ new file mode 100644
 +	return ret
 +}
 0
+diff --git a/internal/command/arguments/history_test.go b/internal/command/arguments/history_test.go
+new file mode 100644
+--- /dev/null
++++ b/internal/command/arguments/history_test.go
+@@ -0,0 +1,32 @@
++package arguments
++
++import "testing"
++
++func TestHistoryListJSONFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryList(&cli)
++	if diags := cli.ParseLegacy([]string{"-json"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy(-json): %s", diags.Err())
++	}
++	if !args.JSON {
++		t.Fatal("-json did not enable JSON output")
++	}
++}
++
++func TestHistoryShowJSONFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryShow(&cli)
++	if diags := cli.ParseLegacy([]string{"-json", "3"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy(-json 3): %s", diags.Err())
++	}
++	if !args.JSON || args.Version != "3" {
++		t.Fatalf("parsed show args = %#v", args)
++	}
++}
++
++func TestHistoryPullOutputFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryPull(&cli)
++	if diags := cli.ParseLegacy([]string{"-output=state.tfstate", "2"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy pull: %s", diags.Err())
++	}
++}
