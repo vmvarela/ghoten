@@ -72,6 +72,10 @@ git -C "$LEGACY" diff --cached --binary "$OPENTOFU_COMMIT" -- "${PATCH_PATHS[@]}
 git clone --quiet --filter=blob:none https://github.com/opentofu/opentofu.git "$BASE"
 git -C "$BASE" checkout --quiet "$OPENTOFU_COMMIT"
 git -C "$BASE" apply "$PRODUCT_PATCH"
+
+# Preserve current OpenTofu structures and adapt only the Ghoten feature deltas.
+python3 "$ROOT/scripts/port-compat.py" "$BASE"
+
 (
   cd "$BASE"
   GOWORK=off go mod edit -require="github.com/vmvarela/ghoten-oras-backend@$ORAS_BACKEND_VERSION"
