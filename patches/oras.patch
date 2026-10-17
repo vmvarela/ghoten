@@ -6,11 +6,17 @@ index d5f7ac55b..c59026de1 100644
  	github.com/tencentyun/cos-go-sdk-v5 v0.7.70
  	github.com/ulikunitz/xz v0.5.16
  	github.com/urfave/cli/v3 v3.10.1
-+	github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a
++	github.com/vmvarela/oras-state v0.1.0
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
-@@ -108,6 +109,7 @@ require (
+@@ -103,17 +104,18 @@ require (
+ 	golang.org/x/crypto v0.56.0
+ 	golang.org/x/mod v0.39.0
+ 	golang.org/x/net v0.57.0
+ 	golang.org/x/oauth2 v0.36.0
+-	golang.org/x/sync v0.22.0
++	golang.org/x/sync v0.24.0
  	golang.org/x/sys v0.47.0
  	golang.org/x/term v0.45.0
  	golang.org/x/text v0.41.0
@@ -18,6 +24,14 @@ index d5f7ac55b..c59026de1 100644
  	google.golang.org/api v0.293.0
  	google.golang.org/grpc v1.83.1
  	google.golang.org/protobuf v1.36.12
+ 	gopkg.in/yaml.v3 v3.0.1
+ 	k8s.io/api v0.36.3
+ 	k8s.io/apimachinery v0.36.3
+ 	k8s.io/client-go v0.36.3
+ 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
+-	oras.land/oras-go/v2 v2.6.2
++	oras.land/oras-go/v2 v2.6.3
+ )
 @@ -256,7 +258,6 @@ require (
  	go.yaml.in/yaml/v3 v3.0.4 // indirect
  	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
@@ -34,11 +48,24 @@ index e87e6830c..054736483 100644
  github.com/vmihailenco/msgpack/v5 v5.3.5/go.mod h1:7xyJ9e+0+9SaZT0Wt1RGleJXzli6Q/V5KbhBonMG9jc=
  github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
  github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-+github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a h1:cgJbIvnF52WiGpOO6ZF+anVqx2x2x1bqrQtovrm9dMY=
-+github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a/go.mod h1:58kVQvdKfOzwS9fskuDqWyalX+aJvJ7mEcTXYk+USDw=
++github.com/vmvarela/oras-state v0.1.0 h1:maSZo4LZGJdn8CyYbS9YILBdulVNeYuhbugCX4bA9hc=
++github.com/vmvarela/oras-state v0.1.0/go.mod h1:2cep0ssg7Ff0bEEtBnScyb465X+LATcs+v2xTDipnX0=
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
+@@ -700,4 +702,4 @@ golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/j
+-golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+-golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
++golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
++golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
+ golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+@@ -813,4 +815,4 @@ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 h1:jVkFFVfXdXP74B/zbO3hM3hpSFD
+ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3/go.mod h1:M2s5JB1lIYP3jzZdorPLHXIPJzt9vv2muW5a6L9DtNM=
+-oras.land/oras-go/v2 v2.6.2 h1:N04RXngAp1LJKTG6ifz3xHPipasEkWr+hFmInja5YKo=
+-oras.land/oras-go/v2 v2.6.2/go.mod h1:PlTtg4JTDJkDe8yVHpM2wz7/YDc00GVas+i4jAW2TZ4=
++oras.land/oras-go/v2 v2.6.3 h1:72z4K9YiDKVB5jieM8cuB1WSVnbZkkD2hd+NmO3HYVI=
++oras.land/oras-go/v2 v2.6.3/go.mod h1:imXEFiYkTZUVVYkfv/r5GVmWeiLkGtNQA8FU4F/sjKs=
+ rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
 diff --git a/internal/backend/init/init.go b/internal/backend/init/init.go
 index 15dc3cbfd..fb4c99d69 100644
 --- a/internal/backend/init/init.go
