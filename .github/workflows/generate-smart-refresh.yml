@@ -1,0 +1,25 @@
+name: Generate Smart Refresh patch
+on:
+  workflow_dispatch:
+  push:
+    branches: [refactor/patch-distribution]
+    paths:
+      - ghoten.env
+      - patches/smart-refresh-*.txt
+      - scripts/generate-smart-refresh.sh
+      - scripts/port-smart-refresh-*.py
+      - .github/workflows/generate-smart-refresh.yml
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./scripts/generate-smart-refresh.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: smart-refresh-patch
+          path: patches/smart-refresh.patch
+          if-no-files-found: ignore
