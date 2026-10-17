@@ -47,7 +47,7 @@ jobs:
           cp LICENSE pkg-work/LICENSE
 
           for packager in deb rpm apk; do
-            VERSION=0.0.0-test GOARCH=amd64 \
+            VERSION=0.0.0 GOARCH=amd64 \
               nfpm package \
                 -p "$packager" \
                 -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" \
