@@ -29,3 +29,12 @@ jobs:
         env:
           GHOTEN_BIN: ${{ runner.temp }}/ghoten
         run: bash ./scripts/e2e-oras.sh
+
+      - name: Verify release installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n scripts/install.sh
+          INSTALL_DIR="${RUNNER_TEMP}/ghoten-install" sh scripts/install.sh
+          test -x "${RUNNER_TEMP}/ghoten-install/ghoten"
+          "${RUNNER_TEMP}/ghoten-install/ghoten" version
