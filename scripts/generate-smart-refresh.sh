@@ -85,6 +85,7 @@ gofmt -w \
   GOWORK=off go build -trimpath -o "$WORK/ghoten-smart" ./cmd/tofu
 )
 
-git -C "$BASE" diff --binary "$OPENTOFU_COMMIT" -- internal > "$ROOT/patches/smart-refresh.patch"
+git -C "$BASE" add -A
+git -C "$BASE" diff --cached --binary "$OPENTOFU_COMMIT" -- internal > "$ROOT/patches/smart-refresh.patch"
 test -s "$ROOT/patches/smart-refresh.patch"
 echo "Generated patches/smart-refresh.patch"
