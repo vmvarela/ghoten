@@ -152,3 +152,10 @@ func callPostSkipRefresh(h Hook, addr addrs.AbsResourceInstance, gen states.Gene
 """
     return replace_once(text, anchor, helper + anchor, rel)
 edit(rel, optional_skip_hook)
+
+# Rewrite legacy direct hook calls to the optional capability helper.
+for path in (root / "internal/tofu").glob("*.go"):
+    text = path.read_text()
+    new = text.replace("return h.PostSkipRefresh(", "return callPostSkipRefresh(h, ")
+    if new != text:
+        path.write_text(new)
