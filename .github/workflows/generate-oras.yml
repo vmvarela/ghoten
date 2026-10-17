@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ghoten-oras-patch
+  cancel-in-progress: true
+
 jobs:
   generate:
     runs-on: ubuntu-latest
