@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/ghoten.env"
 
-ORAS_STATE_VERSION="v0.0.0-20261017074614-5bba9f03315c"
+ORAS_STATE_VERSION="v0.0.0-20261017080938-4139317a545a"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
