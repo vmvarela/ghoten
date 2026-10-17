@@ -24,7 +24,7 @@ rel = "internal/command/arguments/extended.go"
 def extended(text):
     text = replace_once(text,
         "\tRefresh bool\n\n\t// Targets",
-        "\tRefresh bool\n\n\t// RefreshMode selects all/none/smart remote-state refresh.\n\tRefreshMode plans.RefreshMode\n\trefreshSet  bool\n\n\t// Targets", rel)
+        "\tRefresh bool\n\n\t// RefreshMode selects all/none/smart remote-state refresh.\n\tRefreshMode plans.RefreshMode\n\n\t// Targets", rel)
     text = replace_once(text,
         "\tvar destroyRaw bool\n\tvar refreshOnlyRaw bool",
         "\tvar destroyRaw bool\n\tvar refreshOnlyRaw bool\n\tvar refreshRaw string", rel)
@@ -37,7 +37,7 @@ def extended(text):
     parse = '''\tcli.PreHook(func() tfdiags.Diagnostics {
 \t\tvar diags tfdiags.Diagnostics
 
-\t\to.RefreshExplicit = refreshFlag.IsSet != nil && refreshFlag.IsSet()
+\t\trefreshExplicit = refreshFlag.IsSet != nil && refreshFlag.IsSet()
 \t\tswitch refreshRaw {
 \t\tcase "true":
 \t\t\to.RefreshMode = plans.RefreshAll
@@ -72,7 +72,7 @@ def extended(text):
     new = '''\t\tcase destroyRaw:
 \t\t\to.PlanMode = plans.DestroyMode
 \t\t\tif o.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif o.RefreshExplicit {
+\t\t\t\tif refreshExplicit {
 \t\t\t\t\tdiags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -destroy. Use -refresh=true."))
 \t\t\t\t} else {
 \t\t\t\t\to.RefreshMode = plans.RefreshAll
@@ -81,7 +81,7 @@ def extended(text):
 \t\tcase refreshOnlyRaw:
 \t\t\to.PlanMode = plans.RefreshOnlyMode
 \t\t\tif o.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif o.RefreshExplicit {
+\t\t\t\tif refreshExplicit {
 \t\t\t\t\tdiags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -refresh-only. Use -refresh=true."))
 \t\t\t\t} else {
 \t\t\t\t\to.RefreshMode = plans.RefreshAll
@@ -103,9 +103,6 @@ rel = "internal/command/arguments/apply.go"
 def apply_args(text):
     old = "\t\t\tapply.Operation.PlanMode = plans.DestroyMode\n"
     new = old + '''\t\t\tif apply.Operation.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif apply.Operation.RefreshExplicit {
-\t\t\t\t\treturn tfdiags.New(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with destroy. Use -refresh=true."))
-\t\t\t\t}
 \t\t\t\tapply.Operation.RefreshMode = plans.RefreshAll
 \t\t\t}
 '''
