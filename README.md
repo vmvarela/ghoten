@@ -1,39 +1,63 @@
 # Ghoten
 
-Ghoten is a reproducible patch distribution of OpenTofu that adds Smart Refresh and OCI-native state while preserving OpenTofu version compatibility.
+Ghoten is a thin, reproducible distribution of OpenTofu focused on two features:
+
+- **Smart Refresh** — skips safe, fresh provider reads during planning.
+- **OCI state** — adds the `oras` backend, powered by the shared `ghoten-oras-backend` library.
+
+Ghoten does not vendor or rename the OpenTofu source tree.
 
 ## Architecture
 
-This repository does **not** vendor OpenTofu. A build:
+A build starts from one exact OpenTofu commit and applies two independent patches:
 
-1. reads `ghoten.env`;
-2. clones the exact OpenTofu commit pinned there;
-3. applies `patches/ghoten.patch`;
-4. builds a single `ghoten` executable from OpenTofu's original `cmd/tofu`.
+```text
+OpenTofu 1.13.0
+    |
+    +-- patches/smart-refresh.patch
+    |
+    +-- patches/oras.patch
+    |
+    +-- build cmd/tofu as dist/ghoten
+```
 
-The public Ghoten version always equals its OpenTofu base version. Updating OpenTofu is therefore a version/commit change in one file followed by patch verification.
+The separation is intentional:
 
-During the architecture migration, `scripts/generate-patch.sh` can reproduce the current Ghoten 1.13.0 delta from the exact legacy commit. This is a transition aid only: the long-term source of truth is the small patch stored here.
+- `smart-refresh.patch` owns planning, state metadata, CLI refresh modes, and Smart Refresh tests.
+- `oras.patch` owns only the ORAS backend adapter, backend registration, and its Go dependency.
+
+There is no maintained fork-wide source copy and no migration/generation layer.
 
 ## Build
 
 ```sh
-./scripts/build.sh
+make build
 ./dist/ghoten version
 ```
 
-## Regenerate the parity patch
+The build clones the exact OpenTofu commit pinned in `ghoten.env`, checks both patches, applies them, and builds one executable.
+
+## Verify
 
 ```sh
-./scripts/generate-patch.sh
+make verify
 ```
 
-The generated patch is normalized back to OpenTofu package/module names before diffing, so mechanical fork renames do not become part of the maintained delta.
+Verification starts from a clean OpenTofu checkout, applies the same two patches, runs the focused upstream/Ghoten test suites, and builds the executable.
+
+## Updating OpenTofu
+
+1. Change `GHOTEN_VERSION`, `OPENTOFU_REF`, and `OPENTOFU_COMMIT` in `ghoten.env`.
+2. Rebase only the patch that no longer applies.
+3. Run `make verify`.
+
+A base-version update should not require a fork merge.
 
 ## Design rules
 
-- Ghoten version == OpenTofu version.
+- Ghoten version tracks its OpenTofu base version.
 - OpenTofu source is never committed here.
 - Published artifacts contain one executable: `ghoten`.
-- Ghoten-specific behavior must be isolated or represented by minimal integration points.
-- ORAS state semantics belong in the shared ORAS state library, not in OpenTofu Core.
+- Smart Refresh and ORAS remain independent patches.
+- OCI state semantics live in `ghoten-oras-backend`, not OpenTofu Core.
+- Generic OpenTofu changes belong upstream, not in Ghoten.
