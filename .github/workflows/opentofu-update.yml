@@ -39,18 +39,180 @@ jobs:
             --header "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/opentofu/opentofu/releases?per_page=100")"
 
-          LATEST_VERSION="$(
+          # Ghoten follows exactly one upstream line: the highest stable SemVer
+          # published by OpenTofu. Never follow backport/fix releases from an older
+          # minor line once a newer stable line exists.
+          mapfile -t STABLE_VERSIONS < <(
             jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' <<<"$RELEASES_JSON" |
-              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
-              sed 's/^v//' |
-              sort -V |
-              tail -n1
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+
+          # This comparison is against the global latest stable version, not the
+          # newest release by publication date. A later 1.13.x backport therefore
+          # cannot move Ghoten backwards from 1.14.x.
+          NEWEST="$(printf '%s\n%s\n' "$GHOTEN_VERSION" "$LATEST_VERSION" | sort -V | tail -n1)"
+          if [[ "$NEWEST" != "$LATEST_VERSION" || "$LATEST_VERSION" == "$GHOTEN_VERSION" ]]; then
+            echo "No newer stable OpenTofu release: Ghoten=$GHOTEN_VERSION, upstream=$LATEST_VERSION"
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST_TAG="v$LATEST_VERSION"
+          REF_JSON="$(curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/opentofu/opentofu/git/ref/tags/$LATEST_TAG")"
+          OBJECT_SHA="$(jq -r '.object.sha' <<<"$REF_JSON")"
+          OBJECT_TYPE="$(jq -r '.object.type' <<<"$REF_JSON")"
+
+          # Dereference annotated tags until the exact release commit is reached.
+          for _ in 1 2 3 4 5; do
+            if [[ "$OBJECT_TYPE" == "commit" ]]; then
+              break
+            fi
+            if [[ "$OBJECT_TYPE" != "tag" ]]; then
+              echo "::error::Unexpected Git object type for $LATEST_TAG: $OBJECT_TYPE"
+              exit 1
+            fi
+
+            TAG_JSON="$(curl --fail --silent --show-error \
+              --header "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/opentofu/opentofu/git/tags/$OBJECT_SHA")"
+            OBJECT_SHA="$(jq -r '.object.sha' <<<"$TAG_JSON")"
+            OBJECT_TYPE="$(jq -r '.object.type' <<<"$TAG_JSON")"
+          done
+
+          if [[ "$OBJECT_TYPE" != "commit" ]]; then
+            echo "::error::Could not resolve $LATEST_TAG to a commit."
+            exit 1
+          fi
+
+          echo "update=true" >> "$GITHUB_OUTPUT"
+          echo "current_version=$GHOTEN_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$OBJECT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Update pinned OpenTofu version
+        if: steps.upstream.outputs.update == 'true'
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("ghoten.env")
+          lines = path.read_text().splitlines()
+          replacements = {
+              "GHOTEN_VERSION": os.environ["VERSION"],
+              "OPENTOFU_REF": os.environ["TAG"],
+              "OPENTOFU_COMMIT": os.environ["COMMIT"],
+          }
+
+          seen = set()
+          updated = []
+          for line in lines:
+              key = line.split("=", 1)[0] if "=" in line else None
+              if key in replacements:
+                  updated.append(f"{key}={replacements[key]}")
+                  seen.add(key)
+              else:
+                  updated.append(line)
+
+          missing = replacements.keys() - seen
+          if missing:
+              raise SystemExit(f"Missing keys in ghoten.env: {', '.join(sorted(missing))}")
+
+          path.write_text("\n".join(updated) + "\n")
+          PY
+
+          cat ghoten.env
+
+      - name: Open update pull request
+        if: steps.upstream.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_VERSION: ${{ steps.upstream.outputs.current_version }}
+          VERSION: ${{ steps.upstream.outputs.version }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="deps/opentofu-v$VERSION"
+          EXISTING_PR="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state all \
+              --head "$BRANCH" \
+              --json number \
+              --jq '.[0].number // empty'
           )"
 
-          if [[ -z "$LATEST_VERSION" ]]; then
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "PR #$EXISTING_PR already exists for OpenTofu $VERSION; leaving it untouched."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add ghoten.env
+          git commit -m "build(deps): update OpenTofu to $VERSION"
+          git push origin "$BRANCH"
+
+          cat > /tmp/pr-body.md <<EOF
+          Updates the OpenTofu base from **$CURRENT_VERSION** to **$VERSION**.
+
+          - OpenTofu release: $TAG
+          - Pinned release commit: `$COMMIT`
+          - Updates `GHOTEN_VERSION`, `OPENTOFU_REF`, and `OPENTOFU_COMMIT` atomically
+          - Tracks only OpenTofu's globally latest stable SemVer line; fixes released for older lines are ignored
+          - Does not modify Ghoten patches automatically
+          - Does not merge or publish a Ghoten release automatically
+
+          The Verify workflow is the compatibility gate. If either Ghoten patch no longer applies to this OpenTofu release, this PR is expected to remain red until the patch is adapted.
+
+          Upstream release: https://github.com/opentofu/opentofu/releases/tag/$TAG
+          EOF
+
+          if ! PR_URL="$(
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base master \
+              --head "$BRANCH" \
+              --title "build(deps): update OpenTofu to $VERSION" \
+              --body-file /tmp/pr-body.md
+          )"; then
+            echo "::error::Could not create the OpenTofu update PR; removing the temporary branch."
+            git push origin --delete "$BRANCH" || true
+            exit 1
+          fi
+
+          # A missing label should not prevent the compatibility gate from running.
+          gh pr edit "$PR_URL" --add-label dependencies || \
+            echo "::warning::Could not add the dependencies label to $PR_URL."
+
+          # GITHUB_TOKEN pushes do not normally trigger workflows. Dispatch Verify
+          # explicitly against the exact update branch so the compatibility gate runs.
+          gh workflow run verify.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+          echo "Created $PR_URL"
+ |
+              sed 's/^v//' |
+              sort -V
+          )
+
+          if [[ "${#STABLE_VERSIONS[@]}" -eq 0 ]]; then
             echo "::error::Could not determine the latest stable OpenTofu release."
             exit 1
           fi
+
+          LATEST_VERSION="${STABLE_VERSIONS[-1]}"
+          LATEST_SERIES="${LATEST_VERSION%.*}"
+          echo "Latest stable OpenTofu line: $LATEST_SERIES.x (latest=$LATEST_VERSION)"
 
           NEWEST="$(printf '%s\n%s\n' "$GHOTEN_VERSION" "$LATEST_VERSION" | sort -V | tail -n1)"
           if [[ "$NEWEST" != "$LATEST_VERSION" || "$LATEST_VERSION" == "$GHOTEN_VERSION" ]]; then
