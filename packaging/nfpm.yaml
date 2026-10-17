@@ -1,0 +1,29 @@
+# nFPM package configuration for Ghoten stable releases.
+#
+# VERSION is the Ghoten/OpenTofu compatibility version without a leading v.
+# GOARCH is amd64 or arm64; nFPM maps it to the native package architecture.
+name: ghoten
+arch: "${GOARCH}"
+version: "${VERSION}"
+maintainer: vmvarela <vmvarela@gmail.com>
+description: OpenTofu distribution with Smart Refresh and native ORAS state
+homepage: https://github.com/vmvarela/ghoten
+license: MPL-2.0
+
+contents:
+  - src: ./ghoten
+    dst: /usr/bin/ghoten
+    file_info:
+      mode: 0755
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/ghoten/copyright
+    packager: deb
+
+  - src: ./LICENSE
+    dst: /usr/share/licenses/ghoten/LICENSE
+    packager: rpm
+
+  - src: ./LICENSE
+    dst: /usr/share/licenses/ghoten/LICENSE
+    packager: apk
