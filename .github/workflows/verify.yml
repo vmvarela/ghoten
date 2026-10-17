@@ -29,3 +29,29 @@ jobs:
         env:
           GHOTEN_BIN: ${{ runner.temp }}/ghoten
         run: bash ./scripts/e2e-oras.sh
+
+      - name: Verify native package definition
+        env:
+          GHOTEN_BIN: ${{ runner.temp }}/ghoten
+        shell: bash
+        run: |
+          set -euo pipefail
+          NFPM_VERSION=2.45.1
+          curl --fail --silent --show-error --location \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            -o /tmp/nfpm.tar.gz
+          sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+
+          mkdir -p pkg-work/dist
+          cp "$GHOTEN_BIN" pkg-work/ghoten
+          cp LICENSE pkg-work/LICENSE
+
+          for packager in deb rpm apk; do
+            VERSION=0.0.0-test GOARCH=amd64 \
+              nfpm package \
+                -p "$packager" \
+                -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" \
+                -t "pkg-work/dist/"
+          done
+
+          test "$(find pkg-work/dist -maxdepth 1 -type f | wc -l)" -eq 3
