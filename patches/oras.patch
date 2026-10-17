@@ -807,7 +807,7 @@ diff --git a/internal/command/history.go b/internal/command/history.go
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/history.go
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,281 @@
 +package command
 +
 +import (
@@ -825,7 +825,15 @@ new file mode 100644
 +	"github.com/opentofu/opentofu/internal/states/statemgr"
 +)
 +
-+type HistoryCommand struct{}
++func HistoryCommander() Command {
++	return Command{
++		Name:     "history",
++		Short:    "Inspect retained ORAS state history",
++		Long:     "Inspect retained state versions when the active backend exposes the optional read-only history capability.",
++		Commands: []Command{HistoryListCommander(), HistoryShowCommander(), HistoryPullCommander()},
++	}
++}
+++type HistoryCommand struct{}
 +
 +func (c *HistoryCommand) Run(_ []string) int { return cli.RunResultHelp }
 +func (c *HistoryCommand) Synopsis() string   { return "Inspect retained ORAS state history" }
@@ -1080,6 +1088,17 @@ new file mode 100644
 +	fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 +	return 1
 +}
+diff --git a/internal/command/command.go b/internal/command/command.go
+--- a/internal/command/command.go
++++ b/internal/command/command.go
+@@ -247,6 +247,7 @@ func RootCommander(help *bool, ver *bool, chdir *string) Command {
+			DestroyCommander(),
+
+			// Other Commands
++			HistoryCommander(),
+			ConsoleCommander(),
+			WorkspaceCommander(true),
+			FmtCommander(nil),
 diff --git a/cmd/tofu/commands.go b/cmd/tofu/commands.go
 --- a/cmd/tofu/commands.go
 +++ b/cmd/tofu/commands.go
@@ -1148,7 +1167,6 @@ new file mode 100644
 +	cli.PositionalArg(&ret.Version, "version", false)
 +	return ret
 +}
-0
 diff --git a/internal/command/arguments/history_test.go b/internal/command/arguments/history_test.go
 new file mode 100644
 --- /dev/null
