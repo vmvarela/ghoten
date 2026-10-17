@@ -40,6 +40,7 @@ jobs:
           curl --fail --silent --show-error --location \
             "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
             -o /tmp/nfpm.tar.gz
+          echo "317b2747561b6329d6c5e1fe002a1a33f90b2c3c3da2b7b4fe4c3154e98c5ff8  /tmp/nfpm.tar.gz" | sha256sum --check -
           sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
 
           mkdir -p pkg-work/dist
