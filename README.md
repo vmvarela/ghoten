@@ -28,6 +28,25 @@ The separation is intentional:
 
 There is no maintained fork-wide source copy and no migration/generation layer.
 
+## Install
+
+Install the latest stable Ghoten release on Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/vmvarela/ghoten/master/scripts/install.sh | sh
+```
+
+The installer downloads the official release archive and `sha256sums.txt`, verifies the archive before extraction, and installs only the `ghoten` executable to `/usr/local/bin`.
+
+Pin an exact OpenTofu-compatible Ghoten version or choose another destination with environment variables:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/vmvarela/ghoten/master/scripts/install.sh -o /tmp/install-ghoten.sh
+VERSION=1.13.1 INSTALL_DIR="$HOME/.local/bin" sh /tmp/install-ghoten.sh
+```
+
+The installer supports Linux/macOS on amd64 and arm64. It never builds OpenTofu or applies patches locally.
+
 ## Build
 
 ```sh
