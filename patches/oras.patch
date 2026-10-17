@@ -833,7 +833,7 @@ new file mode 100644
 +		Commands: []Command{HistoryListCommander(), HistoryShowCommander(), HistoryPullCommander()},
 +	}
 +}
-++type HistoryCommand struct{}
++type HistoryCommand struct{}
 +
 +func (c *HistoryCommand) Run(_ []string) int { return cli.RunResultHelp }
 +func (c *HistoryCommand) Synopsis() string   { return "Inspect retained ORAS state history" }
