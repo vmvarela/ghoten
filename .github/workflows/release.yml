@@ -277,3 +277,122 @@ jobs:
           gh release upload "$TAG" artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+  package-native:
+    name: Package ${{ matrix.packager }} (${{ matrix.arch }})
+    needs: [verify, release]
+    if: needs.verify.outputs.prerelease == 'false' && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        packager: [deb, rpm, apk]
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghoten-linux-${{ matrix.arch }}
+          path: artifacts
+
+      - name: Install nFPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          NFPM_VERSION=2.45.1
+          curl --fail --silent --show-error --location \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            -o /tmp/nfpm.tar.gz
+          sudo tar -xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+          nfpm --version
+
+      - name: Stage package contents
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg-work/dist
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_${ARCH}.tar.gz" -C pkg-work
+          test -x pkg-work/ghoten
+          cp LICENSE pkg-work/LICENSE
+
+      - name: Build native package
+        working-directory: pkg-work
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          GOARCH: ${{ matrix.arch }}
+          PACKAGER: ${{ matrix.packager }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nfpm package \
+            -p "$PACKAGER" \
+            -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" \
+            -t dist/
+
+      - name: Upload native package
+        working-directory: pkg-work
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+  stable-checksums:
+    name: Final stable checksums
+    needs: [verify, release, package-native]
+    if: needs.verify.outputs.prerelease == 'false' && needs.release.result == 'success' && needs.package-native.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download immutable release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir assets \
+            --skip-existing
+          rm -f assets/sha256sums.txt
+
+      - name: Regenerate checksums for all stable assets
+        working-directory: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -maxdepth 1 -type f ! -name sha256sums.txt -printf '%f\n' |
+            LC_ALL=C sort |
+            xargs sha256sum > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Publish final checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" assets/sha256sums.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
