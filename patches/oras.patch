@@ -807,7 +807,7 @@ diff --git a/internal/command/history.go b/internal/command/history.go
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/history.go
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,280 @@
 +package command
 +
 +import (
@@ -1091,7 +1091,7 @@ new file mode 100644
 diff --git a/internal/command/command.go b/internal/command/command.go
 --- a/internal/command/command.go
 +++ b/internal/command/command.go
-@@ -247,6 +247,7 @@ func RootCommander(help *bool, ver *bool, chdir *string) Command {
+@@ -386,6 +386,7 @@ func RootCommander(help *bool, ver *bool, chdir *string) Command {
 			DestroyCommander(),
 
 			// Other Commands
