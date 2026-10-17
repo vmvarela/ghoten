@@ -1,4 +1,4 @@
-name: Migrate ORAS to oras-state
+name: Finalize ORAS migration
 
 on:
   workflow_dispatch:
@@ -7,24 +7,32 @@ on:
     paths:
       - scripts/migrate-oras-state.sh
       - .github/workflows/migrate-oras-state.yml
-      - ghoten.env
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: migrate-oras-state
+  group: finalize-oras-state
   cancel-in-progress: true
 
 jobs:
-  migrate:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: bash ./scripts/migrate-oras-state.sh
-      - uses: actions/upload-artifact@v6
-        if: always()
         with:
-          name: oras-next-patch
-          path: patches/oras-next.patch
-          if-no-files-found: ignore
+          fetch-depth: 0
+
+      - name: Generate and validate direct oras-state patch
+        run: bash ./scripts/migrate-oras-state.sh
+
+      - name: Pin patch and remove migration scaffolding
+        run: |
+          cp patches/oras-next.patch patches/oras.patch
+          rm -f patches/oras-next.patch
+          git rm scripts/migrate-oras-state.sh .github/workflows/migrate-oras-state.yml
+          git add patches/oras.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "refactor: consume oras-state directly"
+          git push origin HEAD:refactor/patch-distribution
