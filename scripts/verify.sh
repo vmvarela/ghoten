@@ -19,9 +19,23 @@ done
 
 (
   cd "$SRC"
-  GOWORK=off go test     ./internal/tofu     ./internal/states/...     ./internal/plans     ./internal/command/arguments     ./internal/command/views/...     ./internal/backend/local     ./internal/backend/remote-state/oras     ./internal/backend/init
+  GOWORK=off go test \
+    ./internal/tofu \
+    ./internal/states/... \
+    ./internal/plans \
+    ./internal/command/arguments \
+    ./internal/command/views/... \
+    ./internal/backend/local \
+    ./internal/backend/remote-state/oras \
+    ./internal/backend/init
 
   GOWORK=off go build -trimpath -o "$WORK/ghoten" ./cmd/tofu
 )
+
+if [[ -n "${GHOTEN_VERIFY_OUTPUT:-}" ]]; then
+  mkdir -p "$(dirname "$GHOTEN_VERIFY_OUTPUT")"
+  cp "$WORK/ghoten" "$GHOTEN_VERIFY_OUTPUT"
+  chmod +x "$GHOTEN_VERIFY_OUTPUT"
+fi
 
 echo "Verified Ghoten $GHOTEN_VERSION against OpenTofu $OPENTOFU_COMMIT"
