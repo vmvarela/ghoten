@@ -1,48 +1,44 @@
 diff --git a/go.mod b/go.mod
-index d5f7ac55b..9956386cb 100644
+index d5f7ac55b..c59026de1 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -89,6 +89,7 @@ require (
  	github.com/tencentyun/cos-go-sdk-v5 v0.7.70
  	github.com/ulikunitz/xz v0.5.16
  	github.com/urfave/cli/v3 v3.10.1
-+	github.com/vmvarela/ghoten-oras-backend v0.1.2-0.20261017053150-eaa5e0e5419e
++	github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
-@@ -104,7 +105,7 @@ require (
- 	golang.org/x/mod v0.39.0
- 	golang.org/x/net v0.57.0
- 	golang.org/x/oauth2 v0.36.0
--	golang.org/x/sync v0.22.0
-+	golang.org/x/sync v0.24.0
+@@ -108,6 +109,7 @@ require (
  	golang.org/x/sys v0.47.0
  	golang.org/x/term v0.45.0
  	golang.org/x/text v0.41.0
++	golang.org/x/time v0.15.0
+ 	google.golang.org/api v0.293.0
+ 	google.golang.org/grpc v1.83.1
+ 	google.golang.org/protobuf v1.36.12
+@@ -256,7 +258,6 @@ require (
+ 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+ 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
+ 	golang.org/x/exp/typeparams v0.0.0-20221208152030-732eee02a75a // indirect
+-	golang.org/x/time v0.15.0 // indirect
+ 	golang.org/x/tools v0.48.0 // indirect
+ 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
+ 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 diff --git a/go.sum b/go.sum
-index e87e6830c..41aade674 100644
+index e87e6830c..054736483 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -575,6 +575,8 @@ github.com/vmihailenco/msgpack/v5 v5.3.5 h1:5gO0H1iULLWGhs2H5tbAHIZTV8/cYafcFOr9
  github.com/vmihailenco/msgpack/v5 v5.3.5/go.mod h1:7xyJ9e+0+9SaZT0Wt1RGleJXzli6Q/V5KbhBonMG9jc=
  github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
  github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-+github.com/vmvarela/ghoten-oras-backend v0.1.2-0.20261017053150-eaa5e0e5419e h1:Vsm026PRNlaVxG31FiyC0ub8CdeE9QEzW/yvabbmXpA=
-+github.com/vmvarela/ghoten-oras-backend v0.1.2-0.20261017053150-eaa5e0e5419e/go.mod h1:Fj0p0vle8NdpsHgpeWRXua36lsCPvAS632jNurBYsV4=
++github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a h1:cgJbIvnF52WiGpOO6ZF+anVqx2x2x1bqrQtovrm9dMY=
++github.com/vmvarela/oras-state v0.0.0-20261017080938-4139317a545a/go.mod h1:58kVQvdKfOzwS9fskuDqWyalX+aJvJ7mEcTXYk+USDw=
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
-@@ -698,8 +700,8 @@ golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4/go.mod h1:RxMgew5VJxzue5/jJ
- golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
- golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
- golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
--golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
--golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
-+golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
-+golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
- golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
- golang.org/x/sys v0.0.0-20181116152217-5ac8a444bdc5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
- golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 diff --git a/internal/backend/init/init.go b/internal/backend/init/init.go
 index 15dc3cbfd..fb4c99d69 100644
 --- a/internal/backend/init/init.go
@@ -65,9 +61,10 @@ index 15dc3cbfd..fb4c99d69 100644
  		"s3":         func(enc encryption.StateEncryption) backend.Backend { return backendS3.New(enc) },
 diff --git a/internal/backend/remote-state/oras/backend.go b/internal/backend/remote-state/oras/backend.go
 new file mode 100644
+index 000000000..022fe4864
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/backend.go
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,372 @@
 +package oras
 +
 +import (
@@ -76,10 +73,12 @@ new file mode 100644
 +	"errors"
 +	"fmt"
 +	"os/exec"
++	"sort"
 +	"strings"
 +	"time"
 +
-+	oraslib "github.com/vmvarela/ghoten-oras-backend/backend/oras"
++	orasstate "github.com/vmvarela/oras-state"
++
 +	"github.com/opentofu/opentofu/internal/backend"
 +	"github.com/opentofu/opentofu/internal/command/cliconfig"
 +	"github.com/opentofu/opentofu/internal/command/cliconfig/ociauthconfig"
@@ -90,6 +89,7 @@ new file mode 100644
 +	"github.com/opentofu/opentofu/internal/states/remote"
 +	"github.com/opentofu/opentofu/internal/states/statemgr"
 +	"github.com/opentofu/opentofu/version"
++
 +	orasRegistry "oras.land/oras-go/v2/registry"
 +	orasRemote "oras.land/oras-go/v2/registry/remote"
 +	orasAuth "oras.land/oras-go/v2/registry/remote/auth"
@@ -107,9 +107,6 @@ new file mode 100644
 +	envVarMaxStateSize = "TF_BACKEND_ORAS_MAX_STATE_SIZE"
 +)
 +
-+// Backend implements the Openghoten backend interface for OCI registries
-+// using the ORAS (OCI Registry As Storage) protocol. It stores state as
-+// OCI artifacts and supports workspace management via manifest tags.
 +type Backend struct {
 +	*schema.Backend
 +	encryption encryption.StateEncryption
@@ -121,16 +118,15 @@ new file mode 100644
 +	lockTTL      time.Duration
 +	rateLimit    int
 +	rateBurst    int
-+	retryCfg     oraslib.RetryConfig
++	retryCfg     RetryConfig
 +	stateMaxSize int64
 +
 +	versioningMaxVersions int
 +
 +	orasCredsPolicy cliconfigORASCredentialsPolicy
-+	lib             oraslib.StateBackend
++	client          *orasstate.Client
 +}
 +
-+// New creates a new ORAS backend instance with the given state encryption.
 +func New(enc encryption.StateEncryption) backend.Backend {
 +	s := &schema.Backend{
 +		Schema: map[string]*schema.Schema{
@@ -144,7 +140,7 @@ new file mode 100644
 +				Type:        schema.TypeBool,
 +				Optional:    true,
 +				Default:     false,
-+				Description: "Skip TLS certificate verification when communicating with the OCI registry",
++				Description: "Use an insecure OCI registry connection",
 +			},
 +			"ca_file": {
 +				Type:        schema.TypeString,
@@ -179,7 +175,7 @@ new file mode 100644
 +				Type:        schema.TypeInt,
 +				Optional:    true,
 +				DefaultFunc: schema.EnvDefaultFunc(envVarLockTTL, 0),
-+				Description: "Lock TTL in seconds. When greater than 0, stale locks older than this are automatically cleared during lock acquisition. Set to 0 (default) to disable automatic stale lock clearing.",
++				Description: "Lock TTL in seconds. 0 disables automatic stale lock clearing.",
 +			},
 +			"rate_limit": {
 +				Type:        schema.TypeInt,
@@ -197,13 +193,13 @@ new file mode 100644
 +				Type:        schema.TypeInt,
 +				Optional:    true,
 +				Default:     0,
-+				Description: "Maximum number of historical state versions to retain. 0 disables versioning, >0 enables versioning with that retention limit.",
++				Description: "Maximum number of historical state versions to retain. 0 disables versioning.",
 +			},
 +			"max_state_size": {
 +				Type:        schema.TypeInt,
 +				Optional:    true,
 +				DefaultFunc: schema.EnvDefaultFunc(envVarMaxStateSize, 0),
-+				Description: "Maximum state size in bytes that may be read from the registry. Defaults to 268435456 (256 MiB). Set to 0 to use the default. Can also be set via TF_BACKEND_ORAS_MAX_STATE_SIZE env var.",
++				Description: "Maximum state size in bytes. 0 uses the 256 MiB default.",
 +			},
 +		},
 +	}
@@ -237,10 +233,7 @@ new file mode 100644
 +	if b.compression == "" {
 +		b.compression = "none"
 +	}
-+	switch b.compression {
-+	case "none", "gzip":
-+		// ok
-+	default:
++	if b.compression != "none" && b.compression != "gzip" {
 +		return fmt.Errorf("unsupported compression %q (supported: none, gzip)", b.compression)
 +	}
 +
@@ -250,43 +243,33 @@ new file mode 100644
 +	}
 +	b.lockTTL = time.Duration(lockTTLSeconds) * time.Second
 +
-+	rateLimit := data.Get("rate_limit").(int)
-+	rateBurst := data.Get("rate_limit_burst").(int)
-+	if rateLimit < 0 {
++	b.rateLimit = data.Get("rate_limit").(int)
++	b.rateBurst = data.Get("rate_limit_burst").(int)
++	if b.rateLimit < 0 {
 +		return fmt.Errorf("rate_limit must be non-negative")
 +	}
-+	if rateBurst < 0 {
++	if b.rateBurst < 0 {
 +		return fmt.Errorf("rate_limit_burst must be non-negative")
 +	}
-+	b.rateLimit = rateLimit
-+	b.rateBurst = rateBurst
 +
-+	// Retry behavior (match HTTP backend semantics: retry_max is number of retries).
 +	retryMax := data.Get("retry_max").(int)
 +	retryWaitMin := time.Duration(data.Get("retry_wait_min").(int)) * time.Second
 +	retryWaitMax := time.Duration(data.Get("retry_wait_max").(int)) * time.Second
-+
-+	retryCfg := oraslib.RetryConfig{
-+		MaxAttempts:       retryMax + 1,
++	b.retryCfg = RetryConfig{
++		MaxAttempts:       max(retryMax+1, 1),
 +		InitialBackoff:    retryWaitMin,
 +		MaxBackoff:        retryWaitMax,
-+		BackoffMultiplier: 2.0,
++		BackoffMultiplier: 2,
 +	}
-+	if retryCfg.MaxAttempts < 1 {
-+		retryCfg.MaxAttempts = 1
++	if b.retryCfg.InitialBackoff <= 0 {
++		b.retryCfg.InitialBackoff = time.Second
 +	}
-+	if retryCfg.InitialBackoff <= 0 {
-+		retryCfg.InitialBackoff = time.Second
++	if b.retryCfg.MaxBackoff > 0 && b.retryCfg.MaxBackoff < b.retryCfg.InitialBackoff {
++		b.retryCfg.MaxBackoff = b.retryCfg.InitialBackoff
 +	}
-+	if retryCfg.MaxBackoff > 0 && retryCfg.MaxBackoff < retryCfg.InitialBackoff {
-+		retryCfg.MaxBackoff = retryCfg.InitialBackoff
-+	}
-+	b.retryCfg = retryCfg
 +
-+	// State versioning: max_versions > 0 enables versioning
 +	b.versioningMaxVersions = max(data.Get("max_versions").(int), 0)
 +
-+	// State read size limit: 0 means use the built-in default (256 MiB).
 +	maxStateSize := data.Get("max_state_size").(int)
 +	if maxStateSize < 0 {
 +		return fmt.Errorf("max_state_size must be non-negative")
@@ -308,26 +291,30 @@ new file mode 100644
 +		return err
 +	}
 +
-+	libCfg := oraslib.Config{
-+		Repository:   b.repository,
-+		Insecure:     b.insecure,
-+		CAFile:       b.caFile,
-+		Compression:  b.compression,
-+		LockTTL:      b.lockTTL,
-+		RateLimit:    b.rateLimit,
-+		RateBurst:    b.rateBurst,
-+		Retry:        b.retryCfg,
-+		MaxStateSize: b.stateMaxSize,
-+		MaxVersions:  b.versioningMaxVersions,
-+		UserAgent:    httpclient.OpenTofuUserAgent(version.Version),
++	httpClient, err := newHTTPClient(b.insecure, b.caFile, b.rateLimit, b.rateBurst)
++	if err != nil {
++		return err
++	}
++
++	cfg := orasstate.Config{
++		WorkspaceLayout: orasstate.WorkspaceLayoutLegacy,
++		PlainHTTP:       b.insecure,
++		TLSSkipVerify:   b.insecure,
++		CAFile:          b.caFile,
++		Compression:     b.compression == "gzip",
++		LockTTL:         b.lockTTL,
++		MaxVersions:     b.versioningMaxVersions,
++		MaxStateSize:    b.stateMaxSize,
++		HTTPClient:      httpClient,
++		UserAgent:       httpclient.OpenTofuUserAgent(version.Version),
 +	}
 +	if credFunc != nil {
-+		libCfg.CredentialFunc = func(ctx context.Context, hostport string) (oraslib.Credential, error) {
++		cfg.CredentialFunc = func(ctx context.Context, hostport string) (orasstate.Credential, error) {
 +			cred, err := credFunc(ctx, hostport)
 +			if err != nil {
-+				return oraslib.Credential{}, err
++				return orasstate.Credential{}, err
 +			}
-+			return oraslib.Credential{
++			return orasstate.Credential{
 +				Username:    cred.Username,
 +				Password:    cred.Password,
 +				AccessToken: cred.AccessToken,
@@ -335,34 +322,48 @@ new file mode 100644
 +		}
 +	}
 +
-+	b.lib, err = oraslib.New(ctx, libCfg)
++	b.client, err = orasstate.NewClient(ref.Registry, ref.Repository, cfg)
 +	return err
 +}
 +
-+func (b *Backend) StateMgr(ctx context.Context, workspace string) (statemgr.Full, error) {
-+	if b.lib == nil {
++func (b *Backend) StateMgr(_ context.Context, workspace string) (statemgr.Full, error) {
++	if b.client == nil {
 +		return nil, fmt.Errorf("backend is not configured")
 +	}
-+	mgr, err := b.lib.StateMgr(ctx, workspace)
-+	if err != nil {
-+		return nil, err
-+	}
-+	client := &RemoteClient{mgr: mgr}
++	client := &RemoteClient{client: b.client, workspace: workspace, retryCfg: b.retryCfg}
 +	return remote.NewState(client, b.encryption), nil
 +}
 +
 +func (b *Backend) Workspaces(ctx context.Context) ([]string, error) {
-+	if b.lib == nil {
++	if b.client == nil {
 +		return nil, fmt.Errorf("backend is not configured")
 +	}
-+	return b.lib.Workspaces(ctx)
++	workspaces, err := withRetry(ctx, b.retryCfg, func(ctx context.Context) ([]string, error) {
++		return b.client.List(ctx)
++	})
++	if err != nil {
++		return nil, err
++	}
++	for _, workspace := range workspaces {
++		if workspace == backend.DefaultStateName {
++			return workspaces, nil
++		}
++	}
++	workspaces = append(workspaces, backend.DefaultStateName)
++	sort.Strings(workspaces)
++	return workspaces, nil
 +}
 +
-+func (b *Backend) DeleteWorkspace(ctx context.Context, name string, force bool) error {
-+	if b.lib == nil {
++func (b *Backend) DeleteWorkspace(ctx context.Context, name string, _ bool) error {
++	if b.client == nil {
 +		return fmt.Errorf("backend is not configured")
 +	}
-+	return b.lib.DeleteWorkspace(ctx, name, force)
++	if name == backend.DefaultStateName || name == "" {
++		return fmt.Errorf("can't delete default state")
++	}
++	return withRetryNoResult(ctx, b.retryCfg, func(ctx context.Context) error {
++		return b.client.DeleteWorkspace(ctx, name)
++	})
 +}
 +
 +type cliconfigORASCredentialsPolicy interface {
@@ -370,9 +371,6 @@ new file mode 100644
 +}
 +
 +type credentialFunc func(ctx context.Context, hostport string) (orasAuth.Credential, error)
-+
-+// Credentials
-+
 +
 +type realORASCredentialsPolicy struct {
 +	policy ociauthconfig.CredentialsConfigs
@@ -385,7 +383,6 @@ new file mode 100644
 +	}
 +	registryDomain := repo.Reference.Registry
 +	repositoryPath := repo.Reference.Repository
-+
 +	lookupEnv := dockerCredentialHelperEnv{}
 +
 +	return func(ctx context.Context, _ string) (orasAuth.Credential, error) {
@@ -408,8 +405,6 @@ new file mode 100644
 +
 +var _ ociauthconfig.CredentialsLookupEnvironment = dockerCredentialHelperEnv{}
 +
-+// credentialHelperTimeout is the maximum time allowed for a credential helper
-+// process to respond. A hung helper would otherwise block ghoten indefinitely.
 +const credentialHelperTimeout = 30 * time.Second
 +
 +func (dockerCredentialHelperEnv) QueryDockerCredentialHelper(ctx context.Context, helperName string, serverURL string) (ociauthconfig.DockerCredentialHelperGetResult, error) {
@@ -444,94 +439,262 @@ new file mode 100644
 +}
 diff --git a/internal/backend/remote-state/oras/client.go b/internal/backend/remote-state/oras/client.go
 new file mode 100644
+index 000000000..b7bf601b5
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/client.go
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,97 @@
 +package oras
 +
 +import (
 +	"context"
++	"crypto/md5"
 +	"errors"
 +
-+	oraslib "github.com/vmvarela/ghoten-oras-backend/backend/oras"
++	orasstate "github.com/vmvarela/oras-state"
++
 +	"github.com/opentofu/opentofu/internal/states/remote"
 +	"github.com/opentofu/opentofu/internal/states/statemgr"
 +)
 +
-+// RemoteClient adapts oraslib.StateMgr to ghoten's remote state interfaces.
 +type RemoteClient struct {
-+	mgr oraslib.StateMgr
++	client    *orasstate.Client
++	workspace string
++	retryCfg  RetryConfig
 +}
 +
 +var _ remote.Client = (*RemoteClient)(nil)
 +var _ remote.ClientLocker = (*RemoteClient)(nil)
 +
 +func (c *RemoteClient) Get(ctx context.Context) (*remote.Payload, error) {
-+	p, err := c.mgr.Get(ctx)
++	data, err := withRetry(ctx, c.retryCfg, func(ctx context.Context) ([]byte, error) {
++		return c.client.Get(ctx, c.workspace)
++	})
 +	if err != nil {
 +		return nil, err
 +	}
-+	if p == nil {
-+		return nil, nil //nolint:nilnil
++	if data == nil {
++		return nil, nil
 +	}
-+	return &remote.Payload{MD5: p.MD5, Data: p.Data}, nil
++	sum := md5.Sum(data)
++	return &remote.Payload{MD5: sum[:], Data: data}, nil
 +}
 +
 +func (c *RemoteClient) Put(ctx context.Context, data []byte) error {
-+	return c.mgr.Put(ctx, data)
++	if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++		return c.client.Put(ctx, c.workspace, data)
++	}); err != nil {
++		return err
++	}
++	c.client.WaitForRetention()
++	return nil
 +}
 +
 +func (c *RemoteClient) Delete(ctx context.Context) error {
-+	return c.mgr.Delete(ctx)
++	return withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++		return c.client.Delete(ctx, c.workspace)
++	})
 +}
 +
 +func (c *RemoteClient) Lock(ctx context.Context, info *statemgr.LockInfo) (string, error) {
-+	id, err := c.mgr.Lock(ctx, toLockInfo(info))
-+	if err != nil {
-+		var lockErr *oraslib.LockError
-+		if errors.As(err, &lockErr) {
-+			return "", &statemgr.LockError{
-+				Info:             fromLockInfo(lockErr.Info),
-+				Err:              lockErr.Err,
-+				InconsistentRead: lockErr.InconsistentRead,
++	shared := orasstate.LockInfo{}
++	if info != nil {
++		shared = orasstate.LockInfo{
++			ID:        info.ID,
++			Operation: info.Operation,
++			Info:      info.Info,
++			Who:       info.Who,
++			Version:   info.Version,
++			Created:   info.Created,
++			Path:      info.Path,
++		}
++	}
++
++	id, err := withRetry(ctx, c.retryCfg, func(ctx context.Context) (string, error) {
++		return c.client.Lock(ctx, c.workspace, shared)
++	})
++	if err == nil {
++		return id, nil
++	}
++
++	var lockErr *orasstate.LockError
++	if errors.As(err, &lockErr) {
++		var lockInfo *statemgr.LockInfo
++		if lockErr.Info != nil {
++			lockInfo = &statemgr.LockInfo{
++				ID:        lockErr.Info.ID,
++				Operation: lockErr.Info.Operation,
++				Info:      lockErr.Info.Info,
++				Who:       lockErr.Info.Who,
++				Version:   lockErr.Info.Version,
++				Created:   lockErr.Info.Created,
++				Path:      lockErr.Info.Path,
 +			}
 +		}
-+		return "", err
++		return "", &statemgr.LockError{Info: lockInfo, Err: lockErr.Err}
 +	}
-+	return id, nil
++	return "", err
 +}
 +
 +func (c *RemoteClient) Unlock(ctx context.Context, id string) error {
-+	return c.mgr.Unlock(ctx, id)
++	return withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++		return c.client.Unlock(ctx, c.workspace, id)
++	})
++}
+diff --git a/internal/backend/remote-state/oras/retry.go b/internal/backend/remote-state/oras/retry.go
+new file mode 100644
+index 000000000..33c9cde62
+--- /dev/null
++++ b/internal/backend/remote-state/oras/retry.go
+@@ -0,0 +1,97 @@
++package oras
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/http"
++	"strings"
++	"time"
++
++	orasErrcode "oras.land/oras-go/v2/registry/remote/errcode"
++)
++
++type RetryConfig struct {
++	MaxAttempts       int
++	InitialBackoff    time.Duration
++	MaxBackoff        time.Duration
++	BackoffMultiplier float64
 +}
 +
++func withRetry[T any](ctx context.Context, cfg RetryConfig, operation func(context.Context) (T, error)) (T, error) {
++	var zero T
++	var lastErr error
++	if cfg.MaxAttempts <= 0 {
++		cfg.MaxAttempts = 1
++	}
++	backoff := cfg.InitialBackoff
++	if backoff <= 0 {
++		backoff = time.Second
++	}
 +
-+func toLockInfo(info *statemgr.LockInfo) *oraslib.LockInfo {
-+	if info == nil {
-+		return nil
++	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
++		result, err := operation(ctx)
++		if err == nil {
++			return result, nil
++		}
++		lastErr = err
++		if ctx.Err() != nil {
++			return zero, ctx.Err()
++		}
++		if !isTransientError(err) {
++			return zero, err
++		}
++		if attempt == cfg.MaxAttempts {
++			break
++		}
++		select {
++		case <-ctx.Done():
++			return zero, ctx.Err()
++		case <-time.After(backoff):
++		}
++		backoff = time.Duration(float64(backoff) * cfg.BackoffMultiplier)
++		if cfg.MaxBackoff > 0 && backoff > cfg.MaxBackoff {
++			backoff = cfg.MaxBackoff
++		}
 +	}
-+	return &oraslib.LockInfo{
-+		ID:        info.ID,
-+		Operation: info.Operation,
-+		Info:      info.Info,
-+		Who:       info.Who,
-+		Version:   info.Version,
-+		Created:   info.Created,
-+		Path:      info.Path,
-+	}
++	return zero, lastErr
 +}
 +
-+func fromLockInfo(info *oraslib.LockInfo) *statemgr.LockInfo {
-+	if info == nil {
-+		return nil
++func withRetryNoResult(ctx context.Context, cfg RetryConfig, operation func(context.Context) error) error {
++	_, err := withRetry(ctx, cfg, func(ctx context.Context) (struct{}, error) {
++		return struct{}{}, operation(ctx)
++	})
++	return err
++}
++
++func isTransientError(err error) bool {
++	if err == nil {
++		return false
 +	}
-+	return &statemgr.LockInfo{
-+		ID:        info.ID,
-+		Operation: info.Operation,
-+		Info:      info.Info,
-+		Who:       info.Who,
-+		Version:   info.Version,
-+		Created:   info.Created,
-+		Path:      info.Path,
++	var errResp *orasErrcode.ErrorResponse
++	if errors.As(err, &errResp) {
++		switch errResp.StatusCode {
++		case http.StatusTooManyRequests, http.StatusRequestTimeout, http.StatusBadGateway,
++			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
++			return true
++		default:
++			return false
++		}
 +	}
++	var netErr net.Error
++	if errors.As(err, &netErr) {
++		return netErr.Timeout()
++	}
++	msg := strings.ToLower(err.Error())
++	return strings.Contains(msg, "connection reset") ||
++		strings.Contains(msg, "connection refused") ||
++		strings.Contains(msg, "i/o timeout") ||
++		strings.Contains(msg, "connection timeout") ||
++		strings.Contains(msg, "tls handshake timeout") ||
++		strings.Contains(msg, "context deadline exceeded") ||
++		strings.Contains(msg, "temporary failure in name resolution") ||
++		strings.Contains(msg, "no such host") ||
++		strings.Contains(msg, "unexpected eof") ||
++		strings.Contains(msg, "read: eof") ||
++		msg == "eof"
++}
+diff --git a/internal/backend/remote-state/oras/transport.go b/internal/backend/remote-state/oras/transport.go
+new file mode 100644
+index 000000000..d1fe7b683
+--- /dev/null
++++ b/internal/backend/remote-state/oras/transport.go
+@@ -0,0 +1,49 @@
++package oras
++
++import (
++	"context"
++	"net/http"
++
++	orasstate "github.com/vmvarela/oras-state"
++	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
++	"golang.org/x/time/rate"
++)
++
++func newHTTPClient(insecure bool, caFile string, rateLimit, rateBurst int) (*http.Client, error) {
++	client, err := orasstate.BuildHTTPClient(insecure, caFile)
++	if err != nil {
++		return nil, err
++	}
++
++	var rt http.RoundTripper = client.Transport
++	if rateLimit > 0 {
++		burst := rateBurst
++		if burst <= 0 {
++			burst = 1
++		}
++		rt = &rateLimitedRoundTripper{
++			limiter: rate.NewLimiter(rate.Limit(rateLimit), burst),
++			inner:   rt,
++		}
++	}
++	client.Transport = otelhttp.NewTransport(rt)
++	return client, nil
++}
++
++type requestLimiter interface {
++	Wait(context.Context) error
++}
++
++type rateLimitedRoundTripper struct {
++	limiter requestLimiter
++	inner   http.RoundTripper
++}
++
++func (rt *rateLimitedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
++	if rt.limiter != nil {
++		if err := rt.limiter.Wait(req.Context()); err != nil {
++			return nil, err
++		}
++	}
++	return rt.inner.RoundTrip(req)
 +}
