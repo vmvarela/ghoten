@@ -58,6 +58,7 @@ done < "$ROOT/patches/smart-refresh-series.txt"
 # edit the exact 1.13.0 structures rather than copying fork-era source files.
 python3 "$ROOT/scripts/port-compat.py" "$BASE"
 python3 "$ROOT/scripts/port-plumbing.py" "$BASE"
+python3 "$ROOT/scripts/port-smart-refresh-tests.py" "$BASE"
 
 # countHook embeds tofu.NilHook, so the new hook method is inherited.
 
@@ -69,6 +70,9 @@ gofmt -w \
   "$BASE/internal/states/statefile/version4.go" \
   "$BASE/internal/command/arguments/extended.go" \
   "$BASE/internal/command/arguments/apply.go" \
+  "$BASE/internal/command/arguments/apply_test.go" \
+  "$BASE/internal/command/arguments/plan_test.go" \
+  "$BASE/internal/command/arguments/ghoten_smart_refresh_test.go" \
   "$BASE/internal/command/views/hook_count.go" \
   "$BASE/internal/backend/backend.go" \
   "$BASE/internal/backend/local/backend_local.go" \
