@@ -47,6 +47,12 @@ curl -sSfL https://raw.githubusercontent.com/vmvarela/ghoten/master/scripts/inst
 
 Supported installer targets are Linux amd64/arm64 and macOS amd64/arm64. Windows uses the published ZIP artifact.
 
+Homebrew users can install the same stable release artifacts through the maintained tap:
+
+```sh
+brew install vmvarela/tap/ghoten
+```
+
 ## Build
 
 ```sh
