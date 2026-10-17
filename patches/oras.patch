@@ -887,7 +887,7 @@ new file mode 100644
 +		return historyCommandError(err)
 +	}
 +
-+	if args.View.ViewType == arguments.ViewJSON {
++	if args.JSON {
 +		enc := json.NewEncoder(os.Stdout)
 +		enc.SetIndent("", "  ")
 +		if err := enc.Encode(versions); err != nil {
@@ -945,7 +945,7 @@ new file mode 100644
 +		return historyCommandError(fmt.Errorf("historical state version %d is not valid JSON", version))
 +	}
 +
-+	if args.View.ViewType == arguments.ViewJSON {
++	if args.JSON {
 +		_, _ = os.Stdout.Write(data)
 +		if len(data) == 0 || data[len(data)-1] != '\n' {
 +			fmt.Fprintln(os.Stdout)
@@ -1112,37 +1112,40 @@ diff --git a/internal/command/arguments/history.go b/internal/command/arguments/
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/arguments/history.go
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,36 @@
 +package arguments
 +
 +type HistoryList struct {
-+	View *View
++	JSON bool
 +}
 +
 +func BindHistoryList(cli *CommandLine) *HistoryList {
-+	return &HistoryList{View: BindView(cli, viewFlagJson)}
++	ret := &HistoryList{}
++	cli.BoolVar(&ret.JSON, "json", false, "Produce machine-readable JSON output.")
++	return ret
 +}
 +
 +type HistoryShow struct {
-+	View    *View
++	JSON    bool
 +	Version string
 +}
 +
 +func BindHistoryShow(cli *CommandLine) *HistoryShow {
-+	ret := &HistoryShow{View: BindView(cli, viewFlagJson)}
++	ret := &HistoryShow{}
++	cli.BoolVar(&ret.JSON, "json", false, "Produce machine-readable JSON output.")
 +	cli.PositionalArg(&ret.Version, "version", false)
 +	return ret
 +}
 +
 +type HistoryPull struct {
-+	View    *View
 +	Version string
 +	Output  string
 +}
 +
 +func BindHistoryPull(cli *CommandLine) *HistoryPull {
-+	ret := &HistoryPull{View: BindView(cli, viewFlagNone)}
++	ret := &HistoryPull{}
 +	cli.StringVar(&ret.Output, "output", "", "Write the historical state to this new file.").SetDisplay("=path")
 +	cli.PositionalArg(&ret.Version, "version", false)
 +	return ret
 +}
+0
