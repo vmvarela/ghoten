@@ -214,7 +214,12 @@ jobs:
 
   release:
     name: Publish ${{ needs.verify.outputs.tag }}
-    needs: [verify, build]
+    needs: [verify, build, package-native]
+    if: >-
+      always()
+      && needs.verify.result == 'success'
+      && needs.build.result == 'success'
+      && (needs.verify.outputs.prerelease == 'true' || needs.package-native.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -280,8 +285,8 @@ jobs:
 
   package-native:
     name: Package ${{ matrix.packager }} (${{ matrix.arch }})
-    needs: [verify, release]
-    if: needs.verify.outputs.prerelease == 'false' && needs.release.result == 'success'
+    needs: [verify, build]
+    if: needs.verify.outputs.prerelease == 'false' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -339,60 +344,9 @@ jobs:
             -f "$GITHUB_WORKSPACE/packaging/nfpm.yaml" \
             -t dist/
 
-      - name: Upload native package
-        working-directory: pkg-work
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.verify.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-  stable-checksums:
-    name: Final stable checksums
-    needs: [verify, release, package-native]
-    if: needs.verify.outputs.prerelease == 'false' && needs.release.result == 'success' && needs.package-native.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download immutable release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.verify.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir assets
-          gh release download "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir assets \
-            --skip-existing
-          rm -f assets/sha256sums.txt
-
-      - name: Regenerate checksums for all stable assets
-        working-directory: assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          find . -maxdepth 1 -type f ! -name sha256sums.txt -printf '%f\n' |
-            LC_ALL=C sort |
-            xargs sha256sum > sha256sums.txt
-          cat sha256sums.txt
-
-      - name: Publish final checksums
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.verify.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" assets/sha256sums.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghoten-${{ matrix.packager }}-${{ matrix.arch }}
+          path: pkg-work/dist/*
+          if-no-files-found: error
 
