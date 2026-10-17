@@ -33,7 +33,7 @@ while read -r from to; do
     -e 's/^+package ghoten$/+package tofu/' \
     "$raw" > "$patch"
   [[ -s "$patch" ]] || continue
-  echo "Applying Smart Refresh delta $n: $from -> $to"
+  echo "Applying Smart Refresh core delta $n: $from -> $to"
   if git -C "$BASE" apply --check "$patch"; then
     git -C "$BASE" apply "$patch"
   else
@@ -54,22 +54,48 @@ while read -r from to; do
   fi
 done < "$ROOT/patches/smart-refresh-series.txt"
 
-python3 "$ROOT/scripts/port-smart-refresh-state.py" "$BASE"
+# Port state/API and current OpenTofu CLI plumbing surgically. These scripts
+# edit the exact 1.13.0 structures rather than copying fork-era source files.
+python3 "$ROOT/scripts/port-compat.py" "$BASE"
+python3 "$ROOT/scripts/port-plumbing.py" "$BASE"
+
+# countHook must satisfy the extended Hook interface. Keep telemetry minimal;
+# the product feature is the skip decision itself, not UI counters.
 python3 - "$BASE" <<'PY'
 from pathlib import Path
 import sys
-root = Path(sys.argv[1])
-p = root / "internal/tofu/smart_refresh_fingerprint.go"
-s = p.read_text().replace("schema.ValueMarks(unmarked, nil)", "schema.ValueMarks(unmarked, nil, nil)")
-p.write_text(s)
+p=Path(sys.argv[1])/"internal/command/views/hook_count.go"
+s=p.read_text()
+if "PostSkipRefresh(" not in s:
+    marker="func (h *countHook) PostRefresh("
+    i=s.find(marker)
+    if i < 0:
+        raise SystemExit("hook_count.go: PostRefresh not found")
+     method='func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (tofu.HookAction, error) {\n\treturn tofu.HookActionContinue, nil\n}\n\n'
+    s=s[:i]+method+s[i:]
+    p.write_text(s)
 PY
 
-gofmt -w "$BASE/internal/tofu" "$BASE/internal/states/instance_object.go" "$BASE/internal/states/instance_object_src.go" "$BASE/internal/states/state_deepcopy.go" "$BASE/internal/states/statefile/version4.go"
+gofmt -w \
+  "$BASE/internal/tofu" \
+  "$BASE/internal/states/instance_object.go" \
+  "$BASE/internal/states/instance_object_src.go" \
+  "$BASE/internal/states/state_deepcopy.go" \
+  "$BASE/internal/states/statefile/version4.go" \
+  "$BASE/internal/command/arguments/extended.go" \
+  "$BASE/internal/command/arguments/apply.go" \
+  "$BASE/internal/command/views/hook_count.go" \
+  "$BASE/internal/backend/backend.go" \
+  "$BASE/internal/backend/local/backend_local.go" \
+  "$BASE/internal/command/apply.go" \
+  "$BASE/internal/command/plan.go"
+
 (
   cd "$BASE"
-  GOWORK=off go test ./internal/tofu ./internal/states/... ./internal/plans ./internal/command/arguments ./internal/command/views/...
+  GOWORK=off go test ./internal/tofu ./internal/states/... ./internal/plans ./internal/command/arguments ./internal/command/views/... ./internal/backend/local
   GOWORK=off go build -trimpath -o "$WORK/ghoten-smart" ./cmd/tofu
 )
+
 git -C "$BASE" diff --binary "$OPENTOFU_COMMIT" -- internal > "$ROOT/patches/smart-refresh.patch"
 test -s "$ROOT/patches/smart-refresh.patch"
 echo "Generated patches/smart-refresh.patch"
