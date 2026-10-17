@@ -807,7 +807,7 @@ diff --git a/internal/command/history.go b/internal/command/history.go
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/history.go
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,272 @@
 +package command
 +
 +import (
@@ -843,6 +843,19 @@ new file mode 100644
 +`)
 +}
 +
++func normalizeHistoryArgs(args []string) []string {
++	normalized := append([]string(nil), args...)
++	for i, arg := range normalized {
++		if arg == "--" {
++			break
++		}
++		if strings.HasPrefix(arg, "--") {
++			normalized[i] = "-" + strings.TrimPrefix(arg, "--")
++		}
++	}
++	return normalized
++}
++
 +func HistoryListCommander() Command {
 +	cmd := Command{Name: "list", Short: "List retained state versions", Long: "List retained versions for the current workspace."}
 +	args := arguments.BindHistoryList(&cmd.CommandLine)
@@ -862,8 +875,7 @@ new file mode 100644
 +`)
 +}
 +func (c *HistoryListCommand) Run(rawArgs []string) int {
-+	cmd := HistoryListCommander()
-+	return RunCli("", cmd, c.Meta, cmd.CommandLine.ParseDirect(c.CommandContext(), rawArgs))
++	return RunCommand(HistoryListCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
 +}
 +func (c HistoryListCommand) Execute(args *arguments.HistoryList) int {
 +	ctx, history, err := loadStateHistory(c.Meta)
@@ -914,8 +926,7 @@ new file mode 100644
 +`)
 +}
 +func (c *HistoryShowCommand) Run(rawArgs []string) int {
-+	cmd := HistoryShowCommander()
-+	return RunCli("", cmd, c.Meta, cmd.CommandLine.ParseDirect(c.CommandContext(), rawArgs))
++	return RunCommand(HistoryShowCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
 +}
 +func (c HistoryShowCommand) Execute(args *arguments.HistoryShow) int {
 +	version, err := parseHistoryVersion(args.Version)
@@ -989,8 +1000,7 @@ new file mode 100644
 +`)
 +}
 +func (c *HistoryPullCommand) Run(rawArgs []string) int {
-+	cmd := HistoryPullCommander()
-+	return RunCli("", cmd, c.Meta, cmd.CommandLine.ParseDirect(c.CommandContext(), rawArgs))
++	return RunCommand(HistoryPullCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
 +}
 +func (c HistoryPullCommand) Execute(args *arguments.HistoryPull) int {
 +	if strings.TrimSpace(args.Output) == "" {
