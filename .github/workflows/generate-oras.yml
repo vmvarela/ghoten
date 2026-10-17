@@ -1,0 +1,26 @@
+name: Generate ORAS patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [refactor/patch-distribution]
+    paths:
+      - ghoten.env
+      - scripts/generate-oras.sh
+      - .github/workflows/generate-oras.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./scripts/generate-oras.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: oras-patch
+          path: patches/oras.patch
+          if-no-files-found: ignore
