@@ -53,16 +53,18 @@ rewrite("internal/states/statefile/version4.go", [
 fingerprint = root / "internal/tofu/smart_refresh_fingerprint.go"
 text = fingerprint.read_text()
 old = "schema.ValueMarks(unmarked, nil)"
-if old not in text:\n    raise SystemExit("smart_refresh_fingerprint.go: ValueMarks call not found")
+if old not in text:
+    raise SystemExit("smart_refresh_fingerprint.go: ValueMarks call not found")
 fingerprint.write_text(text.replace(old, "schema.ValueMarks(unmarked, nil, nil)", 1))
 
 # MockHook is production package code despite being a mock helper, so it must satisfy the extended Hook interface.
 hook_mock = root / "internal/tofu/hook_mock.go"
 text = hook_mock.read_text()
 if "func (h *MockHook) PostSkipRefresh(" not in text:
-    marker = "\\nfunc (h *MockHook) Stopping() {"
-    method = "\\nfunc (h *MockHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {\\n\\treturn HookActionContinue, nil\\n}\\n"
-    if marker not in text:\n        raise SystemExit("hook_mock.go: Stopping marker not found")
+    marker = "\nfunc (h *MockHook) Stopping() {"
+    method = "\nfunc (h *MockHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {\n\treturn HookActionContinue, nil\n}\n"
+    if marker not in text:
+        raise SystemExit("hook_mock.go: Stopping marker not found")
     hook_mock.write_text(text.replace(marker, method + marker, 1))
 
 # Reuse OpenTofu's existing user-agent helper instead of pulling fork-wide HTTP branding into the patch.
