@@ -1,13 +1,10 @@
-.PHONY: patch build verify clean
-
-patch:
-	./scripts/generate-patch.sh
+.PHONY: build verify clean
 
 build:
 	./scripts/build.sh
 
-verify: patch build
+verify:
+	bash ./scripts/verify.sh
 
 clean:
 	rm -rf dist
-	rm -f patches/ghoten.patch
