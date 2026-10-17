@@ -2,6 +2,20 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Release type"
+        required: true
+        default: prerelease
+        type: choice
+        options:
+          - prerelease
+          - stable
+      prerelease_suffix:
+        description: "Prerelease suffix, for example rc.1 (ignored for stable releases)"
+        required: false
+        default: "rc.1"
+        type: string
 
 permissions:
   contents: read
@@ -18,15 +32,20 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: master
           fetch-depth: 0
 
-      - name: Validate pinned version
+      - name: Validate pinned version and release type
         id: version
         shell: bash
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          PRERELEASE_SUFFIX: ${{ inputs.prerelease_suffix }}
         run: |
           source ./ghoten.env
 
@@ -35,14 +54,46 @@ jobs:
             exit 1
           fi
 
-          TAG="v$GHOTEN_VERSION"
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists. Update ghoten.env to a new OpenTofu version before releasing."
+          if [[ ! "$GHOTEN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::GHOTEN_VERSION must be a stable OpenTofu semantic version, got: $GHOTEN_VERSION"
             exit 1
           fi
 
-          echo "version=$GHOTEN_VERSION" >> "$GITHUB_OUTPUT"
+          case "$RELEASE_TYPE" in
+            stable)
+              VERSION="$GHOTEN_VERSION"
+              TAG="v$VERSION"
+              IS_PRERELEASE=false
+              ;;
+            prerelease)
+              if [[ ! "$PRERELEASE_SUFFIX" =~ ^(alpha|beta|rc)\.[1-9][0-9]*$ ]]; then
+                echo "::error::Prerelease suffix must match alpha.N, beta.N, or rc.N (N >= 1)."
+                exit 1
+              fi
+              VERSION="$GHOTEN_VERSION-$PRERELEASE_SUFFIX"
+              TAG="v$VERSION"
+              IS_PRERELEASE=true
+              ;;
+            *)
+              echo "::error::Unsupported release type: $RELEASE_TYPE"
+              exit 1
+              ;;
+          esac
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists."
+            exit 1
+          fi
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Ghoten release: $TAG"
+          echo "OpenTofu base: $OPENTOFU_REF ($OPENTOFU_COMMIT)"
+          echo "Source commit: $SOURCE_SHA"
 
       - name: Verify patches and tests
         run: bash ./scripts/verify.sh
@@ -74,6 +125,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
 
       - uses: actions/setup-go@v7
         with:
@@ -113,7 +166,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish release
+    name: Publish ${{ needs.verify.outputs.tag }}
     needs: [verify, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -121,10 +174,6 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: master
-
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -135,20 +184,48 @@ jobs:
           cd artifacts
           sha256sum * > sha256sums.txt
 
-      - name: Publish prepared draft
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.verify.outputs.tag }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          IS_PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         shell: bash
         run: |
-          DRAFT_ID="$(
-            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100"               --jq '.[] | select(.draft == true) | .id' | head -n1
-          )"
-
-          if [[ -n "$DRAFT_ID" ]]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID"               -f tag_name="$TAG"               -f target_commitish="$GITHUB_SHA"               -f name="$TAG"               -F draft=false               -f make_latest=true >/dev/null
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            # Prereleases never consume the Release Drafter draft for the next stable release.
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease \
+              --latest=false
           else
-            gh release create "$TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$TAG"               --generate-notes
+            # Stable releases publish the prepared Release Drafter draft when available.
+            DRAFT_ID="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '.[] | select(.draft == true) | .id' | head -n1
+            )"
+
+            if [[ -n "$DRAFT_ID" ]]; then
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" \
+                -f tag_name="$TAG" \
+                -f target_commitish="$SOURCE_SHA" \
+                -f name="$TAG" \
+                -F draft=false \
+                -F prerelease=false \
+                -f make_latest=true >/dev/null
+            else
+              gh release create "$TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$SOURCE_SHA" \
+                --title "$TAG" \
+                --generate-notes \
+                --latest
+            fi
           fi
 
-          gh release upload "$TAG" artifacts/*             --repo "$GITHUB_REPOSITORY"             --clobber
+          gh release upload "$TAG" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
