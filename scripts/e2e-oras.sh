@@ -168,6 +168,27 @@ if "one" not in json.dumps(state):
     raise SystemExit("history pull did not write version 1 state")
 PY
 
+HISTORY_MODE="$(stat -c '%a' "$HISTORY_FILE")"
+if [[ "$HISTORY_MODE" != "600" ]]; then
+  echo "ERROR: history pull created $HISTORY_FILE with mode $HISTORY_MODE, expected 600." >&2
+  exit 1
+fi
+
+printf 'do-not-overwrite' > "$HISTORY_FILE"
+set +e
+OVERWRITE_OUTPUT="$("$GHOTEN_BIN" -chdir="$READER" history pull --output "$HISTORY_FILE" 1 2>&1)"
+OVERWRITE_STATUS=$?
+set -e
+if [[ "$OVERWRITE_STATUS" -eq 0 ]]; then
+  echo "ERROR: history pull overwrote an existing file." >&2
+  exit 1
+fi
+if [[ "$(cat "$HISTORY_FILE")" != "do-not-overwrite" ]]; then
+  echo "ERROR: failed history pull modified the existing output file." >&2
+  printf '%s\n' "$OVERWRITE_OUTPUT" >&2
+  exit 1
+fi
+
 LOCAL="$WORK/local"
 mkdir -p "$LOCAL"
 cat > "$LOCAL/main.tf" <<'HCL'
