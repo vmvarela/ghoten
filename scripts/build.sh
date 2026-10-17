@@ -5,11 +5,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT/ghoten.env"
 
-PATCH="$ROOT/patches/ghoten.patch"
-if [[ ! -s "$PATCH" ]]; then
-  echo "ERROR: $PATCH is missing. Run ./scripts/generate-patch.sh first." >&2
-  exit 1
-fi
+PATCHES=(
+  "$ROOT/patches/smart-refresh.patch"
+  "$ROOT/patches/oras.patch"
+)
+
+for patch in "${PATCHES[@]}"; do
+  if [[ ! -s "$patch" ]]; then
+    echo "ERROR: missing patch: $patch" >&2
+    exit 1
+  fi
+done
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -24,13 +30,15 @@ if [[ "$actual" != "$OPENTOFU_COMMIT" ]]; then
   exit 1
 fi
 
-git -C "$SRC" apply --check "$PATCH"
-git -C "$SRC" apply "$PATCH"
+for patch in "${PATCHES[@]}"; do
+  git -C "$SRC" apply --check "$patch"
+  git -C "$SRC" apply "$patch"
+done
 
 mkdir -p "$ROOT/dist"
 (
   cd "$SRC"
-  go build -trimpath -o "$ROOT/dist/ghoten" ./cmd/tofu
+  GOWORK=off go build -trimpath -o "$ROOT/dist/ghoten" ./cmd/tofu
 )
 
 echo "Built dist/ghoten from OpenTofu $GHOTEN_VERSION"
