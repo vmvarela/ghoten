@@ -99,7 +99,7 @@ diff --git a/internal/backend/remote-state/oras/backend.go b/internal/backend/re
 new file mode 100644
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/backend.go
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,414 @@
 +package oras
 +
 +import (
