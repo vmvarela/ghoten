@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Validate pinned version
+        id: version
+        shell: bash
+        run: |
+          source ./ghoten.env
+
+          if [[ "$OPENTOFU_REF" != "v$GHOTEN_VERSION" ]]; then
+            echo "::error::GHOTEN_VERSION ($GHOTEN_VERSION) must match OPENTOFU_REF ($OPENTOFU_REF)."
+            exit 1
+          fi
+
+          TAG="v$GHOTEN_VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Update ghoten.env to a new OpenTofu version before releasing."
+            exit 1
+          fi
+
+          echo "version=$GHOTEN_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify patches and tests
+        run: bash ./scripts/verify.sh
+
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            archive: tar.gz
+          - os: linux
+            arch: arm64
+            archive: tar.gz
+          - os: darwin
+            arch: amd64
+            archive: tar.gz
+          - os: darwin
+            arch: arm64
+            archive: tar.gz
+          - os: windows
+            arch: amd64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: "auto"
+        run: bash ./scripts/build.sh
+
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          mkdir -p artifacts
+          BASENAME="ghoten_${VERSION}_${TARGET_OS}_${TARGET_ARCH}"
+
+          if [[ "$TARGET_OS" == "windows" ]]; then
+            mv dist/ghoten "dist/ghoten.exe"
+            (cd dist && zip "../artifacts/${BASENAME}.zip" ghoten.exe)
+          else
+            tar -C dist -czf "artifacts/${BASENAME}.tar.gz" ghoten
+          fi
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ghoten-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > sha256sums.txt
+
+      - name: Publish prepared draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        shell: bash
+        run: |
+          DRAFT_ID="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100"               --jq '.[] | select(.draft == true) | .id' | head -n1
+          )"
+
+          if [[ -n "$DRAFT_ID" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID"               -f tag_name="$TAG"               -f target_commitish="$GITHUB_SHA"               -f name="$TAG"               -F draft=false               -f make_latest=true >/dev/null
+          else
+            gh release create "$TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$TAG"               --generate-notes
+          fi
+
+          gh release upload "$TAG" artifacts/*             --repo "$GITHUB_REPOSITORY"             --clobber
