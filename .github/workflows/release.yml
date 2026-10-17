@@ -59,6 +59,224 @@ jobs:
             exit 1
           fi
 
+          RELEASES_JSON="$(curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/opentofu/opentofu/releases?per_page=100")"
+
+          LATEST_VERSION="$(
+            jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' <<<"$RELEASES_JSON" |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+          case "$RELEASE_TYPE" in
+            stable)
+              VERSION="$GHOTEN_VERSION"
+              TAG="v$VERSION"
+              IS_PRERELEASE=false
+              ;;
+            prerelease)
+              if [[ ! "$PRERELEASE_SUFFIX" =~ ^(alpha|beta|rc)\.[1-9][0-9]*$ ]]; then
+                echo "::error::Prerelease suffix must match alpha.N, beta.N, or rc.N (N >= 1)."
+                exit 1
+              fi
+              VERSION="$GHOTEN_VERSION-$PRERELEASE_SUFFIX"
+              TAG="v$VERSION"
+              IS_PRERELEASE=true
+              ;;
+            *)
+              echo "::error::Unsupported release type: $RELEASE_TYPE"
+              exit 1
+              ;;
+          esac
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists."
+            exit 1
+          fi
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Ghoten release: $TAG"
+          echo "OpenTofu base: $OPENTOFU_REF ($OPENTOFU_COMMIT)"
+          echo "Source commit: $SOURCE_SHA"
+
+      - name: Verify patches and tests
+        env:
+          GHOTEN_VERIFY_OUTPUT: ${{ runner.temp }}/ghoten
+        run: bash ./scripts/verify.sh
+
+      - name: Verify ORAS backend lifecycle
+        env:
+          GHOTEN_BIN: ${{ runner.temp }}/ghoten
+        run: bash ./scripts/e2e-oras.sh
+
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            archive: tar.gz
+          - os: linux
+            arch: arm64
+            archive: tar.gz
+          - os: darwin
+            arch: amd64
+            archive: tar.gz
+          - os: darwin
+            arch: arm64
+            archive: tar.gz
+          - os: windows
+            arch: amd64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: "auto"
+        run: bash ./scripts/build.sh
+
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          mkdir -p artifacts
+          BASENAME="ghoten_${VERSION}_${TARGET_OS}_${TARGET_ARCH}"
+
+          if [[ "$TARGET_OS" == "windows" ]]; then
+            mv dist/ghoten "dist/ghoten.exe"
+            (cd dist && zip "../artifacts/${BASENAME}.zip" ghoten.exe)
+          else
+            tar -C dist -czf "artifacts/${BASENAME}.tar.gz" ghoten
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghoten-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish ${{ needs.verify.outputs.tag }}
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > sha256sums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          IS_PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        shell: bash
+        run: |
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            # Prereleases never consume the Release Drafter draft for the next stable release.
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease \
+              --latest=false
+          else
+            # Stable releases publish the prepared Release Drafter draft when available.
+            DRAFT_ID="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '.[] | select(.draft == true and .name == "Next Ghoten release") | .id' |
+                head -n1
+            )"
+
+            if [[ -n "$DRAFT_ID" ]]; then
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" \
+                -f tag_name="$TAG" \
+                -f target_commitish="$SOURCE_SHA" \
+                -f name="$TAG" \
+                -F draft=false \
+                -F prerelease=false \
+                -f make_latest=true >/dev/null
+            else
+              gh release create "$TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$SOURCE_SHA" \
+                --title "$TAG" \
+                --generate-notes \
+                --latest
+            fi
+          fi
+
+          gh release upload "$TAG" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+ |
+              sed 's/^v//' |
+              sort -V |
+              tail -n1
+          )"
+
+          if [[ -z "$LATEST_VERSION" ]]; then
+            echo "::error::Could not determine the latest stable OpenTofu release."
+            exit 1
+          fi
+          if [[ "$GHOTEN_VERSION" != "$LATEST_VERSION" ]]; then
+            echo "::error::Ghoten can only release against OpenTofu's globally latest stable version: pinned=$GHOTEN_VERSION, latest=$LATEST_VERSION."
+            exit 1
+          fi
+
+          UPSTREAM_COMMIT="$(
+            git ls-remote https://github.com/opentofu/opentofu.git "refs/tags/$OPENTOFU_REF^{}" |
+              awk 'NR == 1 { print $1 }'
+          )"
+          if [[ -z "$UPSTREAM_COMMIT" ]]; then
+            UPSTREAM_COMMIT="$(
+              git ls-remote https://github.com/opentofu/opentofu.git "refs/tags/$OPENTOFU_REF" |
+                awk 'NR == 1 { print $1 }'
+            )"
+          fi
+          if [[ -z "$UPSTREAM_COMMIT" ]]; then
+            echo "::error::Could not resolve upstream tag $OPENTOFU_REF."
+            exit 1
+          fi
+          if [[ "$OPENTOFU_COMMIT" != "$UPSTREAM_COMMIT" ]]; then
+            echo "::error::OPENTOFU_COMMIT does not match $OPENTOFU_REF: pinned=$OPENTOFU_COMMIT, upstream=$UPSTREAM_COMMIT."
+            exit 1
+          fi
+
           case "$RELEASE_TYPE" in
             stable)
               VERSION="$GHOTEN_VERSION"
