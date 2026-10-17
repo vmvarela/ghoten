@@ -30,6 +30,23 @@ import sys
 
 root = Path(sys.argv[1])
 
+# OpenTofu 1.13 exposes the credential lookup environment directly but does
+# not yet have Ghoten's cache wrapper. Use the native environment contract;
+# caching is an optimization, not part of auth semantics.
+backend = root / "internal/backend/remote-state/oras/backend.go"
+text = backend.read_text()
+text = re.sub(
+    r"\nconst \(\n\t// defaultDockerCredentialHelperCacheTTL[\s\S]*?\n\)\n",
+    "\n",
+    text,
+    count=1,
+)
+text = text.replace(
+    "lookupEnv := ociauthconfig.NewCachedCredentialsLookupEnv(dockerCredentialHelperEnv{}, defaultDockerCredentialHelperCacheTTL)",
+    "lookupEnv := dockerCredentialHelperEnv{}",
+)
+backend.write_text(text)
+
 # Retention is synchronous at the shared backend adapter boundary. Do not leak
 # a backend-specific capability into OpenTofu remote.Client.
 client = root / "internal/backend/remote-state/oras/client.go"
