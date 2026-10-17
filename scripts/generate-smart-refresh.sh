@@ -59,22 +59,7 @@ done < "$ROOT/patches/smart-refresh-series.txt"
 python3 "$ROOT/scripts/port-compat.py" "$BASE"
 python3 "$ROOT/scripts/port-plumbing.py" "$BASE"
 
-# countHook must satisfy the extended Hook interface. Keep telemetry minimal;
-# the product feature is the skip decision itself, not UI counters.
-python3 - "$BASE" <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1])/"internal/command/views/hook_count.go"
-s=p.read_text()
-if "PostSkipRefresh(" not in s:
-    marker="func (h *countHook) PostRefresh("
-    i=s.find(marker)
-    if i < 0:
-        raise SystemExit("hook_count.go: PostRefresh not found")
-    method='func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (tofu.HookAction, error) {\n\treturn tofu.HookActionContinue, nil\n}\n\n'
-    s=s[:i]+method+s[i:]
-    p.write_text(s)
-PY
+# countHook embeds tofu.NilHook, so the new hook method is inherited.
 
 gofmt -w \
   "$BASE/internal/tofu" \
