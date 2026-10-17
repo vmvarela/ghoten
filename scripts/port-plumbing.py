@@ -37,7 +37,7 @@ def extended(text):
     parse = '''\tcli.PreHook(func() tfdiags.Diagnostics {
 \t\tvar diags tfdiags.Diagnostics
 
-\t\to.refreshSet = refreshFlag.IsSet != nil && refreshFlag.IsSet()
+\t\to.RefreshExplicit = refreshFlag.IsSet != nil && refreshFlag.IsSet()
 \t\tswitch refreshRaw {
 \t\tcase "true":
 \t\t\to.RefreshMode = plans.RefreshAll
@@ -72,7 +72,7 @@ def extended(text):
     new = '''\t\tcase destroyRaw:
 \t\t\to.PlanMode = plans.DestroyMode
 \t\t\tif o.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif o.refreshSet {
+\t\t\t\tif o.RefreshExplicit {
 \t\t\t\t\tdiags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -destroy. Use -refresh=true."))
 \t\t\t\t} else {
 \t\t\t\t\to.RefreshMode = plans.RefreshAll
@@ -81,7 +81,7 @@ def extended(text):
 \t\tcase refreshOnlyRaw:
 \t\t\to.PlanMode = plans.RefreshOnlyMode
 \t\t\tif o.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif o.refreshSet {
+\t\t\t\tif o.RefreshExplicit {
 \t\t\t\t\tdiags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -refresh-only. Use -refresh=true."))
 \t\t\t\t} else {
 \t\t\t\t\to.RefreshMode = plans.RefreshAll
@@ -103,7 +103,7 @@ rel = "internal/command/arguments/apply.go"
 def apply_args(text):
     old = "\t\t\tapply.Operation.PlanMode = plans.DestroyMode\n"
     new = old + '''\t\t\tif apply.Operation.RefreshMode == plans.RefreshSmart {
-\t\t\t\tif apply.Operation.refreshSet {
+\t\t\t\tif apply.Operation.RefreshExplicit {
 \t\t\t\t\treturn tfdiags.New(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with destroy. Use -refresh=true."))
 \t\t\t\t}
 \t\t\t\tapply.Operation.RefreshMode = plans.RefreshAll
@@ -133,20 +133,22 @@ edit(rel, lambda t: replace_once(t,
     "\topReq.PlanRefresh = args.Refresh\n",
     "\topReq.PlanRefresh = args.Refresh\n\topReq.RefreshMode = args.RefreshMode\n", rel))
 
-# Extend the current Hook/NilHook/stopHook rather than copying old hook APIs.
+# Keep PostSkipRefresh optional: existing OpenTofu hooks must not be forced to
+# implement a Ghoten-specific telemetry method.
 rel = "internal/tofu/hook.go"
-def hook(text):
-    sig = "\tPostRefresh(addr addrs.AbsResourceInstance, gen states.Generation, priorState cty.Value, newState cty.Value) (HookAction, error)\n"
-    text = replace_once(text, sig, sig + "\tPostSkipRefresh(addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error)\n", rel)
-    nilsig = "func (*NilHook) PostRefresh(addr addrs.AbsResourceInstance, gen states.Generation, priorState cty.Value, newState cty.Value) (HookAction, error) {\n\treturn HookActionContinue, nil\n}\n"
-    return replace_once(text, nilsig, nilsig + "\nfunc (*NilHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {\n\treturn HookActionContinue, nil\n}\n", rel)
-edit(rel, hook)
+def optional_skip_hook(text):
+    anchor = "type HookAction byte\n"
+    helper = """type postSkipRefreshHook interface {
+\tPostSkipRefresh(addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error)
+}
 
-rel = "internal/tofu/hook_stop.go"
-def stop_hook(text):
-    m = re.search(r'func \(h \*stopHook\) PostRefresh\([^}]+?\n}\n', text, re.S)
-    if not m:
-        raise SystemExit(f"{rel}: PostRefresh method not found")
-    method = "\nfunc (h *stopHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {\n\treturn h.hook()\n}\n"
-    return text[:m.end()] + method + text[m.end():]
-edit(rel, stop_hook)
+func callPostSkipRefresh(h Hook, addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error) {
+\tif hook, ok := h.(postSkipRefreshHook); ok {
+\t\treturn hook.PostSkipRefresh(addr, gen)
+\t}
+\treturn HookActionContinue, nil
+}
+
+"""
+    return replace_once(text, anchor, helper + anchor, rel)
+edit(rel, optional_skip_hook)
