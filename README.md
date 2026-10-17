@@ -53,6 +53,22 @@ Verification starts from a clean OpenTofu checkout, applies the same two patches
 
 A base-version update should not require a fork merge.
 
+## Read-only ORAS state history
+
+When the active backend is `oras` and version retention is enabled with `max_versions`, Ghoten exposes retained state history without exposing OCI tag details:
+
+```sh
+ghoten history list
+ghoten history list --json
+ghoten history show 3
+ghoten history show --json 3
+ghoten history pull --output recovery.tfstate 3
+```
+
+The commands are deliberately read-only. `history list` returns metadata only and never state contents; `history show` explicitly displays one retained state; and `history pull` writes one version to a new file without overwriting an existing file.
+
+Backends that do not expose the optional history capability return a clear error. Restore, deletion, and garbage collection are intentionally outside this MVP.
+
 ## Updating oras-state
 
 Update the shared ORAS state engine with one command:

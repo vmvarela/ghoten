@@ -61,8 +61,9 @@ fi
 cat > "$WRITER/main.tf" <<'HCL'
 terraform {
   backend "oras" {
-    repository = "127.0.0.1:__PORT__/ghoten-e2e"
-    insecure   = true
+    repository  = "127.0.0.1:__PORT__/ghoten-e2e"
+    insecure    = true
+    max_versions = 5
   }
 }
 
@@ -127,6 +128,80 @@ echo "Persisting an updated state"
 SECOND_VALUE="$("$GHOTEN_BIN" -chdir="$READER" output -raw value)"
 if [[ "$SECOND_VALUE" != "two" ]]; then
   echo "ERROR: fresh reader did not observe the updated state." >&2
+  exit 1
+fi
+
+echo "Verifying read-only ORAS state history"
+HISTORY_LIST="$("$GHOTEN_BIN" -chdir="$READER" history list --json)"
+HISTORY_LIST="$HISTORY_LIST" python3 - <<'PY'
+import json
+import os
+
+versions = json.loads(os.environ["HISTORY_LIST"])
+numbers = [item["version"] for item in versions]
+if numbers[:2] != [1, 2]:
+    raise SystemExit(f"unexpected history versions: {numbers}")
+if "one" in os.environ["HISTORY_LIST"] or "two" in os.environ["HISTORY_LIST"]:
+    raise SystemExit("history list leaked state contents")
+PY
+
+HISTORY_SHOW="$("$GHOTEN_BIN" -chdir="$READER" history show --json 1)"
+HISTORY_SHOW="$HISTORY_SHOW" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["HISTORY_SHOW"])
+encoded = json.dumps(state)
+if "one" not in encoded:
+    raise SystemExit("history show did not return version 1 state")
+PY
+
+HISTORY_FILE="$WORK/history-v1.tfstate"
+"$GHOTEN_BIN" -chdir="$READER" history pull --output "$HISTORY_FILE" 1
+HISTORY_FILE="$HISTORY_FILE" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["HISTORY_FILE"], encoding="utf-8") as f:
+    state = json.load(f)
+if "one" not in json.dumps(state):
+    raise SystemExit("history pull did not write version 1 state")
+PY
+
+HISTORY_MODE="$(stat -c '%a' "$HISTORY_FILE")"
+if [[ "$HISTORY_MODE" != "600" ]]; then
+  echo "ERROR: history pull created $HISTORY_FILE with mode $HISTORY_MODE, expected 600." >&2
+  exit 1
+fi
+
+printf 'do-not-overwrite' > "$HISTORY_FILE"
+set +e
+OVERWRITE_OUTPUT="$("$GHOTEN_BIN" -chdir="$READER" history pull --output "$HISTORY_FILE" 1 2>&1)"
+OVERWRITE_STATUS=$?
+set -e
+if [[ "$OVERWRITE_STATUS" -eq 0 ]]; then
+  echo "ERROR: history pull overwrote an existing file." >&2
+  exit 1
+fi
+if [[ "$(cat "$HISTORY_FILE")" != "do-not-overwrite" ]]; then
+  echo "ERROR: failed history pull modified the existing output file." >&2
+  printf '%s\n' "$OVERWRITE_OUTPUT" >&2
+  exit 1
+fi
+
+LOCAL="$WORK/local"
+mkdir -p "$LOCAL"
+cat > "$LOCAL/main.tf" <<'HCL'
+terraform {}
+HCL
+"$GHOTEN_BIN" -chdir="$LOCAL" init -input=false -no-color >/dev/null
+set +e
+UNSUPPORTED_OUTPUT="$("$GHOTEN_BIN" -chdir="$LOCAL" history list 2>&1)"
+UNSUPPORTED_STATUS=$?
+set -e
+if [[ "$UNSUPPORTED_STATUS" -eq 0 ]] || ! grep -qi "does not support read-only state history" <<<"$UNSUPPORTED_OUTPUT"; then
+  echo "ERROR: unsupported backend did not return the expected history capability error." >&2
+  printf '%s\n' "$UNSUPPORTED_OUTPUT" >&2
   exit 1
 fi
 

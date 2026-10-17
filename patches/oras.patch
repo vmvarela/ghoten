@@ -1,12 +1,12 @@
 diff --git a/go.mod b/go.mod
-index d5f7ac55b..a59d2a3d4 100644
+index d5f7ac55b..dd7335966 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -89,6 +89,7 @@ require (
  	github.com/tencentyun/cos-go-sdk-v5 v0.7.70
  	github.com/ulikunitz/xz v0.5.16
  	github.com/urfave/cli/v3 v3.10.1
-+	github.com/vmvarela/oras-state v0.1.0
++	github.com/vmvarela/oras-state v0.2.0
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
@@ -41,15 +41,15 @@ index d5f7ac55b..a59d2a3d4 100644
  	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
  	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 diff --git a/go.sum b/go.sum
-index e87e6830c..ac3aa0c12 100644
+index e87e6830c..27b307226 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -575,6 +575,8 @@ github.com/vmihailenco/msgpack/v5 v5.3.5 h1:5gO0H1iULLWGhs2H5tbAHIZTV8/cYafcFOr9
  github.com/vmihailenco/msgpack/v5 v5.3.5/go.mod h1:7xyJ9e+0+9SaZT0Wt1RGleJXzli6Q/V5KbhBonMG9jc=
  github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
  github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-+github.com/vmvarela/oras-state v0.1.0 h1:maSZo4LZGJdn8CyYbS9YILBdulVNeYuhbugCX4bA9hc=
-+github.com/vmvarela/oras-state v0.1.0/go.mod h1:2cep0ssg7Ff0bEEtBnScyb465X+LATcs+v2xTDipnX0=
++github.com/vmvarela/oras-state v0.2.0 h1:TrZHkzkAyxEG4acheNe/ZOha2pdKLZ8vxPtnqlac3sU=
++github.com/vmvarela/oras-state v0.2.0/go.mod h1:2cep0ssg7Ff0bEEtBnScyb465X+LATcs+v2xTDipnX0=
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
@@ -97,10 +97,9 @@ index 15dc3cbfd..fb4c99d69 100644
  		"s3":         func(enc encryption.StateEncryption) backend.Backend { return backendS3.New(enc) },
 diff --git a/internal/backend/remote-state/oras/backend.go b/internal/backend/remote-state/oras/backend.go
 new file mode 100644
-index 000000000..022fe4864
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/backend.go
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,414 @@
 +package oras
 +
 +import (
@@ -367,7 +366,49 @@ index 000000000..022fe4864
 +		return nil, fmt.Errorf("backend is not configured")
 +	}
 +	client := &RemoteClient{client: b.client, workspace: workspace, retryCfg: b.retryCfg}
-+	return remote.NewState(client, b.encryption), nil
++	return &historyState{
++		Full:       remote.NewState(client, b.encryption),
++		client:     b.client,
++		workspace:  workspace,
++		encryption: b.encryption,
++	}, nil
++}
++
++type historyState struct {
++	statemgr.Full
++	client     *orasstate.Client
++	workspace  string
++	encryption encryption.StateEncryption
++}
++
++var _ statemgr.History = (*historyState)(nil)
++
++func (s *historyState) ListVersions(ctx context.Context) ([]statemgr.StateVersion, error) {
++	versions, err := s.client.ListVersions(ctx, s.workspace)
++	if err != nil {
++		return nil, err
++	}
++	out := make([]statemgr.StateVersion, len(versions))
++	for i, version := range versions {
++		out[i] = statemgr.StateVersion{
++			Version:   version.Version,
++			UpdatedAt: version.UpdatedAt,
++			Digest:    version.Digest,
++		}
++	}
++	return out, nil
++}
++
++func (s *historyState) GetVersion(ctx context.Context, version int) ([]byte, error) {
++	data, err := s.client.GetVersion(ctx, s.workspace, version)
++	if err != nil {
++		return nil, err
++	}
++	plain, _, err := s.encryption.DecryptState(data)
++	if err != nil {
++		return nil, fmt.Errorf("decrypting historical state version %d: %w", version, err)
++	}
++	return plain, nil
 +}
 +
 +func (b *Backend) Workspaces(ctx context.Context) ([]string, error) {
@@ -733,4 +774,437 @@ index 000000000..d1fe7b683
 +		}
 +	}
 +	return rt.inner.RoundTrip(req)
++}
+
+diff --git a/internal/states/statemgr/history.go b/internal/states/statemgr/history.go
+new file mode 100644
+--- /dev/null
++++ b/internal/states/statemgr/history.go
+@@ -0,0 +1,21 @@
++package statemgr
++
++import (
++	"context"
++	"time"
++)
++
++// StateVersion describes one retained historical state snapshot without
++// exposing backend-specific storage identifiers.
++type StateVersion struct {
++	Version   int       `json:"version"`
++	UpdatedAt time.Time `json:"updated_at,omitempty"`
++	Digest    string    `json:"digest,omitempty"`
++}
++
++// History is an optional read-only capability implemented by state managers
++// that can expose retained historical snapshots.
++type History interface {
++	ListVersions(context.Context) ([]StateVersion, error)
++	GetVersion(context.Context, int) ([]byte, error)
++}
+
+diff --git a/internal/command/history.go b/internal/command/history.go
+new file mode 100644
+--- /dev/null
++++ b/internal/command/history.go
+@@ -0,0 +1,280 @@
++package command
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/mitchellh/cli"
++	"github.com/opentofu/opentofu/internal/command/arguments"
++	"github.com/opentofu/opentofu/internal/states/statemgr"
++)
++
++func HistoryCommander() Command {
++	return Command{
++		Name:     "history",
++		Short:    "Inspect retained ORAS state history",
++		Long:     "Inspect retained state versions when the active backend exposes the optional read-only history capability.",
++		Commands: []Command{HistoryListCommander(), HistoryShowCommander(), HistoryPullCommander()},
++	}
++}
++type HistoryCommand struct{}
++
++func (c *HistoryCommand) Run(_ []string) int { return cli.RunResultHelp }
++func (c *HistoryCommand) Synopsis() string   { return "Inspect retained ORAS state history" }
++func (c *HistoryCommand) Help() string {
++	return strings.TrimSpace(`
++Usage: tofu [global options] history <subcommand> [options]
++
++  Inspect retained state versions when the active backend exposes the optional
++  read-only history capability.
++
++Subcommands:
++  list    List retained versions
++  show    Show one retained state version
++  pull    Write one retained state version to a file
++`)
++}
++
++func normalizeHistoryArgs(args []string) []string {
++	normalized := append([]string(nil), args...)
++	for i, arg := range normalized {
++		if arg == "--" {
++			break
++		}
++		if strings.HasPrefix(arg, "--") {
++			normalized[i] = "-" + strings.TrimPrefix(arg, "--")
++		}
++	}
++	return normalized
++}
++
++func HistoryListCommander() Command {
++	cmd := Command{Name: "list", Short: "List retained state versions", Long: "List retained versions for the current workspace."}
++	args := arguments.BindHistoryList(&cmd.CommandLine)
++	cmd.Run = func(meta Meta) int { return HistoryListCommand{Meta: meta}.Execute(args) }
++	return cmd
++}
++
++type HistoryListCommand struct{ Meta }
++
++func (c *HistoryListCommand) Synopsis() string { return "List retained state versions" }
++func (c *HistoryListCommand) Help() string {
++	return strings.TrimSpace(`
++Usage: tofu [global options] history list [-json]
++
++  List retained versions for the current workspace. State contents are never
++  printed by this command.
++`)
++}
++func (c *HistoryListCommand) Run(rawArgs []string) int {
++	return RunCommand(HistoryListCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
++}
++func (c HistoryListCommand) Execute(args *arguments.HistoryList) int {
++	ctx, history, err := loadStateHistory(c.Meta)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	versions, err := history.ListVersions(ctx)
++	if err != nil {
++		return historyCommandError(err)
++	}
++
++	if args.JSON {
++		enc := json.NewEncoder(os.Stdout)
++		enc.SetIndent("", "  ")
++		if err := enc.Encode(versions); err != nil {
++			return historyCommandError(err)
++		}
++		return 0
++	}
++
++	fmt.Fprintln(os.Stdout, "VERSION\tUPDATED\tDIGEST")
++	for _, version := range versions {
++		updated := "-"
++		if !version.UpdatedAt.IsZero() {
++			updated = version.UpdatedAt.UTC().Format(time.RFC3339)
++		}
++		fmt.Fprintf(os.Stdout, "%d\t%s\t%s\n", version.Version, updated, version.Digest)
++	}
++	return 0
++}
++
++func HistoryShowCommander() Command {
++	cmd := Command{Name: "show", Short: "Show a retained state version", Long: "Show one retained version for the current workspace."}
++	args := arguments.BindHistoryShow(&cmd.CommandLine)
++	cmd.Run = func(meta Meta) int { return HistoryShowCommand{Meta: meta}.Execute(args) }
++	return cmd
++}
++
++type HistoryShowCommand struct{ Meta }
++
++func (c *HistoryShowCommand) Synopsis() string { return "Show a retained state version" }
++func (c *HistoryShowCommand) Help() string {
++	return strings.TrimSpace(`
++Usage: tofu [global options] history show [-json] <version>
++
++  Show one retained version for the current workspace. -json writes the
++  historical state JSON without the human-readable metadata header.
++`)
++}
++func (c *HistoryShowCommand) Run(rawArgs []string) int {
++	return RunCommand(HistoryShowCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
++}
++func (c HistoryShowCommand) Execute(args *arguments.HistoryShow) int {
++	version, err := parseHistoryVersion(args.Version)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	ctx, history, err := loadStateHistory(c.Meta)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	data, err := history.GetVersion(ctx, version)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	if !json.Valid(data) {
++		return historyCommandError(fmt.Errorf("historical state version %d is not valid JSON", version))
++	}
++
++	if args.JSON {
++		_, _ = os.Stdout.Write(data)
++		if len(data) == 0 || data[len(data)-1] != '\n' {
++			fmt.Fprintln(os.Stdout)
++		}
++		return 0
++	}
++
++	versions, err := history.ListVersions(ctx)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	var metadata *statemgr.StateVersion
++	for i := range versions {
++		if versions[i].Version == version {
++			metadata = &versions[i]
++			break
++		}
++	}
++
++	updated, digest := "-", "-"
++	if metadata != nil {
++		digest = metadata.Digest
++		if !metadata.UpdatedAt.IsZero() {
++			updated = metadata.UpdatedAt.UTC().Format(time.RFC3339)
++		}
++	}
++
++	var pretty bytes.Buffer
++	if err := json.Indent(&pretty, data, "", "  "); err != nil {
++		return historyCommandError(err)
++	}
++	fmt.Fprintf(os.Stdout, "Version: %d\nUpdated: %s\nDigest: %s\n\n%s\n", version, updated, digest, pretty.String())
++	return 0
++}
++
++func HistoryPullCommander() Command {
++	cmd := Command{Name: "pull", Short: "Write a retained state version to a file", Long: "Write one retained state version to a new file."}
++	args := arguments.BindHistoryPull(&cmd.CommandLine)
++	cmd.Run = func(meta Meta) int { return HistoryPullCommand{Meta: meta}.Execute(args) }
++	return cmd
++}
++
++type HistoryPullCommand struct{ Meta }
++
++func (c *HistoryPullCommand) Synopsis() string { return "Write a retained state version to a file" }
++func (c *HistoryPullCommand) Help() string {
++	return strings.TrimSpace(`
++Usage: tofu [global options] history pull -output=<file> <version>
++
++  Write one retained state version to a new file. Existing files are not
++  overwritten.
++`)
++}
++func (c *HistoryPullCommand) Run(rawArgs []string) int {
++	return RunCommand(HistoryPullCommander(), c.Meta, normalizeHistoryArgs(rawArgs))
++}
++func (c HistoryPullCommand) Execute(args *arguments.HistoryPull) int {
++	if strings.TrimSpace(args.Output) == "" {
++		return historyCommandError(fmt.Errorf("history pull requires -output=<file>"))
++	}
++	version, err := parseHistoryVersion(args.Version)
++	if err != nil {
++		return historyCommandError(err)
++	}
++
++	ctx, history, err := loadStateHistory(c.Meta)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	data, err := history.GetVersion(ctx, version)
++	if err != nil {
++		return historyCommandError(err)
++	}
++
++	f, err := os.OpenFile(args.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
++	if err != nil {
++		return historyCommandError(err)
++	}
++	if _, err := f.Write(data); err != nil {
++		_ = f.Close()
++		_ = os.Remove(args.Output)
++		return historyCommandError(err)
++	}
++	if err := f.Close(); err != nil {
++		_ = os.Remove(args.Output)
++		return historyCommandError(err)
++	}
++	fmt.Fprintf(os.Stdout, "Wrote state version %d to %s\n", version, args.Output)
++	return 0
++}
++
++func loadStateHistory(meta Meta) (context.Context, statemgr.History, error) {
++	ctx := meta.CommandContext()
++	if diags := meta.checkRequiredVersion(ctx); diags.HasErrors() {
++		return nil, nil, diags.Err()
++	}
++
++	enc, diags := meta.Encryption(ctx)
++	if diags.HasErrors() {
++		return nil, nil, diags.Err()
++	}
++	b, diags := meta.Backend(ctx, nil, enc.State())
++	if diags.HasErrors() {
++		return nil, nil, diags.Err()
++	}
++	meta.ignoreRemoteVersionConflict(b)
++
++	workspace, err := meta.Workspace(ctx)
++	if err != nil {
++		return nil, nil, fmt.Errorf("selecting workspace: %w", err)
++	}
++	stateMgr, err := b.StateMgr(ctx, workspace)
++	if err != nil {
++		return nil, nil, fmt.Errorf("loading state manager: %w", err)
++	}
++	history, ok := stateMgr.(statemgr.History)
++	if !ok {
++		return nil, nil, fmt.Errorf("the active backend does not support read-only state history")
++	}
++	return ctx, history, nil
++}
++
++func parseHistoryVersion(raw string) (int, error) {
++	version, err := strconv.Atoi(raw)
++	if err != nil || version <= 0 {
++		return 0, fmt.Errorf("invalid state version %q", raw)
++	}
++	return version, nil
++}
++
++func historyCommandError(err error) int {
++	fmt.Fprintf(os.Stderr, "Error: %s\n", err)
++	return 1
++}
+diff --git a/internal/command/command.go b/internal/command/command.go
+--- a/internal/command/command.go
++++ b/internal/command/command.go
+@@ -386,6 +386,7 @@ func RootCommander(help *bool, ver *bool, chdir *string) Command {
+ 			DestroyCommander(),
+ 
+ 			// Other Commands
++			HistoryCommander(),
+ 			ConsoleCommander(),
+ 			WorkspaceCommander(true),
+ 			FmtCommander(nil),
+diff --git a/cmd/tofu/commands.go b/cmd/tofu/commands.go
+--- a/cmd/tofu/commands.go
++++ b/cmd/tofu/commands.go
+@@ -205,7 +205,23 @@
+ 			}, nil
+ 		},
+ 
++		"history": func() (cli.Command, error) {
++			return &command.HistoryCommand{}, nil
++		},
++
++		"history list": func() (cli.Command, error) {
++			return &command.HistoryListCommand{Meta: meta}, nil
++		},
++
++		"history show": func() (cli.Command, error) {
++			return &command.HistoryShowCommand{Meta: meta}, nil
++		},
++
++		"history pull": func() (cli.Command, error) {
++			return &command.HistoryPullCommand{Meta: meta}, nil
++		},
++
+ 		"import": func() (cli.Command, error) {
+ 			return &command.ImportCommand{
+ 				Meta: meta,
+ 			}, nil
+
+diff --git a/internal/command/arguments/history.go b/internal/command/arguments/history.go
+new file mode 100644
+--- /dev/null
++++ b/internal/command/arguments/history.go
+@@ -0,0 +1,35 @@
++package arguments
++
++type HistoryList struct {
++	JSON bool
++}
++
++func BindHistoryList(cli *CommandLine) *HistoryList {
++	ret := &HistoryList{}
++	cli.BoolVar(&ret.JSON, "json", false, "Produce machine-readable JSON output.")
++	return ret
++}
++
++type HistoryShow struct {
++	JSON    bool
++	Version string
++}
++
++func BindHistoryShow(cli *CommandLine) *HistoryShow {
++	ret := &HistoryShow{}
++	cli.BoolVar(&ret.JSON, "json", false, "Produce machine-readable JSON output.")
++	cli.PositionalArg(&ret.Version, "version", false)
++	return ret
++}
++
++type HistoryPull struct {
++	Version string
++	Output  string
++}
++
++func BindHistoryPull(cli *CommandLine) *HistoryPull {
++	ret := &HistoryPull{}
++	cli.StringVar(&ret.Output, "output", "", "Write the historical state to this new file.").SetDisplay("=path")
++	cli.PositionalArg(&ret.Version, "version", false)
++	return ret
++}
+diff --git a/internal/command/arguments/history_test.go b/internal/command/arguments/history_test.go
+new file mode 100644
+--- /dev/null
++++ b/internal/command/arguments/history_test.go
+@@ -0,0 +1,36 @@
++package arguments
++
++import "testing"
++
++func TestHistoryListJSONFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryList(&cli)
++	if diags := cli.ParseLegacy([]string{"-json"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy(-json): %s", diags.Err())
++	}
++	if !args.JSON {
++		t.Fatal("-json did not enable JSON output")
++	}
++}
++
++func TestHistoryShowJSONFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryShow(&cli)
++	if diags := cli.ParseLegacy([]string{"-json", "3"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy(-json 3): %s", diags.Err())
++	}
++	if !args.JSON || args.Version != "3" {
++		t.Fatalf("parsed show args = %#v", args)
++	}
++}
++
++func TestHistoryPullOutputFlag(t *testing.T) {
++	var cli CommandLine
++	args := BindHistoryPull(&cli)
++	if diags := cli.ParseLegacy([]string{"-output=state.tfstate", "2"}); diags.HasErrors() {
++		t.Fatalf("ParseLegacy pull: %s", diags.Err())
++	}
++	if args.Output != "state.tfstate" || args.Version != "2" {
++		t.Fatalf("parsed pull args = %#v", args)
++	}
 +}
