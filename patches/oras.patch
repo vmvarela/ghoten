@@ -10,7 +10,7 @@ index d5f7ac55b..c59026de1 100644
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
-@@ -103,17 +104,18 @@ require (
+@@ -103,18 +104,19 @@ require (
  	golang.org/x/crypto v0.56.0
  	golang.org/x/mod v0.39.0
  	golang.org/x/net v0.57.0
@@ -53,7 +53,7 @@ index e87e6830c..054736483 100644
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
-@@ -700,4 +702,4 @@ golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/j
+@@ -701,3 +703,3 @@
 -golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
 -golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
 +golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
