@@ -53,6 +53,18 @@ Verification starts from a clean OpenTofu checkout, applies the same two patches
 
 A base-version update should not require a fork merge.
 
+## Updating oras-state
+
+Update the shared ORAS state engine with one command:
+
+```sh
+make update-oras-state VERSION=v0.2.0
+```
+
+The updater always starts from the exact OpenTofu commit pinned in `ghoten.env`, applies the current ORAS patch, lets `go get` and `go mod tidy` resolve the requested `oras-state` version and checksums, regenerates only the `go.mod` and `go.sum` hunks in `patches/oras.patch`, and finishes by running the normal Ghoten verification gate.
+
+No OpenTofu source tree is retained or committed.
+
 ## Design rules
 
 - Ghoten version tracks its OpenTofu base version.
