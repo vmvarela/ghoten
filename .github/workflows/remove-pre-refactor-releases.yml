@@ -1,0 +1,84 @@
+name: Remove pre-refactor releases
+
+on:
+  push:
+    branches:
+      - cleanup/remove-pre-refactor-releases
+    paths:
+      - .github/workflows/remove-pre-refactor-releases.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete obsolete releases and tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGETS=(
+            v1.13.0
+            v1.13.1
+            v1.13.2
+            v1.13.3
+            v1.13.4
+            v1.13.5
+            v1.13.6-beta.1
+            v1.14.0
+          )
+
+          for tag in "${TARGETS[@]}"; do
+            release_id="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq ".[] | select(.tag_name == \"$tag\") | .id" |
+                head -n1
+            )"
+
+            if [[ -n "$release_id" ]]; then
+              echo "Deleting release $tag (id=$release_id)"
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+            else
+              echo "Release $tag does not exist; skipping."
+            fi
+
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              echo "Deleting tag $tag"
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+            else
+              echo "Tag $tag does not exist; skipping."
+            fi
+          done
+
+      - name: Verify cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remaining="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select((.tag_name | startswith("v1.13.")) or .tag_name == "v1.14.0") | [.tag_name, .draft, .prerelease] | @tsv'
+          )"
+
+          echo "Remaining v1.13+/v1.14.0 releases:"
+          printf '%s\n' "$remaining"
+
+          expected=$'v1.13.0-rc.1\tfalse\ttrue'
+          if [[ "$remaining" != "$expected" ]]; then
+            echo "::error::Unexpected release set after cleanup."
+            exit 1
+          fi
+
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.13.0-rc.1" >/dev/null 2>&1; then
+            echo "::error::Refactored prerelease tag v1.13.0-rc.1 is missing."
+            exit 1
+          fi
+
+          echo "Pre-refactor release cleanup verified."
