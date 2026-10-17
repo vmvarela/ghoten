@@ -12,13 +12,28 @@ on:
       - scripts/port-plumbing.py
       - .github/workflows/generate-smart-refresh.yml
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: ghoten-smart-refresh-patch
+  cancel-in-progress: true
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: ./scripts/generate-smart-refresh.sh
+
+      - name: Commit generated Smart Refresh patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add patches/smart-refresh.patch
+          if ! git diff --cached --quiet; then
+            git commit -m "build: pin generated Smart Refresh patch"
+            git push origin HEAD:refactor/patch-distribution
+          fi
+
       - uses: actions/upload-artifact@v6
         if: always()
         with:
