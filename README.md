@@ -12,7 +12,7 @@ Ghoten does not vendor or rename the OpenTofu source tree.
 A build starts from one exact OpenTofu commit and applies two independent patches:
 
 ```text
-OpenTofu 1.13.0
+OpenTofu <version pinned in ghoten.env>
     |
     +-- patches/smart-refresh.patch
     |
@@ -47,11 +47,28 @@ Verification starts from a clean OpenTofu checkout, applies the same two patches
 
 ## Updating OpenTofu
 
-1. Change `GHOTEN_VERSION`, `OPENTOFU_REF`, and `OPENTOFU_COMMIT` in `ghoten.env`.
-2. Rebase only the patch that no longer applies.
-3. Run `make verify`.
+Ghoten follows exactly one OpenTofu line: the globally latest stable SemVer release.
+
+The scheduled `OpenTofu update` workflow checks upstream daily. When a newer stable version becomes the global latest, it opens a dependency pull request that updates `GHOTEN_VERSION`, `OPENTOFU_REF`, and `OPENTOFU_COMMIT` together. Backport or fix releases for older minor lines are ignored.
+
+The update pull request never changes patches automatically and never merges or publishes a release. `Verify` is the compatibility gate: if a patch no longer applies, adapt only that patch and rerun verification.
 
 A base-version update should not require a fork merge.
+
+## Releases
+
+OpenTofu owns Ghoten's compatibility version. Ghoten does not calculate its own stable SemVer from its changes.
+
+For a new upstream stable release:
+
+1. Let the `OpenTofu update` workflow open the version bump pull request.
+2. Adapt patches only if `Verify` requires it, then merge the green pull request.
+3. Dispatch `Release` as a prerelease, normally with `rc.1`, and test the published binaries.
+4. When the prerelease is satisfactory, dispatch `Release` as `stable`.
+
+The release workflow independently verifies that `ghoten.env` points to OpenTofu's globally latest stable SemVer release and that the pinned commit is exactly the commit behind the upstream tag. Stable Ghoten releases therefore use the same base version as the OpenTofu release they wrap.
+
+Release Drafter prepares notes only under the neutral `next` draft. It never chooses a Ghoten version. Prereleases do not consume that stable-release draft.
 
 ## Read-only ORAS state history
 
