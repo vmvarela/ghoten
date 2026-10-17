@@ -10,7 +10,7 @@ on:
       - .github/workflows/generate-oras.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ghoten-oras-patch
@@ -22,17 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: bash ./scripts/generate-oras.sh
-
-      - name: Commit generated ORAS patch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add patches/oras.patch
-          if ! git diff --cached --quiet; then
-            git commit -m "build: pin generated ORAS patch"
-            git push origin HEAD:refactor/patch-distribution
-          fi
-
       - uses: actions/upload-artifact@v6
         if: always()
         with:
