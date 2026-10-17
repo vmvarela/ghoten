@@ -39,7 +39,3 @@ internal/tofu/transform_smart_refresh.go
 # Plan/state metadata
 internal/plans/mode.go
 internal/plans/plan.go
-internal/states/instance_object.go
-internal/states/instance_object_src.go
-internal/states/state_deepcopy.go
-internal/states/statefile/version4.go
