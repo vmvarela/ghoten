@@ -71,7 +71,7 @@ if "PostSkipRefresh(" not in s:
     i=s.find(marker)
     if i < 0:
         raise SystemExit("hook_count.go: PostRefresh not found")
-     method='func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (tofu.HookAction, error) {\n\treturn tofu.HookActionContinue, nil\n}\n\n'
+    method='func (h *countHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (tofu.HookAction, error) {\n\treturn tofu.HookActionContinue, nil\n}\n\n'
     s=s[:i]+method+s[i:]
     p.write_text(s)
 PY
