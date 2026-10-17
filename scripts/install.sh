@@ -76,16 +76,18 @@ if [ -z "$version" ]; then
 fi
 version=${version#v}
 
-old_ifs=$IFS
-IFS=.
-set -- $version
-IFS=$old_ifs
-[ "$#" -eq 3 ] || fail "VERSION must be a stable semantic version: $version"
-for component in "$@"; do
-  case "$component" in
-    ''|*[!0-9]*) fail "VERSION must be a stable semantic version: $version" ;;
-  esac
-done
+case "$version" in
+  ''|*[!0-9.]*|.*|*.|*..*) fail "VERSION must be a stable semantic version: $version" ;;
+esac
+major=${version%%.*}
+rest=${version#*.}
+minor=${rest%%.*}
+patch=${rest#*.}
+[ "$version" = "$major.$minor.$patch" ] ||
+  fail "VERSION must be a stable semantic version: $version"
+case "$major$minor$patch" in
+  ''|*[!0-9]*) fail "VERSION must be a stable semantic version: $version" ;;
+esac
 
 tag="v$version"
 archive="ghoten_${version}_${os}_${arch}.tar.gz"
