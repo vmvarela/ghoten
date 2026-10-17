@@ -91,7 +91,7 @@ PY
   GOWORK=off go build -trimpath -o "$WORK/ghoten-oras" ./cmd/tofu
 )
 
-git -C "$BASE" diff --binary "$OPENTOFU_COMMIT" --   internal/backend/remote-state/oras   internal/backend/init/init.go   go.mod go.sum > "$ROOT/patches/oras.patch"
+git -C "$BASE" add -A\ngit -C "$BASE" diff --cached --binary "$OPENTOFU_COMMIT" -- internal/backend/remote-state/oras internal/backend/init/init.go go.mod go.sum > "$ROOT/patches/oras.patch"
 
 test -s "$ROOT/patches/oras.patch"
 echo "Generated patches/oras.patch"
