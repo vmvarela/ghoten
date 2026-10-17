@@ -27,12 +27,20 @@ git -C "$SRC" checkout --quiet "$OPENTOFU_COMMIT"
 git -C "$SRC" apply --check "$ROOT/patches/oras.patch"
 git -C "$SRC" apply "$ROOT/patches/oras.patch"
 
+GO_VERSION="$(awk '$1 == "go" { print $2; exit }' "$SRC/go.mod")"
+if [[ -z "$GO_VERSION" ]]; then
+  echo "ERROR: could not determine the pinned OpenTofu Go version." >&2
+  exit 1
+fi
+
 (
   cd "$SRC"
+  export GOTOOLCHAIN="go$GO_VERSION"
   GOWORK=off go get "github.com/vmvarela/oras-state@$VERSION"
   GOWORK=off go mod tidy
 )
 
+git -C "$SRC" diff --check -- go.mod go.sum
 git -C "$SRC" diff --no-ext-diff --binary -- go.mod go.sum > "$DEPS_PATCH"
 
 python3 - "$ROOT/patches/oras.patch" "$DEPS_PATCH" "$NEW_PATCH" <<'PY'
