@@ -1,0 +1,30 @@
+name: Validate pinned ORAS updater
+
+on:
+  push:
+    branches:
+      - build/update-oras-state
+    paths:
+      - .github/workflows/validate-pinned-oras-updater.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: build/update-oras-state
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Verify canonical output with pinned OpenTofu toolchain
+        run: |
+          bash ./scripts/update-oras-state.sh v0.1.0
+          git diff --exit-code -- patches/oras.patch
