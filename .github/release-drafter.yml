@@ -1,6 +1,7 @@
-# Release Drafter prepares release notes only.
-# The final Ghoten tag is always read from ghoten.env by release.yml so that
-# Ghoten keeps exactly the same version as the OpenTofu release it wraps.
+# Release Drafter prepares notes for the next stable release only.
+# Prereleases use generated notes and never consume this draft.
+# The Ghoten base version is always read from ghoten.env by release.yml so that
+# Ghoten keeps exactly the same compatibility version as the OpenTofu release it wraps.
 name-template: "Next Ghoten release"
 tag-template: "v$RESOLVED_VERSION"
 
