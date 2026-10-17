@@ -367,16 +367,18 @@ new file mode 100644
 +	}
 +	client := &RemoteClient{client: b.client, workspace: workspace, retryCfg: b.retryCfg}
 +	return &historyState{
-+		Full:      remote.NewState(client, b.encryption),
-+		client:    b.client,
-+		workspace: workspace,
++		Full:       remote.NewState(client, b.encryption),
++		client:     b.client,
++		workspace:  workspace,
++		encryption: b.encryption,
 +	}, nil
 +}
 +
 +type historyState struct {
 +	statemgr.Full
-+	client    *orasstate.Client
-+	workspace string
++	client     *orasstate.Client
++	workspace  string
++	encryption encryption.StateEncryption
 +}
 +
 +var _ statemgr.History = (*historyState)(nil)
@@ -398,7 +400,15 @@ new file mode 100644
 +}
 +
 +func (s *historyState) GetVersion(ctx context.Context, version int) ([]byte, error) {
-+	return s.client.GetVersion(ctx, s.workspace, version)
++	data, err := s.client.GetVersion(ctx, s.workspace, version)
++	if err != nil {
++		return nil, err
++	}
++	plain, _, err := s.encryption.DecryptState(data)
++	if err != nil {
++		return nil, fmt.Errorf("decrypting historical state version %d: %w", version, err)
++	}
++	return plain, nil
 +}
 +
 +func (b *Backend) Workspaces(ctx context.Context) ([]string, error) {
