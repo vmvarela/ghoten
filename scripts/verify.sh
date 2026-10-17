@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT/ghoten.env"
 
+sh -n "$ROOT/scripts/install.sh"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 SRC="$WORK/opentofu"
