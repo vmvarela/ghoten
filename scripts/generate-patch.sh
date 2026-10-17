@@ -75,6 +75,7 @@ git -C "$BASE" apply "$PRODUCT_PATCH"
 
 # Preserve current OpenTofu structures and adapt only the Ghoten feature deltas.
 python3 "$ROOT/scripts/port-compat.py" "$BASE"
+python3 "$ROOT/scripts/port-plumbing.py" "$BASE"
 
 (
   cd "$BASE"
