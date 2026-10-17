@@ -1,12 +1,12 @@
 diff --git a/go.mod b/go.mod
-index d5f7ac55b..a59d2a3d4 100644
+index d5f7ac55b..dd7335966 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -89,6 +89,7 @@ require (
  	github.com/tencentyun/cos-go-sdk-v5 v0.7.70
  	github.com/ulikunitz/xz v0.5.16
  	github.com/urfave/cli/v3 v3.10.1
-+	github.com/vmvarela/oras-state v0.1.0
++	github.com/vmvarela/oras-state v0.2.0
  	github.com/xanzy/ssh-agent v0.3.3
  	github.com/xlab/treeprint v1.2.0
  	github.com/zclconf/go-cty v1.19.0
@@ -41,15 +41,15 @@ index d5f7ac55b..a59d2a3d4 100644
  	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
  	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 diff --git a/go.sum b/go.sum
-index e87e6830c..ac3aa0c12 100644
+index e87e6830c..27b307226 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -575,6 +575,8 @@ github.com/vmihailenco/msgpack/v5 v5.3.5 h1:5gO0H1iULLWGhs2H5tbAHIZTV8/cYafcFOr9
  github.com/vmihailenco/msgpack/v5 v5.3.5/go.mod h1:7xyJ9e+0+9SaZT0Wt1RGleJXzli6Q/V5KbhBonMG9jc=
  github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
  github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-+github.com/vmvarela/oras-state v0.1.0 h1:maSZo4LZGJdn8CyYbS9YILBdulVNeYuhbugCX4bA9hc=
-+github.com/vmvarela/oras-state v0.1.0/go.mod h1:2cep0ssg7Ff0bEEtBnScyb465X+LATcs+v2xTDipnX0=
++github.com/vmvarela/oras-state v0.2.0 h1:TrZHkzkAyxEG4acheNe/ZOha2pdKLZ8vxPtnqlac3sU=
++github.com/vmvarela/oras-state v0.2.0/go.mod h1:2cep0ssg7Ff0bEEtBnScyb465X+LATcs+v2xTDipnX0=
  github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
  github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
  github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM=
