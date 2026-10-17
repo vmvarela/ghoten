@@ -1,0 +1,30 @@
+name: Migrate ORAS to oras-state
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [refactor/patch-distribution]
+    paths:
+      - scripts/migrate-oras-state.sh
+      - .github/workflows/migrate-oras-state.yml
+      - ghoten.env
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-oras-state
+  cancel-in-progress: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash ./scripts/migrate-oras-state.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: oras-next-patch
+          path: patches/oras-next.patch
+          if-no-files-found: ignore
