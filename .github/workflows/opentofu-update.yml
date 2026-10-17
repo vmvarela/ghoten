@@ -181,16 +181,22 @@ jobs:
           Upstream release: https://github.com/opentofu/opentofu/releases/tag/$TAG
           EOF
 
-          PR_URL="$(
+          if ! PR_URL="$(
             gh pr create \
               --repo "$GITHUB_REPOSITORY" \
               --base master \
               --head "$BRANCH" \
               --title "build(deps): update OpenTofu to $VERSION" \
               --body-file /tmp/pr-body.md
-          )"
+          )"; then
+            echo "::error::Could not create the OpenTofu update PR; removing the temporary branch."
+            git push origin --delete "$BRANCH" || true
+            exit 1
+          fi
 
-          gh pr edit "$PR_URL" --add-label dependencies
+          # A missing label should not prevent the compatibility gate from running.
+          gh pr edit "$PR_URL" --add-label dependencies || \
+            echo "::warning::Could not add the dependencies label to $PR_URL."
 
           # GITHUB_TOKEN pushes do not normally trigger workflows. Dispatch Verify
           # explicitly against the exact update branch so the compatibility gate runs.
