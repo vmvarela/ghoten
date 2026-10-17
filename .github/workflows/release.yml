@@ -59,6 +59,46 @@ jobs:
             exit 1
           fi
 
+          RELEASES_JSON="$(curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/opentofu/opentofu/releases?per_page=100")"
+
+          LATEST_VERSION="$(
+            jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' <<<"$RELEASES_JSON" |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              sed 's/^v//' |
+              sort -V |
+              tail -n1
+          )"
+
+          if [[ -z "$LATEST_VERSION" ]]; then
+            echo "::error::Could not determine the latest stable OpenTofu release."
+            exit 1
+          fi
+          if [[ "$GHOTEN_VERSION" != "$LATEST_VERSION" ]]; then
+            echo "::error::Ghoten can only release against OpenTofu's globally latest stable version: pinned=$GHOTEN_VERSION, latest=$LATEST_VERSION."
+            exit 1
+          fi
+
+          UPSTREAM_COMMIT="$(
+            git ls-remote https://github.com/opentofu/opentofu.git "refs/tags/$OPENTOFU_REF^{}" |
+              awk 'NR == 1 { print $1 }'
+          )"
+          if [[ -z "$UPSTREAM_COMMIT" ]]; then
+            UPSTREAM_COMMIT="$(
+              git ls-remote https://github.com/opentofu/opentofu.git "refs/tags/$OPENTOFU_REF" |
+                awk 'NR == 1 { print $1 }'
+            )"
+          fi
+          if [[ -z "$UPSTREAM_COMMIT" ]]; then
+            echo "::error::Could not resolve upstream tag $OPENTOFU_REF."
+            exit 1
+          fi
+          if [[ "$OPENTOFU_COMMIT" != "$UPSTREAM_COMMIT" ]]; then
+            echo "::error::OPENTOFU_COMMIT does not match $OPENTOFU_REF: pinned=$OPENTOFU_COMMIT, upstream=$UPSTREAM_COMMIT."
+            exit 1
+          fi
+
           case "$RELEASE_TYPE" in
             stable)
               VERSION="$GHOTEN_VERSION"
@@ -212,7 +252,8 @@ jobs:
             # Stable releases publish the prepared Release Drafter draft when available.
             DRAFT_ID="$(
               gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[] | select(.draft == true) | .id' | head -n1
+                --jq '.[] | select(.draft == true and .name == "Next Ghoten release") | .id' |
+                head -n1
             )"
 
             if [[ -n "$DRAFT_ID" ]]; then

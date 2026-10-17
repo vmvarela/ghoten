@@ -1,31 +1,25 @@
-# Release Drafter prepares notes for the next stable release only.
-# Prereleases use generated notes and never consume this draft.
-# The Ghoten base version is always read from ghoten.env by release.yml so that
-# Ghoten keeps exactly the same compatibility version as the OpenTofu release it wraps.
+# Release Drafter prepares notes only. OpenTofu owns Ghoten's version number:
+# release.yml replaces this neutral draft tag with the exact latest stable
+# OpenTofu version when a stable Ghoten release is published.
 name-template: "Next Ghoten release"
-tag-template: "v$RESOLVED_VERSION"
+tag-template: "next"
 
 categories:
   - title: "💥 Breaking Changes"
-    semver-increment: "major"
     exclusive: true
     when:
       conventional:
         breaking: true
   - title: "🚀 Features"
-    semver-increment: "minor"
     labels:
       - "enhancement"
   - title: "🐛 Bug Fixes"
-    semver-increment: "patch"
     labels:
       - "bug"
   - title: "📖 Documentation"
-    semver-increment: "patch"
     labels:
       - "documentation"
   - title: "🧰 Maintenance"
-    semver-increment: "patch"
 
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 change-title-escapes: "\\<*_&"
