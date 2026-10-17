@@ -1112,7 +1112,7 @@ diff --git a/internal/command/arguments/history.go b/internal/command/arguments/
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/arguments/history.go
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,35 @@
 +package arguments
 +
 +type HistoryList struct {
