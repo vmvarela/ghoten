@@ -8,6 +8,8 @@ on:
       - patches/smart-refresh-*.txt
       - scripts/generate-smart-refresh.sh
       - scripts/port-smart-refresh-*.py
+      - scripts/port-compat.py
+      - scripts/port-plumbing.py
       - .github/workflows/generate-smart-refresh.yml
 permissions:
   contents: read
