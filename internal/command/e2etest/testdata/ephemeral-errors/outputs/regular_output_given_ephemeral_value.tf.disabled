@@ -1,3 +1,0 @@
-module "test" {
-  source = "./__mod-with-regular-output-got-ephemeral-value"
-}

@@ -1,0 +1,1828 @@
+diff --git a/internal/backend/backend.go b/internal/backend/backend.go
+index 9291bcd09..5ffebb2b6 100644
+--- a/internal/backend/backend.go
++++ b/internal/backend/backend.go
+@@ -263,8 +263,9 @@ type Operation struct {
+ 	// PlanOutBackend is the backend to store with the plan. This is the
+ 	// backend that will be used when applying the plan.
+ 	PlanId         string
+-	PlanRefresh    bool   // PlanRefresh will do a refresh before a plan
+-	PlanOutPath    string // PlanOutPath is the path to save the plan
++	PlanRefresh    bool              // PlanRefresh will do a refresh before a plan
++	RefreshMode    plans.RefreshMode // RefreshMode controls smart/all/none refresh strategy
++	PlanOutPath    string            // PlanOutPath is the path to save the plan
+ 	PlanOutBackend *plans.Backend
+ 
+ 	// ConfigDir is the path to the directory containing the configuration's
+diff --git a/internal/backend/local/backend_local.go b/internal/backend/local/backend_local.go
+index 908b0f10a..b2c4c880a 100644
+--- a/internal/backend/local/backend_local.go
++++ b/internal/backend/local/backend_local.go
+@@ -210,6 +210,7 @@ func (b *Local) localRunDirect(ctx context.Context, stopCtx context.Context, op
+ 		ForceReplace:       op.ForceReplace,
+ 		SetVariables:       variables,
+ 		SkipRefresh:        op.Type != backend.OperationTypeRefresh && !op.PlanRefresh,
++		RefreshMode:        op.RefreshMode,
+ 		GenerateConfigPath: op.GenerateConfigOut,
+ 	}
+ 	run.PlanOpts = planOpts
+diff --git a/internal/command/apply.go b/internal/command/apply.go
+index 871df9e8f..6642d203b 100644
+--- a/internal/command/apply.go
++++ b/internal/command/apply.go
+@@ -274,6 +274,7 @@ func (c *ApplyCommand) OperationRequest(
+ 	}
+ 	opReq.PlanFile = planFile
+ 	opReq.PlanRefresh = applyArgs.Operation.Refresh
++	opReq.RefreshMode = applyArgs.Operation.RefreshMode
+ 	opReq.Targets = applyArgs.Operation.Targets
+ 	opReq.Excludes = applyArgs.Operation.Excludes
+ 	opReq.ForceReplace = applyArgs.Operation.ForceReplace
+diff --git a/internal/command/arguments/apply.go b/internal/command/arguments/apply.go
+index 6c28be9d3..ecc856300 100644
+--- a/internal/command/arguments/apply.go
++++ b/internal/command/arguments/apply.go
+@@ -97,6 +97,9 @@ func BindApplyDestroy(cli *CommandLine) *Apply {
+ 			// all, which is correct, although we know from the command that
+ 			// they actually intended to use DestroyMode here.
+ 			apply.Operation.PlanMode = plans.DestroyMode
++			if apply.Operation.RefreshMode == plans.RefreshSmart {
++				apply.Operation.RefreshMode = plans.RefreshAll
++			}
+ 		case plans.DestroyMode:
+ 			return tfdiags.New(tfdiags.Sourceless(
+ 				tfdiags.Error,
+diff --git a/internal/command/arguments/apply_test.go b/internal/command/arguments/apply_test.go
+index 643f134a1..286e71533 100644
+--- a/internal/command/arguments/apply_test.go
++++ b/internal/command/arguments/apply_test.go
+@@ -42,6 +42,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -63,6 +64,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -84,6 +86,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+@@ -105,6 +108,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -126,6 +130,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+@@ -147,6 +152,7 @@ func TestParseApply_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -835,6 +841,7 @@ func TestParseApplyDestroy_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+@@ -855,6 +862,7 @@ func TestParseApplyDestroy_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+diff --git a/internal/command/arguments/extended.go b/internal/command/arguments/extended.go
+index eaa4b53c1..e92172aed 100644
+--- a/internal/command/arguments/extended.go
++++ b/internal/command/arguments/extended.go
+@@ -110,6 +110,9 @@ type Operation struct {
+ 	// state before proceeding. Default is true.
+ 	Refresh bool
+ 
++	// RefreshMode selects all/none/smart remote-state refresh.
++	RefreshMode plans.RefreshMode
++
+ 	// Targets allow limiting an operation to a set of resource addresses and
+ 	// their dependencies.
+ 	Targets []addrs.Targetable
+@@ -258,13 +261,12 @@ func BindOperation(cli *CommandLine) *Operation {
+ 	var forceReplaceRaw []string
+ 	var destroyRaw bool
+ 	var refreshOnlyRaw bool
++	var refreshRaw string
+ 
+ 	cli.IntVar(&o.Parallelism, "parallelism", DefaultParallelism,
+ 		`Limit the number of parallel resource operations. Defaults to 10.`,
+ 	).SetDisplay("=n")
+-	cli.BoolVar(&o.Refresh, "refresh", true,
+-		`Skip checking for external changes to remote objects while creating the plan. This can potentially make planning faster, but at the expense of possibly planning against a stale record of the remote system state.`,
+-	).SetDisplay("=false")
++	refreshFlag := cli.StringVar(&refreshRaw, "refresh", "smart", `Refresh remote objects before planning: true, false, or smart.`).SetDisplay("=true|false|smart")
+ 	cli.BoolVar(&destroyRaw, "destroy", false,
+ 		`Select the "destroy" planning mode, which creates a plan to destroy all objects currently managed by this OpenTofu configuration instead of the usual behavior.`)
+ 	cli.BoolVar(&refreshOnlyRaw, "refresh-only", false,
+@@ -289,6 +291,25 @@ func BindOperation(cli *CommandLine) *Operation {
+ 	cli.PreHook(func() tfdiags.Diagnostics {
+ 		var diags tfdiags.Diagnostics
+ 
++		refreshExplicit := refreshFlag.IsSet != nil && refreshFlag.IsSet()
++		switch refreshRaw {
++		case "true":
++			o.RefreshMode = plans.RefreshAll
++			o.Refresh = true
++		case "false":
++			o.RefreshMode = plans.RefreshNone
++			o.Refresh = false
++		case "smart", "":
++			o.RefreshMode = plans.RefreshSmart
++			o.Refresh = true
++		default:
++			diags = diags.Append(tfdiags.Sourceless(
++				tfdiags.Error,
++				"Invalid refresh option",
++				fmt.Sprintf("Invalid value %q for -refresh. Use true, false, or smart.", refreshRaw),
++			))
++		}
++
+ 		var parseDiags tfdiags.Diagnostics
+ 		o.Targets, o.Excludes, parseDiags = parseRawTargetsAndExcludes(targetsRaw, excludesRaw, targetsFilesRaw, excludesFilesRaw)
+ 		diags = diags.Append(parseDiags)
+@@ -337,9 +358,23 @@ func BindOperation(cli *CommandLine) *Operation {
+ 			))
+ 		case destroyRaw:
+ 			o.PlanMode = plans.DestroyMode
++			if o.RefreshMode == plans.RefreshSmart {
++				if refreshExplicit {
++					diags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -destroy. Use -refresh=true."))
++				} else {
++					o.RefreshMode = plans.RefreshAll
++				}
++			}
+ 		case refreshOnlyRaw:
+ 			o.PlanMode = plans.RefreshOnlyMode
+-			if !o.Refresh {
++			if o.RefreshMode == plans.RefreshSmart {
++				if refreshExplicit {
++					diags = diags.Append(tfdiags.Sourceless(tfdiags.Error, "Incompatible refresh options", "Smart refresh is not supported with -refresh-only. Use -refresh=true."))
++				} else {
++					o.RefreshMode = plans.RefreshAll
++				}
++			}
++			if o.RefreshMode == plans.RefreshNone {
+ 				diags = diags.Append(tfdiags.Sourceless(
+ 					tfdiags.Error,
+ 					"Incompatible refresh options",
+diff --git a/internal/command/arguments/ghoten_smart_refresh_test.go b/internal/command/arguments/ghoten_smart_refresh_test.go
+new file mode 100644
+index 000000000..8050088ea
+--- /dev/null
++++ b/internal/command/arguments/ghoten_smart_refresh_test.go
+@@ -0,0 +1,45 @@
++package arguments
++
++import (
++	"testing"
++
++	"github.com/opentofu/opentofu/internal/plans"
++)
++
++func TestGhotenRefreshModes(t *testing.T) {
++	tests := map[string]struct {
++		args []string
++		want plans.RefreshMode
++	}{
++		"default smart":             {nil, plans.RefreshSmart},
++		"full":                      {[]string{"-refresh=true"}, plans.RefreshAll},
++		"none":                      {[]string{"-refresh=false"}, plans.RefreshNone},
++		"smart":                     {[]string{"-refresh=smart"}, plans.RefreshSmart},
++		"destroy default full":      {[]string{"-destroy"}, plans.RefreshAll},
++		"refresh-only default full": {[]string{"-refresh-only"}, plans.RefreshAll},
++	}
++
++	for name, tc := range tests {
++		t.Run(name, func(t *testing.T) {
++			got, _, diags := ParsePlan(tc.args)
++			if diags.HasErrors() {
++				t.Fatalf("unexpected diagnostics: %v", diags.Err())
++			}
++			if got.Operation.RefreshMode != tc.want {
++				t.Fatalf("refresh mode = %s, want %s", got.Operation.RefreshMode.UIName(), tc.want.UIName())
++			}
++		})
++	}
++}
++
++func TestGhotenExplicitSmartRejectsUnsupportedPlanModes(t *testing.T) {
++	for _, args := range [][]string{
++		{"-destroy", "-refresh=smart"},
++		{"-refresh-only", "-refresh=smart"},
++	} {
++		_, _, diags := ParsePlan(args)
++		if !diags.HasErrors() {
++			t.Fatalf("expected %v to be rejected", args)
++		}
++	}
++}
+diff --git a/internal/command/arguments/plan_test.go b/internal/command/arguments/plan_test.go
+index c11fe4055..263525857 100644
+--- a/internal/command/arguments/plan_test.go
++++ b/internal/command/arguments/plan_test.go
+@@ -42,6 +42,7 @@ func TestParsePlan_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -63,6 +64,7 @@ func TestParsePlan_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+@@ -84,6 +86,7 @@ func TestParsePlan_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+@@ -105,6 +108,7 @@ func TestParsePlan_basicValid(t *testing.T) {
+ 					PlanMode:    plans.DestroyMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshAll,
+ 				},
+ 			},
+ 		},
+@@ -126,6 +130,7 @@ func TestParsePlan_basicValid(t *testing.T) {
+ 					PlanMode:    plans.NormalMode,
+ 					Parallelism: 10,
+ 					Refresh:     true,
++					RefreshMode: plans.RefreshSmart,
+ 				},
+ 			},
+ 		},
+diff --git a/internal/command/plan.go b/internal/command/plan.go
+index b5e22b8cc..0d52bdb11 100644
+--- a/internal/command/plan.go
++++ b/internal/command/plan.go
+@@ -146,6 +146,7 @@ func (c *PlanCommand) OperationRequest(
+ 	opReq.PlanMode = args.PlanMode
+ 	opReq.Hooks = view.Hooks()
+ 	opReq.PlanRefresh = args.Refresh
++	opReq.RefreshMode = args.RefreshMode
+ 	opReq.PlanOutPath = planOutPath
+ 	opReq.GenerateConfigOut = generateConfigOut
+ 	opReq.Targets = args.Targets
+diff --git a/internal/plans/mode.go b/internal/plans/mode.go
+index 301c9795b..569f52b80 100644
+--- a/internal/plans/mode.go
++++ b/internal/plans/mode.go
+@@ -35,6 +35,39 @@ const (
+ 	RefreshOnlyMode Mode = 'R'
+ )
+ 
++// RefreshMode represents the various options for refreshing resource state
++// during a plan operation.
++type RefreshMode int
++
++const (
++	// RefreshAll refreshes all managed resources by calling ReadResource on
++	// each one. This is the traditional "-refresh=true" behavior.
++	RefreshAll RefreshMode = iota
++
++	// RefreshNone skips all refresh operations, trusting the prior state.
++	// This corresponds to "-refresh=false".
++	RefreshNone
++
++	// RefreshSmart uses graph-level pruning plus evaluated per-instance
++	// fingerprints to skip fresh resources that are safe to reuse. This is
++	// the explicit "-refresh=smart" mode; RefreshAll remains the default.
++	RefreshSmart
++)
++
++// UIName returns a human-readable name for the refresh mode.
++func (rm RefreshMode) UIName() string {
++	switch rm {
++	case RefreshAll:
++		return "all"
++	case RefreshNone:
++		return "none"
++	case RefreshSmart:
++		return "smart"
++	default:
++		return "unknown"
++	}
++}
++
+ // UIName returns a name suitable for describing the mode in the UI.
+ func (m Mode) UIName() string {
+ 	switch m {
+diff --git a/internal/plans/plan.go b/internal/plans/plan.go
+index 60fe0cf31..ed4687109 100644
+--- a/internal/plans/plan.go
++++ b/internal/plans/plan.go
+@@ -66,6 +66,21 @@ type Plan struct {
+ 	// but can be cautiously inspected for debugging purposes.
+ 	Errored bool
+ 
++	// RefreshMode is the refresh strategy used when producing this plan.
++	// This is a transient field not written to the plan file; it is used
++	// only for display purposes when rendering the plan summary.
++	RefreshMode RefreshMode
++
++	// ResourcesRefreshed is the number of resources that were actually
++	// refreshed (ReadResource called) during planning. Only meaningful
++	// when RefreshMode == RefreshSmart.
++	ResourcesRefreshed int
++
++	// ResourcesSkipped is the number of resources whose refresh was skipped
++	// by smart refresh mode during planning. Only meaningful when
++	// RefreshMode == RefreshSmart.
++	ResourcesSkipped int
++
+ 	// Checks captures a snapshot of the (probably-incomplete) check results
+ 	// at the end of the planning process.
+ 	//
+diff --git a/internal/states/instance_object.go b/internal/states/instance_object.go
+index 2466758d1..c20e43f7b 100644
+--- a/internal/states/instance_object.go
++++ b/internal/states/instance_object.go
+@@ -64,6 +64,18 @@ type ResourceInstanceObject struct {
+ 
+ 	SkipDestroy bool
+ 
++	// ConfigExprHash is the legacy coarse-grained Smart Refresh fingerprint.
++	// It is retained for backward compatibility and graph-level pruning only.
++	ConfigExprHash []byte
++
++	// RefreshFingerprint is the authoritative fingerprint of the evaluated
++	// resource instance and its resolved provider configuration.
++	RefreshFingerprint []byte
++
++	// LastRefreshUnix is the UTC Unix time of the last successful remote read.
++	// Zero means unknown and forces a conservative refresh.
++	LastRefreshUnix int64
++
+ 	// Deferred is meant for the ephemeral resources state information.
+ 	// When this is "true", the evaluator will return an unknown value.
+ 	Deferred bool
+@@ -184,6 +196,9 @@ func (o *ResourceInstanceObject) Encode(ty cty.Type, schemaVersion uint64, ident
+ 		DependsOn:               absDependencies,
+ 		CreateBeforeDestroy:     o.CreateBeforeDestroy,
+ 		SkipDestroy:             o.SkipDestroy,
++		ConfigExprHash:          o.ConfigExprHash,
++		RefreshFingerprint:      o.RefreshFingerprint,
++		LastRefreshUnix:         o.LastRefreshUnix,
+ 		Deferred:                o.Deferred,
+ 	}, nil
+ }
+diff --git a/internal/states/instance_object_src.go b/internal/states/instance_object_src.go
+index 671939300..7342338df 100644
+--- a/internal/states/instance_object_src.go
++++ b/internal/states/instance_object_src.go
+@@ -73,6 +73,19 @@ type ResourceInstanceObjectSrc struct {
+ 	DependsOn           []addrs.AbsResourceInstance
+ 	CreateBeforeDestroy bool
+ 	SkipDestroy         bool
++
++	// ConfigExprHash is the legacy coarse-grained Smart Refresh fingerprint.
++	// It is retained for backward compatibility and graph-level pruning only.
++	ConfigExprHash []byte
++
++	// RefreshFingerprint is the authoritative fingerprint of the evaluated
++	// resource instance and its resolved provider configuration.
++	RefreshFingerprint []byte
++
++	// LastRefreshUnix is the UTC Unix time of the last successful remote read.
++	// Zero means unknown and forces a conservative refresh.
++	LastRefreshUnix int64
++
+ 	// Deferred is meant for the ephemeral resources state information.
+ 	// When this is "true", the evaluator will return an unknown value.
+ 	Deferred bool
+@@ -180,6 +193,16 @@ func (os *ResourceInstanceObjectSrc) Equal(other *ResourceInstanceObjectSrc) boo
+ 		return false
+ 	}
+ 
++	if !bytes.Equal(os.ConfigExprHash, other.ConfigExprHash) {
++		return false
++	}
++	if !bytes.Equal(os.RefreshFingerprint, other.RefreshFingerprint) {
++		return false
++	}
++	if os.LastRefreshUnix != other.LastRefreshUnix {
++		return false
++	}
++
+ 	if !bytes.Equal(os.IdentityJSON, other.IdentityJSON) {
+ 		return false
+ 	}
+@@ -258,6 +281,9 @@ func (os *ResourceInstanceObjectSrc) Decode(ty cty.Type) (*ResourceInstanceObjec
+ 		Identity:            identity,
+ 		CreateBeforeDestroy: os.CreateBeforeDestroy,
+ 		SkipDestroy:         os.SkipDestroy,
++		ConfigExprHash:      os.ConfigExprHash,
++		RefreshFingerprint:  os.RefreshFingerprint,
++		LastRefreshUnix:     os.LastRefreshUnix,
+ 		Deferred:            os.Deferred,
+ 	}, nil
+ }
+diff --git a/internal/states/state_deepcopy.go b/internal/states/state_deepcopy.go
+index a85a316d9..bc000b3e8 100644
+--- a/internal/states/state_deepcopy.go
++++ b/internal/states/state_deepcopy.go
+@@ -167,6 +167,9 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
+ 		copy(private, os.Private)
+ 	}
+ 
++	configExprHash := append([]byte(nil), os.ConfigExprHash...)
++	refreshFingerprint := append([]byte(nil), os.RefreshFingerprint...)
++
+ 	// Some addrs.Referenceable implementations are technically mutable, but
+ 	// we treat them as immutable by convention and so we don't deep-copy here.
+ 	dependencies := slices.Clone(os.Dependencies)
+@@ -196,6 +199,9 @@ func (os *ResourceInstanceObjectSrc) DeepCopy() *ResourceInstanceObjectSrc {
+ 		DependsOn:               absDependencies,
+ 		CreateBeforeDestroy:     os.CreateBeforeDestroy,
+ 		SkipDestroy:             os.SkipDestroy,
++		ConfigExprHash:          configExprHash,
++		RefreshFingerprint:      refreshFingerprint,
++		LastRefreshUnix:         os.LastRefreshUnix,
+ 		Deferred:                os.Deferred,
+ 		IdentityJSON:            identityJSON,
+ 		IdentitySchemaVersion:   identitySchemaVersion,
+@@ -221,6 +227,9 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
+ 		copy(private, o.Private)
+ 	}
+ 
++	configExprHash := append([]byte(nil), o.ConfigExprHash...)
++	refreshFingerprint := append([]byte(nil), o.RefreshFingerprint...)
++
+ 	// Some addrs.Referenceable implementations are technically mutable, but
+ 	// we treat them as immutable by convention and so we don't deep-copy here.
+ 	var dependencies []addrs.ConfigResource
+@@ -237,6 +246,9 @@ func (o *ResourceInstanceObject) DeepCopy() *ResourceInstanceObject {
+ 		Dependencies:        dependencies,
+ 		CreateBeforeDestroy: o.CreateBeforeDestroy,
+ 		SkipDestroy:         o.SkipDestroy,
++		ConfigExprHash:      configExprHash,
++		RefreshFingerprint:  refreshFingerprint,
++		LastRefreshUnix:     o.LastRefreshUnix,
+ 		Deferred:            o.Deferred,
+ 	}
+ }
+diff --git a/internal/states/statefile/version4.go b/internal/states/statefile/version4.go
+index 34e79a02d..e34a990c1 100644
+--- a/internal/states/statefile/version4.go
++++ b/internal/states/statefile/version4.go
+@@ -183,6 +183,9 @@ func prepareStateV4(sV4 *stateV4) (*File, tfdiags.Diagnostics) {
+ 				SchemaVersion:       isV4.SchemaVersion,
+ 				CreateBeforeDestroy: isV4.CreateBeforeDestroy,
+ 				SkipDestroy:         isV4.SkipDestroy,
++				ConfigExprHash:      isV4.ConfigExprHash,
++				RefreshFingerprint:  isV4.RefreshFingerprint,
++				LastRefreshUnix:     isV4.LastRefreshUnix,
+ 			}
+ 
+ 			{
+@@ -655,6 +658,9 @@ func appendInstanceObjectStateV4(rs *states.Resource, is *states.ResourceInstanc
+ 		DependsOn:               depsOn,
+ 		CreateBeforeDestroy:     obj.CreateBeforeDestroy,
+ 		SkipDestroy:             obj.SkipDestroy,
++		ConfigExprHash:          obj.ConfigExprHash,
++		RefreshFingerprint:      obj.RefreshFingerprint,
++		LastRefreshUnix:         obj.LastRefreshUnix,
+ 		Identity:                identity,
+ 		IdentitySchemaVersion:   obj.IdentitySchemaVersion,
+ 	}), diags
+@@ -877,6 +883,10 @@ type instanceObjectStateV4 struct {
+ 	CreateBeforeDestroy bool `json:"create_before_destroy,omitempty"`
+ 	SkipDestroy         bool `json:"skip_destroy,omitempty"`
+ 
++	ConfigExprHash     []byte `json:"config_expr_hash,omitempty"`
++	RefreshFingerprint []byte `json:"refresh_fingerprint,omitempty"`
++	LastRefreshUnix    int64  `json:"last_refresh_unix,omitempty"`
++
+ 	Identity              json.RawMessage `json:"identity,omitempty"`
+ 	IdentitySchemaVersion *uint64         `json:"identity_schema_version,omitempty"`
+ }
+diff --git a/internal/tofu/context_apply.go b/internal/tofu/context_apply.go
+index 63d366303..a2eb6733c 100644
+--- a/internal/tofu/context_apply.go
++++ b/internal/tofu/context_apply.go
+@@ -167,6 +167,7 @@ func (c *Context) Apply(ctx context.Context, plan *plans.Plan, config *configs.C
+ 	walker.State.RecordCheckResults(walker.Checks)
+ 
+ 	newState := walker.State.Close()
++
+ 	if plan.UIMode == plans.DestroyMode && !diags.HasErrors() {
+ 		// NOTE: This is a vestigial violation of the rule that we mustn't
+ 		// use plan.UIMode to affect apply-time behavior.
+diff --git a/internal/tofu/context_plan.go b/internal/tofu/context_plan.go
+index 80aeb8548..d3e3b4ae9 100644
+--- a/internal/tofu/context_plan.go
++++ b/internal/tofu/context_plan.go
+@@ -44,6 +44,14 @@ type PlanOpts struct {
+ 	// instance using its corresponding provider.
+ 	SkipRefresh bool
+ 
++	// RefreshMode controls the granularity of refresh operations. RefreshSmart
++	// graph-prunes obvious unaffected resources and then verifies each skipped
++	// instance against evaluated resource/provider fingerprints and bounded
++	// freshness. RefreshAll refreshes everything (the default), and RefreshNone
++	// skips all refresh (same as SkipRefresh=true). When SkipRefresh is true,
++	// RefreshMode is ignored.
++	RefreshMode plans.RefreshMode
++
+ 	// PreDestroyRefresh indicated that this is being passed to a plan used to
+ 	// refresh the state immediately before a destroy plan.
+ 	// FIXME: This is a temporary fix to allow the pre-destroy refresh to
+@@ -893,6 +901,7 @@ func (c *Context) planGraph(ctx context.Context, config *configs.Config, prevRun
+ 			Excludes:                opts.Excludes,
+ 			ForceReplace:            opts.ForceReplace,
+ 			skipRefresh:             opts.SkipRefresh,
++			smartRefresh:            opts.RefreshMode == plans.RefreshSmart,
+ 			preDestroyRefresh:       opts.PreDestroyRefresh,
+ 			Operation:               walkPlan,
+ 			ExternalReferences:      opts.ExternalReferences,
+@@ -911,6 +920,7 @@ func (c *Context) planGraph(ctx context.Context, config *configs.Config, prevRun
+ 			Targets:                 opts.Targets,
+ 			Excludes:                opts.Excludes,
+ 			skipRefresh:             opts.SkipRefresh,
++			smartRefresh:            opts.RefreshMode == plans.RefreshSmart,
+ 			skipPlanChanges:         true, // this activates "refresh only" mode.
+ 			Operation:               walkPlan,
+ 			ExternalReferences:      opts.ExternalReferences,
+diff --git a/internal/tofu/graph_builder_plan.go b/internal/tofu/graph_builder_plan.go
+index 9c7b18044..a052193d4 100644
+--- a/internal/tofu/graph_builder_plan.go
++++ b/internal/tofu/graph_builder_plan.go
+@@ -59,6 +59,12 @@ type PlanGraphBuilder struct {
+ 	// skipRefresh indicates that we should skip refreshing managed resources
+ 	skipRefresh bool
+ 
++	// smartRefresh indicates that we should selectively refresh only resources
++	// whose configuration has changed, plus their dependency subgraph.
++	// When true, skipRefresh is treated as false and per-node skipRefresh
++	// decisions are made by the SmartRefreshTransformer.
++	smartRefresh bool
++
+ 	// preDestroyRefresh indicates that we are executing the refresh which
+ 	// happens immediately before a destroy plan, which happens to use the
+ 	// normal planing mode so skipPlanChanges cannot be set.
+@@ -240,6 +246,17 @@ func (b *PlanGraphBuilder) Steps() []GraphTransformer {
+ 
+ 		&ReferenceTransformer{},
+ 
++		// If smart refresh is enabled, use the dependency graph as a coarse
++		// prefilter. Concrete instances perform the authoritative evaluated
++		// fingerprint/freshness check before a ReadResource can be skipped.
++		// This must come after ReferenceTransformer (needs edges) and before
++		// TargetingTransformer (targeting further narrows the graph).
++		&SmartRefreshTransformer{
++			Config: b.Config,
++			State:  b.State,
++			Active: b.smartRefresh && !b.skipRefresh,
++		},
++
+ 		&AttachDependenciesTransformer{},
+ 
+ 		// Make sure data sources and ephemeral resources are aware of any
+@@ -295,7 +312,8 @@ func (b *PlanGraphBuilder) initPlan() {
+ 	b.ConcreteResource = func(a *NodeAbstractResource) dag.Vertex {
+ 		return &nodeExpandPlannableResource{
+ 			NodeAbstractResource: a,
+-			skipRefresh:          b.skipRefresh,
++			skipRefresh:          b.skipRefresh && !b.smartRefresh,
++			smartRefresh:         b.smartRefresh && !b.skipRefresh,
+ 			skipPlanChanges:      b.skipPlanChanges,
+ 			preDestroyRefresh:    b.preDestroyRefresh,
+ 			forceReplace:         b.ForceReplace,
+@@ -305,7 +323,7 @@ func (b *PlanGraphBuilder) initPlan() {
+ 	b.ConcreteResourceOrphan = func(a *NodeAbstractResourceInstance) dag.Vertex {
+ 		return &NodePlannableResourceInstanceOrphan{
+ 			NodeAbstractResourceInstance: a,
+-			skipRefresh:                  b.skipRefresh,
++			skipRefresh:                  b.skipRefresh && !b.smartRefresh,
+ 			skipPlanChanges:              b.skipPlanChanges,
+ 			RemoveStatements:             b.RemoveStatements,
+ 		}
+@@ -316,7 +334,7 @@ func (b *PlanGraphBuilder) initPlan() {
+ 			NodeAbstractResourceInstance: a,
+ 			DeposedKey:                   key,
+ 
+-			skipRefresh:      b.skipRefresh,
++			skipRefresh:      b.skipRefresh && !b.smartRefresh,
+ 			skipPlanChanges:  b.skipPlanChanges,
+ 			RemoveStatements: b.RemoveStatements,
+ 		}
+@@ -329,7 +347,7 @@ func (b *PlanGraphBuilder) initDestroy() {
+ 	b.ConcreteResourceInstance = func(a *NodeAbstractResourceInstance) dag.Vertex {
+ 		return &NodePlanDestroyableResourceInstance{
+ 			NodeAbstractResourceInstance: a,
+-			skipRefresh:                  b.skipRefresh,
++			skipRefresh:                  b.skipRefresh && !b.smartRefresh,
+ 		}
+ 	}
+ }
+diff --git a/internal/tofu/hook.go b/internal/tofu/hook.go
+index 81d1ecb21..2aacd1fd3 100644
+--- a/internal/tofu/hook.go
++++ b/internal/tofu/hook.go
+@@ -16,6 +16,17 @@ import (
+ 
+ // HookAction is an enum of actions that can be taken as a result of a hook
+ // callback. This allows you to modify the behavior of OpenTofu at runtime.
++type postSkipRefreshHook interface {
++	PostSkipRefresh(addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error)
++}
++
++func callPostSkipRefresh(h Hook, addr addrs.AbsResourceInstance, gen states.Generation) (HookAction, error) {
++	if hook, ok := h.(postSkipRefreshHook); ok {
++		return hook.PostSkipRefresh(addr, gen)
++	}
++	return HookActionContinue, nil
++}
++
+ type HookAction byte
+ 
+ const (
+diff --git a/internal/tofu/hook_mock.go b/internal/tofu/hook_mock.go
+index ebe596872..a18508cdd 100644
+--- a/internal/tofu/hook_mock.go
++++ b/internal/tofu/hook_mock.go
+@@ -459,6 +459,10 @@ func (h *MockHook) PostClose(addr addrs.AbsResourceInstance, err error) (HookAct
+ 	return h.PostCloseReturn, h.PostCloseReturnError
+ }
+ 
++func (h *MockHook) PostSkipRefresh(_ addrs.AbsResourceInstance, _ states.Generation) (HookAction, error) {
++	return HookActionContinue, nil
++}
++
+ func (h *MockHook) Stopping() {
+ 	h.Lock()
+ 	defer h.Unlock()
+diff --git a/internal/tofu/node_provider.go b/internal/tofu/node_provider.go
+index e131126eb..5ff25c34a 100644
+--- a/internal/tofu/node_provider.go
++++ b/internal/tofu/node_provider.go
+@@ -12,6 +12,7 @@ import (
+ 	"log"
+ 
+ 	"github.com/hashicorp/hcl/v2"
++	"github.com/zclconf/go-cty/cty"
+ 
+ 	"github.com/opentofu/opentofu/internal/addrs"
+ 	"github.com/opentofu/opentofu/internal/configs/configschema"
+@@ -51,7 +52,8 @@ const traceAttrProviderInstanceAddr = "opentofu.provider_instance.address"
+ type NodeApplyableProvider struct {
+ 	*NodeAbstractProvider
+ 
+-	instances map[addrs.InstanceKey]providers.Configured
++	instances          map[addrs.InstanceKey]providers.Configured
++	configFingerprints map[addrs.InstanceKey][]byte
+ }
+ 
+ var (
+@@ -59,6 +61,20 @@ var (
+ 	_ GraphNodeProvider   = (*NodeApplyableProvider)(nil) // Partial, see NodeAbstractProvider
+ )
+ 
++// GraphNodeProvider
++func (n *NodeApplyableProvider) ProviderConfigFingerprint(key addrs.InstanceKey) []byte {
++	if n.configFingerprints == nil {
++		return nil
++	}
++	fp := n.configFingerprints[key]
++	if fp == nil {
++		return nil
++	}
++	ret := make([]byte, len(fp))
++	copy(ret, fp)
++	return ret
++}
++
+ // GraphNodeProvider
+ func (n *NodeApplyableProvider) Instance(key addrs.InstanceKey) (providers.Configured, error) {
+ 	if n.instances == nil {
+@@ -91,6 +107,7 @@ func (n *NodeApplyableProvider) Execute(ctx context.Context, evalCtx EvalContext
+ 	var diags tfdiags.Diagnostics
+ 
+ 	n.instances = map[addrs.InstanceKey]providers.Configured{}
++	n.configFingerprints = map[addrs.InstanceKey][]byte{}
+ 
+ 	var instanceData map[addrs.InstanceKey]instances.RepetitionData
+ 	if n.Config == nil || n.Config.Instances == nil {
+@@ -207,6 +224,12 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
+ 		// Mocked for testing
+ 		instance, diags := evalCtx.Providers().NewProvider(ctx, n.Addr.Provider)
+ 		n.instances[providerKey] = instance
++		if fp, err := smartRefreshValueFingerprint(cty.EmptyObjectVal); err == nil {
++			if n.configFingerprints == nil {
++				n.configFingerprints = map[addrs.InstanceKey][]byte{}
++			}
++			n.configFingerprints[providerKey] = fp
++		}
+ 		return diags
+ 	}
+ 
+@@ -230,6 +253,19 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
+ 		return diags
+ 	}
+ 
++	var configFingerprint []byte
++	var fingerprintErr error
++	if smartRefreshSchemaContainsPersistUnsafeValue(configSchema, configVal) {
++		fingerprintErr = fmt.Errorf("provider configuration contains sensitive, ephemeral, or write-only values")
++	} else {
++		configFingerprint, fingerprintErr = smartRefreshValueFingerprint(configVal)
++	}
++	if fingerprintErr != nil {
++		// Fingerprinting is an optimization. If it cannot be produced, leave it
++		// unavailable so resource nodes conservatively perform a refresh.
++		log.Printf("[WARN] ConfigureProvider: cannot fingerprint %s: %s", n.Addr.InstanceString(providerKey), fingerprintErr)
++	}
++
+ 	if verifyConfigIsKnown && !configVal.IsWhollyKnown() {
+ 		diags = diags.Append(&hcl.Diagnostic{
+ 			Severity: hcl.DiagError,
+@@ -262,6 +298,13 @@ func (n *NodeApplyableProvider) ConfigureProvider(ctx context.Context, evalCtx E
+ 		return diags
+ 	}
+ 
++	if len(configFingerprint) > 0 {
++		if n.configFingerprints == nil {
++			n.configFingerprints = map[addrs.InstanceKey][]byte{}
++		}
++		n.configFingerprints[providerKey] = configFingerprint
++	}
++
+ 	return diags
+ }
+ 
+diff --git a/internal/tofu/node_resource_abstract_instance.go b/internal/tofu/node_resource_abstract_instance.go
+index 8ee1ba5e3..a89be19bd 100644
+--- a/internal/tofu/node_resource_abstract_instance.go
++++ b/internal/tofu/node_resource_abstract_instance.go
+@@ -136,6 +136,62 @@ func (n *NodeAbstractResourceInstance) Path() addrs.ModuleInstance {
+ 	return n.Addr.Module
+ }
+ 
++func (n *NodeAbstractResourceInstance) evaluatedSmartRefreshFingerprint(ctx context.Context, evalCtx EvalContext, createBeforeDestroy, skipDestroy bool) ([]byte, tfdiags.Diagnostics) {
++	var diags tfdiags.Diagnostics
++	if n.Config == nil || n.Schema == nil {
++		return nil, diags
++	}
++	if !smartRefreshSupportsConfig(n.Config) {
++		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its config uses advanced lifecycle settings", n.Addr)
++		return nil, diags
++	}
++	if n.ResolvedProvider.ConfigFingerprint == nil {
++		log.Printf("[DEBUG] SmartRefresh: provider fingerprint unavailable for %s", n.Addr)
++		return nil, diags
++	}
++	if m, ok := n.ProviderMetas[n.ResolvedProvider.ProviderConfig.Provider]; ok && m != nil {
++		// provider_meta is passed to ReadResource but not part of the fingerprint, so always refresh.
++		log.Printf("[DEBUG] SmartRefresh: refreshing %s conservatively because its module sets provider_meta", n.Addr)
++		return nil, diags
++	}
++
++	forEach, forEachDiags := evaluateForEachExpression(ctx, n.Config.ForEach, evalCtx, n.ResourceAddr())
++	diags = diags.Append(forEachDiags)
++	if forEachDiags.HasErrors() {
++		return nil, diags
++	}
++
++	keyData := EvalDataForInstanceKey(n.ResourceInstanceAddr().Resource.Key, forEach)
++	configVal, _, configDiags := evalCtx.EvaluateBlock(ctx, n.Config.Config, n.Schema, nil, keyData)
++	diags = diags.Append(configDiags.InConfigBody(n.Config.Config, n.Addr.String()))
++	if configDiags.HasErrors() {
++		return nil, diags
++	}
++	if smartRefreshSchemaContainsPersistUnsafeValue(n.Schema, configVal) {
++		log.Printf("[DEBUG] SmartRefresh: refusing to persist a fingerprint derived from sensitive, ephemeral, or write-only config for %s", n.Addr)
++		return nil, diags
++	}
++
++	providerFingerprint := n.ResolvedProvider.ConfigFingerprint(n.ResolvedProviderKey)
++	fingerprint, err := smartRefreshInstanceFingerprint(
++		configVal,
++		n.Addr,
++		n.ResolvedProvider.ProviderConfig,
++		n.ResolvedProviderKey,
++		providerFingerprint,
++		n.SchemaVersion,
++		n.Dependencies,
++		createBeforeDestroy,
++		skipDestroy,
++	)
++	if err != nil {
++		log.Printf("[DEBUG] SmartRefresh: cannot fingerprint %s: %s", n.Addr, err)
++		return nil, diags
++	}
++
++	return fingerprint, diags
++}
++
+ // GraphNodeReferenceable
+ func (n *NodeAbstractResourceInstance) ReferenceableAddrs() []addrs.Referenceable {
+ 	addr := n.ResourceInstanceAddr()
+diff --git a/internal/tofu/node_resource_apply_instance.go b/internal/tofu/node_resource_apply_instance.go
+index 47c5137d1..fc57787c9 100644
+--- a/internal/tofu/node_resource_apply_instance.go
++++ b/internal/tofu/node_resource_apply_instance.go
+@@ -6,9 +6,11 @@
+ package tofu
+ 
+ import (
++	"bytes"
+ 	"context"
+ 	"fmt"
+ 	"log"
++	"time"
+ 
+ 	"github.com/opentofu/opentofu/internal/addrs"
+ 	"github.com/opentofu/opentofu/internal/configs"
+@@ -365,13 +367,46 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
+ 
+ 	// If there is no change, there was nothing to apply, and we don't need to
+ 	// re-write the state, but we do need to re-evaluate postconditions.
++	// We do however persist the structural fingerprint so that subsequent plans
++	// can detect config changes for resources with no planned changes.
+ 	if diffApply.Action == plans.NoOp {
++		if n.Config != nil && state != nil {
++			newHash := configExprHash(n.Config)
++			if !bytes.Equal(state.ConfigExprHash, newHash) {
++				state.ConfigExprHash = newHash
++				if err := n.writeResourceInstanceState(ctx, evalCtx, state, workingState); err != nil {
++					return diags.Append(err)
++				}
++			}
++		}
+ 		return diags.Append(n.managedResourcePostconditions(ctx, evalCtx, repeatData))
+ 	}
+ 
++	// Compute the configuration/provider context associated with this apply.
++	// A successful provider mutation becomes a fresh trust point for Smart
++	// Refresh. A failed mutation invalidates cached metadata because the remote
++	// object may have been partially modified after the last ReadResource.
++	var applyRefreshFingerprint []byte
++	skipDestroy, skipDestroyDiags := n.shouldSkipDestroy()
++	if fingerprint, fingerprintDiags := n.evaluatedSmartRefreshFingerprint(ctx, evalCtx, n.CreateBeforeDestroy(), skipDestroy); !fingerprintDiags.Append(skipDestroyDiags).HasErrors() {
++		applyRefreshFingerprint = fingerprint
++	} else {
++		log.Printf("[DEBUG] SmartRefresh: unable to fingerprint apply result for %s; next plan will refresh conservatively", n.Addr)
++	}
++
+ 	state, applyDiags := n.apply(ctx, evalCtx, state, diffApply, n.Config, repeatData, n.CreateBeforeDestroy())
+ 	diags = diags.Append(applyDiags)
+ 
++	if state != nil {
++		if applyDiags.HasErrors() {
++			state.RefreshFingerprint = nil
++			state.LastRefreshUnix = 0
++		} else if len(applyRefreshFingerprint) > 0 {
++			state.RefreshFingerprint = applyRefreshFingerprint
++			state.LastRefreshUnix = time.Now().UTC().Unix()
++		}
++	}
++
+ 	// We clear the change out here so that future nodes don't see a change
+ 	// that is already complete.
+ 	err = n.writeChange(ctx, evalCtx, nil, "")
+@@ -384,6 +419,12 @@ func (n *NodeApplyableResourceInstance) managedResourceExecute(ctx context.Conte
+ 	if state != nil {
+ 		// dependencies are always updated to match the configuration during apply
+ 		state.Dependencies = n.Dependencies
++		// Persist the structural fingerprint of the config block so that
++		// subsequent plans can detect whether the meta-arguments (count,
++		// for_each, depends_on) have changed without evaluating expressions.
++		if n.Config != nil {
++			state.ConfigExprHash = configExprHash(n.Config)
++		}
+ 	}
+ 	err = n.writeResourceInstanceState(ctx, evalCtx, state, workingState)
+ 	if err != nil {
+diff --git a/internal/tofu/node_resource_deposed.go b/internal/tofu/node_resource_deposed.go
+index 0c9198031..72bd500c9 100644
+--- a/internal/tofu/node_resource_deposed.go
++++ b/internal/tofu/node_resource_deposed.go
+@@ -66,6 +66,7 @@ var (
+ 	_ GraphNodeExecutable                    = (*NodePlanDeposedResourceInstanceObject)(nil)
+ 	_ GraphNodeProviderConsumer              = (*NodePlanDeposedResourceInstanceObject)(nil)
+ 	_ GraphNodeProvisionerConsumer           = (*NodePlanDeposedResourceInstanceObject)(nil)
++	_ GraphNodeSkipRefresh                   = (*NodePlanDeposedResourceInstanceObject)(nil)
+ )
+ 
+ func (n *NodePlanDeposedResourceInstanceObject) Name() string {
+@@ -76,6 +77,11 @@ func (n *NodePlanDeposedResourceInstanceObject) DeposedInstanceObjectKey() state
+ 	return n.DeposedKey
+ }
+ 
++// GraphNodeSkipRefresh
++func (n *NodePlanDeposedResourceInstanceObject) SetSkipRefresh(v bool) {
++	n.skipRefresh = v
++}
++
+ // GraphNodeReferenceable implementation, overriding the one from NodeAbstractResourceInstance
+ func (n *NodePlanDeposedResourceInstanceObject) ReferenceableAddrs() []addrs.Referenceable {
+ 	// Deposed objects don't participate in references.
+@@ -158,6 +164,13 @@ func (n *NodePlanDeposedResourceInstanceObject) Execute(ctx context.Context, eva
+ 		// If we refreshed then our subsequent planning should be in terms of
+ 		// the new object, not the original object.
+ 		state = refreshedState
++	} else if n.skipRefresh {
++		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
++			return callPostSkipRefresh(h, n.Addr, n.DeposedKey)
++		}))
++		if diags.HasErrors() {
++			return diags
++		}
+ 	}
+ 
+ 	if !n.skipPlanChanges {
+diff --git a/internal/tofu/node_resource_plan.go b/internal/tofu/node_resource_plan.go
+index a435d582d..3d6ce3fc3 100644
+--- a/internal/tofu/node_resource_plan.go
++++ b/internal/tofu/node_resource_plan.go
+@@ -29,9 +29,12 @@ type nodeExpandPlannableResource struct {
+ 	// on regardless of what the configuration says.
+ 	ForceCreateBeforeDestroy *bool
+ 
+-	// skipRefresh indicates that we should skip refreshing individual instances
++	// skipRefresh indicates that we should skip refreshing individual instances.
+ 	skipRefresh bool
+ 
++	// smartRefresh enables the per-instance evaluated fingerprint safety check.
++	smartRefresh bool
++
+ 	preDestroyRefresh bool
+ 
+ 	// skipPlanChanges indicates we should skip trying to plan change actions
+@@ -78,6 +81,11 @@ func (n *nodeExpandPlannableResource) Name() string {
+ func (n *nodeExpandPlannableResource) retainDuringUnusedPruning() {
+ }
+ 
++// GraphNodeSkipRefresh
++func (n *nodeExpandPlannableResource) SetSkipRefresh(v bool) {
++	n.skipRefresh = v
++}
++
+ // GraphNodeAttachDependencies
+ func (n *nodeExpandPlannableResource) AttachDependencies(deps []addrs.ConfigResource) {
+ 	n.dependencies = deps
+@@ -146,8 +154,11 @@ func (n *nodeExpandPlannableResource) DynamicExpand(evalCtx EvalContext) (*Graph
+ 
+ 		return &NodePlannableResourceInstanceOrphan{
+ 			NodeAbstractResourceInstance: a,
+-			skipRefresh:                  n.skipRefresh,
+-			skipPlanChanges:              n.skipPlanChanges,
++			// An orphan has no desired instance configuration to fingerprint.
++			// In Smart Refresh mode it must therefore be refreshed conservatively
++			// before we plan its removal.
++			skipRefresh:     n.skipRefresh && !n.smartRefresh,
++			skipPlanChanges: n.skipPlanChanges,
+ 		}
+ 	}
+ 
+@@ -385,6 +396,7 @@ func (n *nodeExpandPlannableResource) resourceInstanceSubgraph(ctx context.Conte
+ 			// nodes that have it.
+ 			ForceCreateBeforeDestroy: n.CreateBeforeDestroy(),
+ 			skipRefresh:              n.skipRefresh,
++			smartRefresh:             n.smartRefresh,
+ 			skipPlanChanges:          n.skipPlanChanges,
+ 			forceReplace:             n.forceReplace,
+ 		}
+diff --git a/internal/tofu/node_resource_plan_destroy.go b/internal/tofu/node_resource_plan_destroy.go
+index 9bfbda36c..f12b38d17 100644
+--- a/internal/tofu/node_resource_plan_destroy.go
++++ b/internal/tofu/node_resource_plan_destroy.go
+@@ -42,6 +42,7 @@ var (
+ 	_ GraphNodeExecutable           = (*NodePlanDestroyableResourceInstance)(nil)
+ 	_ GraphNodeProviderConsumer     = (*NodePlanDestroyableResourceInstance)(nil)
+ 	_ dag.NamedVertex               = (*NodePlanDestroyableResourceInstance)(nil)
++	_ GraphNodeSkipRefresh          = (*NodePlanDestroyableResourceInstance)(nil)
+ )
+ 
+ // dag.NamedVertex
+@@ -49,6 +50,11 @@ func (n *NodePlanDestroyableResourceInstance) Name() string {
+ 	return n.NodeAbstractResourceInstance.Name() + " (destroy)"
+ }
+ 
++// GraphNodeSkipRefresh
++func (n *NodePlanDestroyableResourceInstance) SetSkipRefresh(v bool) {
++	n.skipRefresh = v
++}
++
+ // GraphNodeDestroyer
+ func (n *NodePlanDestroyableResourceInstance) DestroyAddr() *addrs.AbsResourceInstance {
+ 	addr := n.ResourceInstanceAddr()
+@@ -131,6 +137,12 @@ func (n *NodePlanDestroyableResourceInstance) managedResourceExecute(ctx context
+ 		if diags.HasErrors() {
+ 			return diags
+ 		}
++		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
++			return callPostSkipRefresh(h, addr, states.CurrentGen)
++		}))
++		if diags.HasErrors() {
++			return diags
++		}
+ 	}
+ 
+ 	var planDiags tfdiags.Diagnostics
+diff --git a/internal/tofu/node_resource_plan_instance.go b/internal/tofu/node_resource_plan_instance.go
+index c16c9ada8..53176dc22 100644
+--- a/internal/tofu/node_resource_plan_instance.go
++++ b/internal/tofu/node_resource_plan_instance.go
+@@ -6,11 +6,13 @@
+ package tofu
+ 
+ import (
++	"bytes"
+ 	"context"
+ 	"fmt"
+ 	"log"
+ 	"path/filepath"
+ 	"sort"
++	"time"
+ 
+ 	"github.com/hashicorp/hcl/v2"
+ 	"github.com/hashicorp/hcl/v2/hclsyntax"
+@@ -36,9 +38,13 @@ type NodePlannableResourceInstance struct {
+ 	*NodeAbstractResourceInstance
+ 	ForceCreateBeforeDestroy bool
+ 
+-	// skipRefresh indicates that we should skip refreshing individual instances
++	// skipRefresh indicates that we should skip refreshing individual instances.
+ 	skipRefresh bool
+ 
++	// smartRefresh enables the evaluated per-instance fingerprint check before
++	// a graph-level skip is allowed to bypass ReadResource.
++	smartRefresh bool
++
+ 	// skipPlanChanges indicates we should skip trying to plan change actions
+ 	// for any instances.
+ 	skipPlanChanges bool
+@@ -90,8 +96,14 @@ var (
+ 	_ GraphNodeAttachResourceConfig = (*NodePlannableResourceInstance)(nil)
+ 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstance)(nil)
+ 	_ GraphNodeExecutable           = (*NodePlannableResourceInstance)(nil)
++	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstance)(nil)
+ )
+ 
++// GraphNodeSkipRefresh
++func (n *NodePlannableResourceInstance) SetSkipRefresh(v bool) {
++	n.skipRefresh = v
++}
++
+ // GraphNodeEvalable
+ func (n *NodePlannableResourceInstance) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {
+ 	addr := n.ResourceInstanceAddr()
+@@ -248,6 +260,7 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
+ 	addr := n.ResourceInstanceAddr()
+ 
+ 	var instanceRefreshState *states.ResourceInstanceObject
++	var currentRefreshFingerprint []byte
+ 
+ 	checkRuleSeverity := tfdiags.Error
+ 	if n.skipPlanChanges || n.preDestroyRefresh {
+@@ -339,8 +352,53 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
+ 			}
+ 			instanceRefreshState.SkipDestroy = skipDestroy
+ 
++			if !importing {
++				if n.smartRefresh {
++					// Best effort: a failed fingerprint only disables the cache for this
++					// resource. Real config errors are reported by n.plan, and refresh-only
++					// plans must not fail on them.
++					currentRefreshFingerprint, _ = n.evaluatedSmartRefreshFingerprint(
++						ctx, evalCtx, instanceRefreshState.CreateBeforeDestroy, instanceRefreshState.SkipDestroy,
++					)
++				}
++
++				if n.smartRefresh && n.skipRefresh {
++					switch {
++					case len(currentRefreshFingerprint) == 0:
++						log.Printf("[DEBUG] SmartRefresh: refreshing %s because its evaluated fingerprint is unavailable", n.Addr)
++						n.skipRefresh = false
++					case len(instanceRefreshState.RefreshFingerprint) == 0:
++						log.Printf("[DEBUG] SmartRefresh: refreshing %s because state has no evaluated fingerprint", n.Addr)
++						n.skipRefresh = false
++					case !bytes.Equal(instanceRefreshState.RefreshFingerprint, currentRefreshFingerprint):
++						log.Printf("[DEBUG] SmartRefresh: refreshing %s because its evaluated fingerprint changed", n.Addr)
++						n.skipRefresh = false
++					case !smartRefreshMetadataFresh(instanceRefreshState.LastRefreshUnix, time.Now()):
++						log.Printf("[DEBUG] SmartRefresh: refreshing %s because cached remote state is stale", n.Addr)
++						n.skipRefresh = false
++					}
++				}
++			}
++
+ 			if n.skipRefresh {
+-				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy {
++				// Notify hooks that this resource's refresh was intentionally skipped.
++				diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
++					return callPostSkipRefresh(h, n.Addr, states.CurrentGen)
++				}))
++				if diags.HasErrors() {
++					return diags
++				}
++
++				// Update only metadata for the concrete instance that is actually
++				// participating in this plan. Never globally backfill untouched
++				// resources, which is unsafe with -target/-exclude.
++				hashChanged := false
++				newHash := configExprHash(n.Config)
++				if !bytes.Equal(instanceRefreshState.ConfigExprHash, newHash) {
++					instanceRefreshState.ConfigExprHash = newHash
++					hashChanged = true
++				}
++				if prevCreateBeforeDestroy != instanceRefreshState.CreateBeforeDestroy || prevSkipDestroy != instanceRefreshState.SkipDestroy || hashChanged {
+ 					diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
+ 					if diags.HasErrors() {
+ 						return diags
+@@ -368,6 +426,18 @@ func (n *NodePlannableResourceInstance) managedResourceExecute(ctx context.Conte
+ 			// results in no changes, we will re-write these dependencies
+ 			// below.
+ 			instanceRefreshState.Dependencies = mergeDeps(n.Dependencies, instanceRefreshState.Dependencies)
++			// Persist the structural fingerprint so future plans can detect
++			// config changes even for resources that were not skipped.
++			if n.Config != nil {
++				instanceRefreshState.ConfigExprHash = configExprHash(n.Config)
++			}
++			// Always replace the cache metadata: a refresh that cannot be fingerprinted
++			// must not keep the fingerprint of a previous provider context.
++			instanceRefreshState.RefreshFingerprint = currentRefreshFingerprint
++			instanceRefreshState.LastRefreshUnix = 0
++			if len(currentRefreshFingerprint) > 0 {
++				instanceRefreshState.LastRefreshUnix = time.Now().UTC().Unix()
++			}
+ 		}
+ 
+ 		diags = diags.Append(n.writeResourceInstanceState(ctx, evalCtx, instanceRefreshState, refreshState))
+diff --git a/internal/tofu/node_resource_plan_orphan.go b/internal/tofu/node_resource_plan_orphan.go
+index 31517c6f1..df82b88a4 100644
+--- a/internal/tofu/node_resource_plan_orphan.go
++++ b/internal/tofu/node_resource_plan_orphan.go
+@@ -50,12 +50,18 @@ var (
+ 	_ GraphNodeAttachResourceState  = (*NodePlannableResourceInstanceOrphan)(nil)
+ 	_ GraphNodeExecutable           = (*NodePlannableResourceInstanceOrphan)(nil)
+ 	_ GraphNodeProviderConsumer     = (*NodePlannableResourceInstanceOrphan)(nil)
++	_ GraphNodeSkipRefresh          = (*NodePlannableResourceInstanceOrphan)(nil)
+ )
+ 
+ func (n *NodePlannableResourceInstanceOrphan) Name() string {
+ 	return n.ResourceInstanceAddr().String() + " (orphan)"
+ }
+ 
++// GraphNodeSkipRefresh
++func (n *NodePlannableResourceInstanceOrphan) SetSkipRefresh(v bool) {
++	n.skipRefresh = v
++}
++
+ // GraphNodeExecutable
+ func (n *NodePlannableResourceInstanceOrphan) Execute(ctx context.Context, evalCtx EvalContext, op walkOperation) tfdiags.Diagnostics {
+ 	addr := n.ResourceInstanceAddr()
+@@ -175,6 +181,13 @@ func (n *NodePlannableResourceInstanceOrphan) managedResourceExecute(ctx context
+ 		// If we refreshed then our subsequent planning should be in terms of
+ 		// the new object, not the original object.
+ 		oldState = refreshedState
++	} else {
++		diags = diags.Append(evalCtx.Hook(func(h Hook) (HookAction, error) {
++			return callPostSkipRefresh(h, n.Addr, states.CurrentGen)
++		}))
++		if diags.HasErrors() {
++			return diags
++		}
+ 	}
+ 
+ 	// If we're skipping planning, all we need to do is write the state. If the
+diff --git a/internal/tofu/smart_refresh_fingerprint.go b/internal/tofu/smart_refresh_fingerprint.go
+new file mode 100644
+index 000000000..8243db0ad
+--- /dev/null
++++ b/internal/tofu/smart_refresh_fingerprint.go
+@@ -0,0 +1,165 @@
++// Copyright (c) The OpenTofu Authors
++// SPDX-License-Identifier: MPL-2.0
++
++package tofu
++
++import (
++	"crypto/sha256"
++	"fmt"
++	"sort"
++	"time"
++
++	"github.com/zclconf/go-cty/cty"
++	ctyjson "github.com/zclconf/go-cty/cty/json"
++	ctymsgpack "github.com/zclconf/go-cty/cty/msgpack"
++
++	"github.com/opentofu/opentofu/internal/addrs"
++	"github.com/opentofu/opentofu/internal/configs"
++	"github.com/opentofu/opentofu/internal/configs/configschema"
++	"github.com/opentofu/opentofu/internal/lang/marks"
++)
++
++// smartRefreshMaxAge bounds how long Smart Refresh can trust a matching
++// fingerprint without re-reading the remote object. This keeps the fast path
++// useful while still guaranteeing periodic drift detection.
++const smartRefreshMaxAge = 24 * time.Hour
++
++func smartRefreshPathHasConfiguredValue(v cty.Value, path cty.Path) bool {
++	if v == cty.NilVal || !v.IsWhollyKnown() {
++		return true
++	}
++	if len(path) == 0 {
++		return !v.IsNull()
++	}
++	pathVal, err := path.Apply(v)
++	if err != nil || pathVal == cty.NilVal || !pathVal.IsWhollyKnown() {
++		return true
++	}
++	return !pathVal.IsNull()
++}
++
++func smartRefreshSchemaContainsPersistUnsafeValue(schema *configschema.Block, v cty.Value) bool {
++	if schema == nil || v == cty.NilVal {
++		return true
++	}
++
++	// Schema traversal operates on the shape/value only. Marks from variables
++	// and expressions are checked separately by smartRefreshValueFingerprint.
++	unmarked, _ := v.UnmarkDeep()
++
++	for _, pvm := range schema.ValueMarks(unmarked, nil, nil) {
++		if _, sensitive := pvm.Marks[marks.Sensitive]; sensitive && smartRefreshPathHasConfiguredValue(unmarked, pvm.Path) {
++			return true
++		}
++		if _, ephemeral := pvm.Marks[marks.Ephemeral]; ephemeral && smartRefreshPathHasConfiguredValue(unmarked, pvm.Path) {
++			return true
++		}
++	}
++
++	for _, path := range schema.WriteOnlyPaths(unmarked, nil) {
++		if smartRefreshPathHasConfiguredValue(unmarked, path) {
++			return true
++		}
++	}
++	return false
++}
++
++func smartRefreshValueFingerprint(v cty.Value) ([]byte, error) {
++	if v == cty.NilVal {
++		return nil, fmt.Errorf("cannot fingerprint cty.NilVal")
++	}
++	if marks.ContainsAnyMark(v, marks.Sensitive, marks.Ephemeral) {
++		return nil, fmt.Errorf("cannot persist a fingerprint derived from sensitive or ephemeral values")
++	}
++
++	unmarked, _ := v.UnmarkDeep()
++	if !unmarked.IsWhollyKnown() {
++		return nil, fmt.Errorf("cannot safely fingerprint an unknown cty value")
++	}
++
++	typeSrc, err := ctyjson.MarshalType(unmarked.Type())
++	if err != nil {
++		return nil, fmt.Errorf("marshal cty type: %w", err)
++	}
++	valueSrc, err := ctymsgpack.Marshal(unmarked, unmarked.Type())
++	if err != nil {
++		return nil, fmt.Errorf("marshal cty value: %w", err)
++	}
++
++	h := sha256.New()
++	_, _ = h.Write(typeSrc)
++	_, _ = h.Write([]byte{0})
++	_, _ = h.Write(valueSrc)
++	return h.Sum(nil), nil
++}
++
++// smartRefreshSupportsConfig reports whether a resource's lifecycle settings
++// are simple enough to be fully represented by the evaluated fingerprint.
++// Advanced settings (ignore rules, prevent-destroy, replacement triggers,
++// custom conditions) can alter planning while leaving the evaluated config
++// unchanged, so Smart Refresh refreshes those resources conservatively
++// instead of ever skipping their provider read.
++func smartRefreshSupportsConfig(config *configs.Resource) bool {
++	if config == nil || config.Managed == nil {
++		return false
++	}
++	return !config.Managed.IgnoreAllChanges &&
++		len(config.Managed.IgnoreChanges) == 0 &&
++		config.Managed.PreventDestroy == nil &&
++		len(config.TriggersReplacement) == 0 &&
++		!config.HasCustomConditions()
++}
++
++func smartRefreshInstanceFingerprint(
++	configVal cty.Value,
++	addr addrs.AbsResourceInstance,
++	providerAddr addrs.AbsProviderConfig,
++	providerKey addrs.InstanceKey,
++	providerFingerprint []byte,
++	schemaVersion uint64,
++	dependencies []addrs.ConfigResource,
++	createBeforeDestroy bool,
++	skipDestroy bool,
++) ([]byte, error) {
++	if len(providerFingerprint) == 0 {
++		return nil, fmt.Errorf("provider configuration fingerprint is unavailable")
++	}
++
++	configFingerprint, err := smartRefreshValueFingerprint(configVal)
++	if err != nil {
++		return nil, err
++	}
++
++	h := sha256.New()
++	fmt.Fprintf(h, "resource:%s\n", addr.String())
++	fmt.Fprintf(h, "provider:%s\n", providerAddr.String())
++	fmt.Fprintf(h, "schema-version:%d\n", schemaVersion)
++	fmt.Fprintf(h, "create-before-destroy:%t\n", createBeforeDestroy)
++	fmt.Fprintf(h, "skip-destroy:%t\n", skipDestroy)
++	if providerKey != addrs.NoKey {
++		fmt.Fprintf(h, "provider-key:%s\n", providerKey.String())
++	}
++	_, _ = h.Write(configFingerprint)
++	_, _ = h.Write([]byte{0})
++	_, _ = h.Write(providerFingerprint)
++
++	deps := make([]string, 0, len(dependencies))
++	for _, dep := range dependencies {
++		deps = append(deps, dep.String())
++	}
++	sort.Strings(deps)
++	for _, dep := range deps {
++		fmt.Fprintf(h, "\ndep:%s", dep)
++	}
++
++	return h.Sum(nil), nil
++}
++
++func smartRefreshMetadataFresh(lastRefreshUnix int64, now time.Time) bool {
++	if lastRefreshUnix <= 0 {
++		return false
++	}
++	last := time.Unix(lastRefreshUnix, 0).UTC()
++	age := now.UTC().Sub(last)
++	return age >= 0 && age <= smartRefreshMaxAge
++}
+diff --git a/internal/tofu/transform_provider.go b/internal/tofu/transform_provider.go
+index f4087762f..20887fc99 100644
+--- a/internal/tofu/transform_provider.go
++++ b/internal/tofu/transform_provider.go
+@@ -51,6 +51,10 @@ func transformProviders(concrete ConcreteProviderNodeFunc, config *configs.Confi
+ // satisfies, which is relative to the path returned by method Path().
+ //
+ // Name returns the full name of the provider in the config.
++type GraphNodeProviderConfigFingerprint interface {
++	ProviderConfigFingerprint(addrs.InstanceKey) []byte
++}
++
+ type GraphNodeProvider interface {
+ 	GraphNodeModulePath
+ 	ProviderAddr() addrs.AbsProviderConfig
+@@ -95,6 +99,11 @@ type ResolvedProvider struct {
+ 	// or returns nil and an error if the provider isn't initialized.
+ 	Instance func(addrs.InstanceKey) (providers.Configured, error)
+ 
++	// ConfigFingerprint returns the fingerprint of the evaluated provider
++	// configuration for a concrete provider instance. A nil result makes
++	// Smart Refresh fall back to a conservative remote refresh.
++	ConfigFingerprint func(addrs.InstanceKey) []byte
++
+ 	// Test overrides
+ 	IsMocked          bool
+ 	MockResources     []*configs.MockResource
+@@ -201,6 +210,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
+ 				KeyResource:   req.KeyResource,
+ 				KeyExact:      req.KeyExact,
+ 			}
++			if fp, ok := target.(GraphNodeProviderConfigFingerprint); ok {
++				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
++			}
+ 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
+ 			pv.SetProvider(resolved)
+ 
+@@ -271,6 +283,9 @@ func (t *ProviderTransformer) Transform(_ context.Context, g *Graph) error {
+ 			}
+ 			resolved.ProviderConfig = target.ProviderAddr()
+ 			resolved.Instance = target.Instance
++			if fp, ok := target.(GraphNodeProviderConfigFingerprint); ok {
++				resolved.ConfigFingerprint = fp.ProviderConfigFingerprint
++			}
+ 
+ 			// Include test mocking and override extensions
+ 			resolved.IsMocked, resolved.MockResources, resolved.OverrideResources = target.MocksAndOverrides()
+@@ -762,6 +777,13 @@ func (n *graphNodeProxyProvider) Instance(key addrs.InstanceKey) (providers.Conf
+ 	return n.Target().Instance(key)
+ }
+ 
++func (n *graphNodeProxyProvider) ProviderConfigFingerprint(key addrs.InstanceKey) []byte {
++	if provider, ok := n.Target().(GraphNodeProviderConfigFingerprint); ok {
++		return provider.ProviderConfigFingerprint(key)
++	}
++	return nil
++}
++
+ func (n *graphNodeProxyProvider) Close(ctx context.Context) error {
+ 	// NOP, close handled by the proxied instance
+ 	return nil
+diff --git a/internal/tofu/transform_smart_refresh.go b/internal/tofu/transform_smart_refresh.go
+new file mode 100644
+index 000000000..61259cf59
+--- /dev/null
++++ b/internal/tofu/transform_smart_refresh.go
+@@ -0,0 +1,356 @@
++// Copyright (c) The OpenTofu Authors
++// SPDX-License-Identifier: MPL-2.0
++
++package tofu
++
++import (
++	"bytes"
++	"context"
++	"crypto/sha256"
++	"fmt"
++	"log"
++	"sort"
++
++	"github.com/opentofu/opentofu/internal/addrs"
++	"github.com/opentofu/opentofu/internal/configs"
++	"github.com/opentofu/opentofu/internal/dag"
++	"github.com/opentofu/opentofu/internal/states"
++)
++
++// configExprHash computes a cheap, coarse-grained fingerprint used only to
++// seed graph-level Smart Refresh pruning. It is intentionally not authoritative:
++// source ranges can miss same-length expression edits and ordinary attributes
++// are not represented here. The per-instance evaluated RefreshFingerprint is
++// the correctness boundary before ReadResource can be skipped.
++//
++// The returned slice is always 32 bytes (sha256.Size).
++func configExprHash(r *configs.Resource) []byte {
++	h := sha256.New()
++
++	// count expression — include file + byte range so relocating the block
++	// (e.g. adding a resource above it) also changes the digest.
++	if r.Count != nil {
++		rng := r.Count.StartRange()
++		fmt.Fprintf(h, "count:%s:%d-%d\n", rng.Filename, rng.Start.Byte, rng.End.Byte)
++	}
++
++	// for_each expression.
++	if r.ForEach != nil {
++		rng := r.ForEach.StartRange()
++		fmt.Fprintf(h, "for_each:%s:%d-%d\n", rng.Filename, rng.Start.Byte, rng.End.Byte)
++	}
++
++	// depends_on — collect as strings and sort for determinism.
++	deps := make([]string, 0, len(r.DependsOn))
++	for _, traversal := range r.DependsOn {
++		ref, diags := addrs.ParseRef(traversal)
++		if diags.HasErrors() {
++			// Fall back to source-range fingerprint for un-parseable traversals.
++			rng := traversal.SourceRange()
++			deps = append(deps, fmt.Sprintf("raw:%s:%d-%d", rng.Filename, rng.Start.Byte, rng.End.Byte))
++			continue
++		}
++		deps = append(deps, ref.Subject.String())
++	}
++	sort.Strings(deps)
++	for _, d := range deps {
++		fmt.Fprintf(h, "dep:%s\n", d)
++	}
++
++	return h.Sum(nil)
++}
++
++// GraphNodeSkipRefresh is implemented by graph nodes that support selective
++// refresh. The SmartRefreshTransformer uses this interface to mark nodes
++// that should skip their refresh (ReadResource) call.
++type GraphNodeSkipRefresh interface {
++	SetSkipRefresh(bool)
++}
++
++// SmartRefreshTransformer is a GraphTransformer that selectively sets
++// skipRefresh on resource nodes based on whether their configuration has
++// changed compared to the prior state. Only resources with configuration
++// changes, their ancestors, and their descendants are refreshed; all
++// other resources skip the refresh call.
++//
++// This transformer runs after ReferenceTransformer (so dependency edges
++// exist) and before TargetingTransformer (so targeting further narrows
++// the graph).
++type SmartRefreshTransformer struct {
++	// Config is the root configuration.
++	Config *configs.Config
++
++	// State is the prior run state to compare against.
++	State *states.State
++
++	// Active indicates whether smart refresh is enabled.
++	// When false, the transformer is a no-op.
++	Active bool
++}
++
++func (t *SmartRefreshTransformer) Transform(_ context.Context, g *Graph) error {
++	if !t.Active {
++		return nil
++	}
++
++	// If there's no prior state, everything is new — refresh all.
++	if t.State == nil || t.State.Empty() {
++		log.Printf("[DEBUG] SmartRefreshTransformer: no prior state, refresh all")
++		return nil
++	}
++
++	// Build the set of resource config addresses that have changed.
++	// A resource is considered "changed" if it exists in the config but
++	// not in state (new), or if it exists in state with recorded
++	// dependencies that differ from the current config references.
++	// Since we don't have decoded attribute values at this stage, we use
++	// a conservative heuristic: resources present in both config and state
++	// are considered unchanged unless the config block itself differs.
++	changedNodes := t.identifyChangedNodes(g)
++
++	if len(changedNodes) == 0 {
++		// No config changes detected — skip refresh for all resources.
++		log.Printf("[DEBUG] SmartRefreshTransformer: no config changes detected, skipping all refresh")
++		t.skipAllRefresh(g)
++		return nil
++	}
++
++	// Build the refresh set: changed nodes + ancestors + descendants.
++	refreshSet := t.buildRefreshSet(g, changedNodes)
++
++	t.applyRefreshSet(g, refreshSet)
++
++	return nil
++}
++
++func (t *SmartRefreshTransformer) applyRefreshSet(g *Graph, refreshSet dag.Set) {
++	for _, v := range g.Vertices() {
++		sr, ok := v.(GraphNodeSkipRefresh)
++		if !ok || isDataSource(v) {
++			continue
++		}
++		if refreshSet.Include(v) {
++			log.Printf("[DEBUG] SmartRefreshTransformer: will refresh %q", dag.VertexName(v))
++		} else {
++			log.Printf("[DEBUG] SmartRefreshTransformer: skipping refresh for %q", dag.VertexName(v))
++			sr.SetSkipRefresh(true)
++		}
++	}
++}
++
++// identifyChangedNodes returns the set of graph vertices that represent
++// resources with configuration changes relative to the prior state.
++func (t *SmartRefreshTransformer) identifyChangedNodes(g *Graph) dag.Set {
++	changed := make(dag.Set)
++
++	// First pass: identify directly changed nodes (new, orphan, hash mismatch).
++	for _, v := range g.Vertices() {
++		rn, ok := v.(GraphNodeConfigResource)
++		if !ok {
++			continue
++		}
++
++		// Only care about managed resources and data sources.
++		addr := rn.ResourceAddr()
++		if addr.Resource.Mode != addrs.ManagedResourceMode &&
++			addr.Resource.Mode != addrs.DataResourceMode {
++			continue
++		}
++
++		// Check if this resource exists in the prior state.
++		// If it doesn't exist in state, it's new — mark as changed.
++		hasState := false
++		for _, rs := range t.State.Resources(addr) {
++			if rs != nil {
++				hasState = true
++				break
++			}
++		}
++
++		if !hasState {
++			// New resource — needs refresh (well, there's nothing to refresh,
++			// but we include it so its descendants are also in the set).
++			changed.Add(v)
++			log.Printf("[DEBUG] SmartRefreshTransformer: %q is new (not in state)", dag.VertexName(v))
++			continue
++		}
++
++		// Resource exists in both config and state.
++		// Check if the resource config block structure has been modified
++		// by comparing the configExprHash fingerprint (covers count,
++		// for_each, and depends_on) against the stored hash in state.
++		if t.configBodyChanged(v) {
++			changed.Add(v)
++			log.Printf("[DEBUG] SmartRefreshTransformer: %q has changed config body", dag.VertexName(v))
++		}
++	}
++
++	return changed
++}
++
++// configBodyChanged returns true if the resource's structural meta-arguments
++// (count, for_each, depends_on) appear to have changed relative to the
++// fingerprint stored in the prior state.
++//
++// If no fingerprint is stored (older state or first run after the feature
++// was introduced), the method falls back to the conservative answer: assume
++// changed, which forces a full refresh.
++func (t *SmartRefreshTransformer) configBodyChanged(v dag.Vertex) bool {
++	rn, ok := v.(GraphNodeConfigResource)
++	if !ok {
++		return false
++	}
++
++	// Walk the config tree to find our resource's config block.
++	addr := rn.ResourceAddr()
++	modCfg := t.Config.Descendent(addr.Module)
++	if modCfg == nil {
++		// Can't find module config — conservatively mark as changed.
++		return true
++	}
++
++	var rc *configs.Resource
++	for _, r := range modCfg.Module.ManagedResources {
++		if r.Name == addr.Resource.Name && r.Type == addr.Resource.Type {
++			rc = r
++			break
++		}
++	}
++	if rc == nil {
++		for _, r := range modCfg.Module.DataResources {
++			if r.Name == addr.Resource.Name && r.Type == addr.Resource.Type {
++				rc = r
++				break
++			}
++		}
++	}
++	if rc == nil {
++		// Resource not found in config — orphan, mark as changed.
++		return true
++	}
++
++	currentHash := configExprHash(rc)
++	foundCurrent := false
++
++	// Compare against every instance's stored hash. If any instance has
++	// a nil hash (old state) or a different hash, mark as changed.
++	for _, rs := range t.State.Resources(addr) {
++		keys := make([]addrs.InstanceKey, 0, len(rs.Instances))
++		for key := range rs.Instances {
++			keys = append(keys, key)
++		}
++		sort.Slice(keys, func(i, j int) bool {
++			return addrs.InstanceKeyLess(keys[i], keys[j])
++		})
++		for _, key := range keys {
++			is := rs.Instances[key]
++			if is.Current == nil {
++				continue
++			}
++			foundCurrent = true
++			if is.Current.ConfigExprHash == nil {
++				// No fingerprint stored — conservative fallback.
++				log.Printf("[DEBUG] SmartRefreshTransformer: %q has no stored fingerprint, assuming changed", addr)
++				return true
++			}
++			if !bytes.Equal(is.Current.ConfigExprHash, currentHash) {
++				log.Printf("[DEBUG] SmartRefreshTransformer: %q fingerprint mismatch, config body changed", addr)
++				return true
++			}
++		}
++	}
++
++	if !foundCurrent {
++		// No current instances in state — treat as new/changed.
++		return true
++	}
++
++	// Every current instance that exists has the same coarse structural hash.
++	// The authoritative per-instance evaluated fingerprint is checked later.
++	return false
++}
++
++// isDataSource returns true if the given graph vertex represents a data source
++// (DataResourceMode). Data sources are always re-read during the plan phase, so
++// they never need an explicit refresh call and can be safely excluded from the
++// refresh set.
++func isDataSource(v dag.Vertex) bool {
++	rn, ok := v.(GraphNodeConfigResource)
++	if !ok {
++		return false
++	}
++	return rn.ResourceAddr().Resource.Mode == addrs.DataResourceMode
++}
++
++// buildRefreshSet constructs the complete set of nodes that need refresh:
++// the changed nodes, all their ancestors (upstream dependencies), and all
++// their descendants (downstream dependents).
++//
++// Data sources are excluded from the refresh set: they are always re-read
++// during the plan phase and do not have remote state that can drift, so
++// including them in the refresh set is wasteful.
++func (t *SmartRefreshTransformer) buildRefreshSet(g *Graph, changedNodes dag.Set) dag.Set {
++	// Phase 1: walk upstream in graph edge direction from dirty seeds to find
++	// every dependent. ReferenceTransformer connects depender -> dependency,
++	// so UpEdges are the reverse links: dependency -> dependers.
++	affected := make(dag.Set)
++	queue := make([]dag.Vertex, 0, len(changedNodes))
++	for _, v := range changedNodes {
++		if !affected.Include(v) {
++			affected.Add(v)
++			queue = append(queue, v)
++		}
++	}
++	for len(queue) > 0 {
++		v := queue[0]
++		queue = queue[1:]
++		for _, next := range g.UpEdges(v) {
++			if affected.Include(next) {
++				continue
++			}
++			affected.Add(next)
++			queue = append(queue, next)
++		}
++	}
++
++	// Phase 2: every affected node may have other dependencies that are needed
++	// to evaluate it safely. Walk dependency edges from all affected nodes in
++	// one multi-source traversal. Each vertex/edge is considered at most a
++	// constant number of times, avoiding repeated Ancestors/Descendents DFS.
++	closure := make(dag.Set)
++	queue = queue[:0]
++	for _, v := range affected {
++		if !closure.Include(v) {
++			closure.Add(v)
++			queue = append(queue, v)
++		}
++	}
++	for len(queue) > 0 {
++		v := queue[0]
++		queue = queue[1:]
++		for _, next := range g.DownEdges(v) {
++			if closure.Include(next) {
++				continue
++			}
++			closure.Add(next)
++			queue = append(queue, next)
++		}
++	}
++
++	refreshSet := make(dag.Set)
++	for _, v := range closure {
++		if !isDataSource(v) {
++			refreshSet.Add(v)
++		}
++	}
++	return refreshSet
++}
++
++// skipAllRefresh sets skipRefresh=true on all refreshable nodes.
++func (t *SmartRefreshTransformer) skipAllRefresh(g *Graph) {
++	for _, v := range g.Vertices() {
++		if sr, ok := v.(GraphNodeSkipRefresh); ok && !isDataSource(v) {
++			sr.SetSkipRefresh(true)
++		}
++	}
++}

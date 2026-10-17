@@ -1,3 +1,0 @@
-output "password" {
-  value = "p"
-}

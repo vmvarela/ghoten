@@ -1,3 +1,0 @@
-module "../invalid" {
-  source  = "./child"
-}
