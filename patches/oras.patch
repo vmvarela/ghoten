@@ -807,7 +807,7 @@ diff --git a/internal/command/history.go b/internal/command/history.go
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/history.go
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,262 @@
 +package command
 +
 +import (
@@ -1016,9 +1016,11 @@ new file mode 100644
 +	}
 +	if _, err := f.Write(data); err != nil {
 +		_ = f.Close()
++		_ = os.Remove(args.Output)
 +		return historyCommandError(err)
 +	}
 +	if err := f.Close(); err != nil {
++		_ = os.Remove(args.Output)
 +		return historyCommandError(err)
 +	}
 +	fmt.Fprintf(os.Stdout, "Wrote state version %d to %s\n", version, args.Output)
