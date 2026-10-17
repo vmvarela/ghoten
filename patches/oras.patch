@@ -1092,13 +1092,13 @@ diff --git a/internal/command/command.go b/internal/command/command.go
 --- a/internal/command/command.go
 +++ b/internal/command/command.go
 @@ -386,6 +386,7 @@ func RootCommander(help *bool, ver *bool, chdir *string) Command {
-			DestroyCommander(),
-
-			// Other Commands
+ 			DestroyCommander(),
+ 
+ 			// Other Commands
 +			HistoryCommander(),
-			ConsoleCommander(),
-			WorkspaceCommander(true),
-			FmtCommander(nil),
+ 			ConsoleCommander(),
+ 			WorkspaceCommander(true),
+ 			FmtCommander(nil),
 diff --git a/cmd/tofu/commands.go b/cmd/tofu/commands.go
 --- a/cmd/tofu/commands.go
 +++ b/cmd/tofu/commands.go
