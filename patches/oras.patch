@@ -99,7 +99,7 @@ diff --git a/internal/backend/remote-state/oras/backend.go b/internal/backend/re
 new file mode 100644
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/backend.go
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,413 @@
 +package oras
 +
 +import (
@@ -807,7 +807,7 @@ diff --git a/internal/command/history.go b/internal/command/history.go
 new file mode 100644
 --- /dev/null
 +++ b/internal/command/history.go
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,260 @@
 +package command
 +
 +import (
