@@ -53,6 +53,18 @@ Homebrew users can install the same stable release artifacts through the maintai
 brew install vmvarela/tap/ghoten
 ```
 
+Linux users can install stable releases from the maintained `vmvarela` APT repository, shared with sql-pipe:
+
+```sh
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://vmvarela.github.io/apt-packages/key.gpg \
+  | sudo tee /etc/apt/keyrings/vmvarela.asc
+echo "deb [signed-by=/etc/apt/keyrings/vmvarela.asc] https://vmvarela.github.io/apt-packages stable main" \
+  | sudo tee /etc/apt/sources.list.d/vmvarela.list
+sudo apt update
+sudo apt install ghoten
+```
+
 ## Build
 
 ```sh
