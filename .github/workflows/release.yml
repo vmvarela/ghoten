@@ -21,7 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-workflow
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -214,13 +215,27 @@ jobs:
 
   release:
     name: Publish ${{ needs.verify.outputs.tag }}
-    needs: [verify, build]
+    needs: [verify, build, package-native]
+    if: >-
+      ${{ !cancelled()
+      && needs.verify.result == 'success'
+      && needs.build.result == 'success'
+      && (needs.verify.outputs.prerelease == 'true' || needs.package-native.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+    # Serialize release metadata mutation with the Release Drafter draft job.
+    concurrency:
+      group: release-metadata
+      queue: max
+      cancel-in-progress: false
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -238,42 +253,46 @@ jobs:
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
           IS_PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         shell: bash
+        run: bash ./scripts/publish-release.sh
+
+  package-native:
+    name: Package Linux (${{ matrix.arch }})
+    needs: [verify, build]
+    if: needs.verify.outputs.prerelease == 'false' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghoten-linux-${{ matrix.arch }}
+          path: artifacts
+
+      - name: Install nFPM
+        run: bash ./scripts/install-nfpm.sh
+
+      - name: Build native packages
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          GOARCH: ${{ matrix.arch }}
+          GHOTEN_BIN: ${{ runner.temp }}/pkg-work/ghoten
+          PACKAGE_OUTPUT: ${{ runner.temp }}/native-packages
+        shell: bash
         run: |
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            # Prereleases never consume the Release Drafter draft for the next stable release.
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
-              --title "$TAG" \
-              --generate-notes \
-              --prerelease \
-              --latest=false
-          else
-            # Stable releases publish the prepared Release Drafter draft when available.
-            DRAFT_ID="$(
-              gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[] | select(.draft == true and .name == "Next Ghoten release") | .id' |
-                head -n1
-            )"
+          mkdir -p "$RUNNER_TEMP/pkg-work"
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_${GOARCH}.tar.gz" -C "$RUNNER_TEMP/pkg-work"
+          bash ./scripts/package-native.sh
 
-            if [[ -n "$DRAFT_ID" ]]; then
-              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" \
-                -f tag_name="$TAG" \
-                -f target_commitish="$SOURCE_SHA" \
-                -f name="$TAG" \
-                -F draft=false \
-                -F prerelease=false \
-                -f make_latest=true >/dev/null
-            else
-              gh release create "$TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --target "$SOURCE_SHA" \
-                --title "$TAG" \
-                --generate-notes \
-                --latest
-            fi
-          fi
-
-          gh release upload "$TAG" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghoten-native-${{ matrix.arch }}
+          path: ${{ runner.temp }}/native-packages/*
+          if-no-files-found: error

@@ -20,8 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify release publication failure handling
+        run: python3 scripts/test-publish-release.py
+
       - name: Verify patches and focused tests
         env:
+          GHOTEN_VERIFY_ARM64_OUTPUT: ${{ runner.temp }}/ghoten-arm64
           GHOTEN_VERIFY_OUTPUT: ${{ runner.temp }}/ghoten
         run: bash ./scripts/verify.sh
 
@@ -29,3 +33,26 @@ jobs:
         env:
           GHOTEN_BIN: ${{ runner.temp }}/ghoten
         run: bash ./scripts/e2e-oras.sh
+
+      - name: Install native package tools
+        run: |
+          bash ./scripts/install-nfpm.sh
+          sudo apt-get update
+          sudo apt-get install -y rpm cpio
+
+      - name: Verify native packages and installation
+        env:
+          VERSION: "0.0.0"
+          BIN_DIR: ${{ runner.temp }}
+        shell: bash
+        run: |
+          for arch in amd64 arm64; do
+            export GOARCH="$arch"
+            export GHOTEN_BIN="$BIN_DIR/ghoten"
+            if [[ "$arch" == arm64 ]]; then
+              export GHOTEN_BIN="$BIN_DIR/ghoten-arm64"
+            fi
+            export PACKAGE_OUTPUT="$RUNNER_TEMP/packages-$arch"
+            bash ./scripts/package-native.sh
+            bash ./scripts/verify-native.sh
+          done

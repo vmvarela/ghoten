@@ -31,7 +31,11 @@ done
     ./internal/backend/remote-state/oras \
     ./internal/backend/init
 
-  GOWORK=off go build -trimpath -o "$WORK/ghoten" ./cmd/tofu
+  CGO_ENABLED=0 GOWORK=off go build -trimpath -o "$WORK/ghoten" ./cmd/tofu
+  if [[ -n "${GHOTEN_VERIFY_ARM64_OUTPUT:-}" ]]; then
+    mkdir -p "$(dirname "$GHOTEN_VERIFY_ARM64_OUTPUT")"
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOWORK=off go build -trimpath -o "$GHOTEN_VERIFY_ARM64_OUTPUT" ./cmd/tofu
+  fi
 )
 
 if [[ -n "${GHOTEN_VERIFY_OUTPUT:-}" ]]; then
