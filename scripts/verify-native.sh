@@ -38,7 +38,8 @@ for format in deb rpm apk; do
       grep -Fx "pkgname = ghoten" "$WORK/$format/.PKGINFO"
       grep -Fx "pkgver = $VERSION" "$WORK/$format/.PKGINFO"
       grep -Fx "arch = $APK_ARCH" "$WORK/$format/.PKGINFO"
-      grep -Fx "depends = ca-certificates-bundle" "$WORK/$format/.PKGINFO"
+      # apk-tools names the field singularly: depend = <name>.
+      grep -Fx "depend = ca-certificates-bundle" "$WORK/$format/.PKGINFO"
       LICENSE_PATH=usr/share/licenses/ghoten/LICENSE
       ;;
   esac
