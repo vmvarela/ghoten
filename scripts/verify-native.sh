@@ -22,11 +22,13 @@ for format in deb rpm apk; do
       [[ "$(dpkg-deb -f "$package" Package)" == ghoten ]]
       [[ "$(dpkg-deb -f "$package" Version)" == "$VERSION" ]]
       [[ "$(dpkg-deb -f "$package" Architecture)" == "$DEB_ARCH" ]]
+      [[ "$(dpkg-deb -f "$package" Depends)" == ca-certificates ]]
       dpkg-deb -x "$package" "$WORK/$format"
       LICENSE_PATH=usr/share/doc/ghoten/copyright
       ;;
     rpm)
       [[ "$(rpm -qp --qf '%{NAME} %{VERSION} %{ARCH}' "$package")" == "ghoten $VERSION $RPM_ARCH" ]]
+      rpm -qp --requires "$package" | grep -Fx ca-certificates
       rpm2cpio "$package" > "$WORK/payload.cpio"
       (cd "$WORK/$format"; cpio -idm --quiet --no-absolute-filenames < "$WORK/payload.cpio")
       LICENSE_PATH=usr/share/licenses/ghoten/LICENSE
@@ -36,6 +38,7 @@ for format in deb rpm apk; do
       grep -Fx "pkgname = ghoten" "$WORK/$format/.PKGINFO"
       grep -Fx "pkgver = $VERSION" "$WORK/$format/.PKGINFO"
       grep -Fx "arch = $APK_ARCH" "$WORK/$format/.PKGINFO"
+      grep -Fx "depends = ca-certificates-bundle" "$WORK/$format/.PKGINFO"
       LICENSE_PATH=usr/share/licenses/ghoten/LICENSE
       ;;
   esac
@@ -44,11 +47,29 @@ for format in deb rpm apk; do
   test -s "$WORK/$format/$LICENSE_PATH"
 done
 # Installation smoke tests run on the runner's native architecture only.
+# Package managers (apt/dnf/apk) resolve the CA-certificate dependency, and
+# ghoten init then fetches a pinned provider over TLS using the system trust
+# store, so a missing or broken CA setup fails the run.
 if [[ "$GOARCH" == amd64 ]]; then
-  docker run --rm -v "$OUTPUT:/packages:ro" debian:bookworm-slim \
-    sh -ec 'dpkg -i /packages/*.deb; ghoten version; dpkg -r ghoten'
-  docker run --rm -v "$OUTPUT:/packages:ro" fedora:43 \
-    sh -ec 'rpm -i /packages/*.rpm; ghoten version; rpm -e ghoten'
-  docker run --rm -v "$OUTPUT:/packages:ro" alpine:3.22 \
-    sh -ec 'apk add --allow-untrusted /packages/*.apk; ghoten version; apk del ghoten'
+  mkdir "$WORK/init"
+  cat > "$WORK/init/main.tf" <<'EOF'
+terraform {
+  required_providers {
+    null = {
+      source  = "registry.opentofu.org/hashicorp/null"
+      version = "3.2.3"
+    }
+  }
+}
+EOF
+  RUN_ARGS=(--rm -v "$OUTPUT:/packages:ro" -v "$WORK/init:/init" -w /init)
+  docker run "${RUN_ARGS[@]}" debian:bookworm-slim \
+    sh -ec 'apt-get update -qq && apt-get install -y /packages/*.deb &&
+      ghoten version && ghoten init -backend=false -input=false && dpkg -r ghoten'
+  docker run "${RUN_ARGS[@]}" fedora:43 \
+    sh -ec 'dnf -y install /packages/*.rpm &&
+      ghoten version && ghoten init -backend=false -input=false && rpm -e ghoten'
+  docker run "${RUN_ARGS[@]}" alpine:3.22 \
+    sh -ec 'apk add --allow-untrusted /packages/*.apk &&
+      ghoten version && ghoten init -backend=false -input=false && apk del ghoten'
 fi

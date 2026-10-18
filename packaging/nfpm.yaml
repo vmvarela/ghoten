@@ -27,3 +27,12 @@ contents:
   - src: ./LICENSE
     dst: /usr/share/licenses/ghoten/LICENSE
     packager: apk
+
+# Go binaries need system CA certificates for TLS (provider registry, backends).
+depends:
+  - ca-certificates
+
+overrides:
+  apk:
+    depends:
+      - ca-certificates-bundle

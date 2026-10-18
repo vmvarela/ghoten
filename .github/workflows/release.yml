@@ -217,10 +217,10 @@ jobs:
     name: Publish ${{ needs.verify.outputs.tag }}
     needs: [verify, build, package-native]
     if: >-
-      always()
+      ${{ !cancelled()
       && needs.verify.result == 'success'
       && needs.build.result == 'success'
-      && (needs.verify.outputs.prerelease == 'true' || needs.package-native.result == 'success')
+      && (needs.verify.outputs.prerelease == 'true' || needs.package-native.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
