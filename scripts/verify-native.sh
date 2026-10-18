@@ -63,7 +63,9 @@ terraform {
   }
 }
 EOF
-  RUN_ARGS=(--rm -v "$OUTPUT:/packages:ro" -v "$WORK/init:/init" -w /init)
+  # TF_DATA_DIR keeps init's provider cache container-local; root-created files
+  # under a host bind mount would otherwise break the EXIT cleanup.
+  RUN_ARGS=(--rm -e TF_DATA_DIR=/tmp/tf-data -v "$OUTPUT:/packages:ro" -v "$WORK/init:/init" -w /init)
   docker run "${RUN_ARGS[@]}" debian:bookworm-slim \
     sh -ec 'apt-get update -qq && apt-get install -y /packages/*.deb &&
       ghoten version && ghoten init -backend=false -input=false && dpkg -r ghoten'
