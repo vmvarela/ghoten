@@ -21,7 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-workflow
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -224,6 +225,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    # Serialize release metadata mutation with the Release Drafter draft job.
+    concurrency:
+      group: release-metadata
+      queue: max
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
