@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "::error::Package verification failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 : "${VERSION:?}" "${GOARCH:?}" "${GHOTEN_BIN:?}" "${PACKAGE_OUTPUT:?}"
 BIN="$(realpath "$GHOTEN_BIN")"
 OUTPUT="$(realpath "$PACKAGE_OUTPUT")"
@@ -26,7 +27,8 @@ for format in deb rpm apk; do
       ;;
     rpm)
       [[ "$(rpm -qp --qf '%{NAME} %{VERSION} %{ARCH}' "$package")" == "ghoten $VERSION $RPM_ARCH" ]]
-      (cd "$WORK/$format"; rpm2cpio "$package" | cpio -idm --quiet --no-absolute-filenames)
+      rpm2cpio "$package" > "$WORK/payload.cpio"
+      (cd "$WORK/$format"; cpio -idm --quiet --no-absolute-filenames < "$WORK/payload.cpio")
       LICENSE_PATH=usr/share/licenses/ghoten/LICENSE
       ;;
     apk)
