@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Keep the release and verification toolchain identical.
-VERSION=2.45.1
-SHA256=317b2747561b6329d6c5e1fe002a1a33f90b2c3c3da2b7b4fe4c3154e98c5ff8
+VERSION=2.48.0
+SHA256=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 curl --fail --silent --show-error --location \
