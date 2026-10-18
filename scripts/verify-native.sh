@@ -26,7 +26,7 @@ for format in deb rpm apk; do
       ;;
     rpm)
       [[ "$(rpm -qp --qf '%{NAME} %{VERSION} %{ARCH}' "$package")" == "ghoten $VERSION $RPM_ARCH" ]]
-      (cd "$WORK/$format"; rpm2cpio "$package" | cpio -idm --quiet)
+      (cd "$WORK/$format"; rpm2cpio "$package" | cpio -idm --quiet --no-absolute-filenames)
       LICENSE_PATH=usr/share/licenses/ghoten/LICENSE
       ;;
     apk)
