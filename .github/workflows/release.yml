@@ -297,6 +297,63 @@ jobs:
           path: ${{ runner.temp }}/native-packages/*
           if-no-files-found: error
 
+  # Platform packages publish before the main package, which references them by exact version.
+  publish-npm:
+    name: Publish to npm
+    needs: [verify, release]
+    if: >-
+      ${{ vars.NPM_TRUSTED_PUBLISHING == 'true'
+      && needs.verify.outputs.prerelease == 'false'
+      && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Extract binaries
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p npm-bin/linux-x64 npm-bin/linux-arm64 npm-bin/darwin-x64 npm-bin/darwin-arm64 npm-bin/win32-x64
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_amd64.tar.gz" -C npm-bin/linux-x64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_arm64.tar.gz" -C npm-bin/linux-arm64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_darwin_amd64.tar.gz" -C npm-bin/darwin-x64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_darwin_arm64.tar.gz" -C npm-bin/darwin-arm64 ghoten
+          unzip -q "artifacts/ghoten_${VERSION}_windows_amd64.zip" ghoten.exe -d npm-bin/win32-x64
+
+      - name: Stage npm packages
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node packaging/npm/stage.js "$VERSION" npm-bin npm-out
+
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          npm publish npm-out/ghoten-linux-x64 --provenance --access public
+          npm publish npm-out/ghoten-linux-arm64 --provenance --access public
+          npm publish npm-out/ghoten-darwin-x64 --provenance --access public
+          npm publish npm-out/ghoten-darwin-arm64 --provenance --access public
+          npm publish npm-out/ghoten-win32-x64 --provenance --access public
+          npm publish npm-out/ghoten --provenance --access public
+
   update-apt:
     name: Update APT repository
     needs: [release, verify]
