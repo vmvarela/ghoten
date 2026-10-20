@@ -366,15 +366,15 @@ jobs:
     steps:
       - name: Dispatch vmvarela/apt-packages update-ghoten
         env:
-          APT_PACKAGES_TOKEN: ${{ secrets.APT_PACKAGES_TOKEN }}
+          PACKAGE_DISTRIBUTION_TOKEN: ${{ secrets.PACKAGE_DISTRIBUTION_TOKEN }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          if [[ -z "${APT_PACKAGES_TOKEN}" ]]; then
-            echo "::error::The APT_PACKAGES_TOKEN secret is not configured on this repository."
+          if [[ -z "${PACKAGE_DISTRIBUTION_TOKEN}" ]]; then
+            echo "::error::The PACKAGE_DISTRIBUTION_TOKEN secret is not configured on this repository."
             exit 1
           fi
-          GH_TOKEN="${APT_PACKAGES_TOKEN}" gh api \
+          GH_TOKEN="${PACKAGE_DISTRIBUTION_TOKEN}" gh api \
             repos/vmvarela/apt-packages/dispatches \
             --method POST \
             -f event_type=update-ghoten \
