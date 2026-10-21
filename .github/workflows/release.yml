@@ -347,12 +347,13 @@ jobs:
       - name: Publish to npm
         run: |
           set -euo pipefail
-          npm publish npm-out/ghoten-linux-x64 --provenance --access public
-          npm publish npm-out/ghoten-linux-arm64 --provenance --access public
-          npm publish npm-out/ghoten-darwin-x64 --provenance --access public
-          npm publish npm-out/ghoten-darwin-arm64 --provenance --access public
-          npm publish npm-out/ghoten-win32-x64 --provenance --access public
-          npm publish npm-out/ghoten --provenance --access public
+          # "./" keeps each argument a local path; bare "npm-out/..." is parsed as a GitHub shorthand.
+          npm publish ./npm-out/ghoten-linux-x64 --provenance --access public
+          npm publish ./npm-out/ghoten-linux-arm64 --provenance --access public
+          npm publish ./npm-out/ghoten-darwin-x64 --provenance --access public
+          npm publish ./npm-out/ghoten-darwin-arm64 --provenance --access public
+          npm publish ./npm-out/ghoten-win32-x64 --provenance --access public
+          npm publish ./npm-out/ghoten --provenance --access public
 
   update-apt:
     name: Update APT repository
