@@ -8,7 +8,8 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).with_name('fetch-npm-assets.sh').resolve()
-WORKFLOW = Path(__file__).parent.parent / '.github' / 'workflows' / 'release.yml'
+REPO_ROOT = Path(__file__).parent.parent
+WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'release.yml'
 VERSION = '1.2.3'
 TAG = f'v{VERSION}'
 ARCHIVES = [
@@ -180,6 +181,72 @@ class WorkflowRoutingTest(unittest.TestCase):
         self.assertIn("inputs.release_type == 'npm-only'", condition)
         self.assertIn("needs.release.result == 'success'", condition)
         self.assertIn('id-token: write', '\n'.join(self.lines[publish:publish + 20]))
+        # npm-only bypasses the variable in the job condition; normal runs keep it.
+        self.assertLess(condition.index("inputs.release_type == 'npm-only'"),
+                        condition.index("vars.NPM_TRUSTED_PUBLISHING"))
+
+
+def step_script(name):
+    """Return the run script of a workflow step, dedented."""
+    lines = WORKFLOW.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == f'- name: {name}')
+    run = next(i for i in range(start, len(lines)) if lines[i].strip() == 'run: |')
+    indent = len(lines[run]) - len(lines[run].lstrip())
+    script = []
+    for line in lines[run + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        script.append(line[indent + 2:])
+    return '\n'.join(script)
+
+
+class ResolveVersionStepTest(unittest.TestCase):
+    """Runs the workflow's Resolve package version step for each supported configuration."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.output = self.root / 'github-output'
+        self.output.touch()
+        self.script = step_script('Resolve package version')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_step(self, release_type, trusted, verified_version=''):
+        env = {key: value for key, value in os.environ.items()
+               if key != 'NPM_TRUSTED_PUBLISHING'}
+        env.update(RELEASE_TYPE=release_type, GITHUB_OUTPUT=str(self.output),
+                   VERIFIED_VERSION=verified_version)
+        if trusted is not None:
+            env['NPM_TRUSTED_PUBLISHING'] = trusted
+        return subprocess.run(['bash', '-c', self.script], cwd=REPO_ROOT,
+                              env=env, text=True, capture_output=True)
+
+    def test_npm_only_fails_when_trusted_publishing_is_absent(self):
+        result = self.run_step('npm-only', None)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('NPM_TRUSTED_PUBLISHING=true', result.stdout)
+        self.assertEqual(self.output.read_text(), '')
+
+    def test_npm_only_fails_when_trusted_publishing_is_disabled(self):
+        result = self.run_step('npm-only', 'false')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('NPM_TRUSTED_PUBLISHING=true', result.stdout)
+        self.assertEqual(self.output.read_text(), '')
+
+    def test_npm_only_resolves_pinned_version_when_enabled(self):
+        result = self.run_step('npm-only', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pinned = next(line.split('=', 1)[1] for line in
+                      (REPO_ROOT / 'ghoten.env').read_text().splitlines()
+                      if line.startswith('GHOTEN_VERSION='))
+        self.assertEqual(self.output.read_text(), f'version={pinned}\n')
+
+    def test_stable_resolution_does_not_require_trusted_publishing(self):
+        result = self.run_step('stable', None, verified_version=VERSION)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output.read_text(), f'version={VERSION}\n')
 
 
 if __name__ == '__main__':

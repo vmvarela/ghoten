@@ -305,9 +305,9 @@ jobs:
     needs: [verify, release]
     if: >-
       ${{ !cancelled()
-      && vars.NPM_TRUSTED_PUBLISHING == 'true'
       && (inputs.release_type == 'npm-only'
-      || (needs.verify.outputs.prerelease == 'false'
+      || (vars.NPM_TRUSTED_PUBLISHING == 'true'
+      && needs.verify.outputs.prerelease == 'false'
       && needs.release.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -331,9 +331,14 @@ jobs:
         env:
           RELEASE_TYPE: ${{ inputs.release_type }}
           VERIFIED_VERSION: ${{ needs.verify.outputs.version }}
+          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
         run: |
           set -euo pipefail
           if [[ "$RELEASE_TYPE" == "npm-only" ]]; then
+            if [[ "${NPM_TRUSTED_PUBLISHING:-}" != "true" ]]; then
+              echo "::error::npm-only requires the repository variable NPM_TRUSTED_PUBLISHING=true."
+              exit 1
+            fi
             source ./ghoten.env
             VERSION="$GHOTEN_VERSION"
           else
