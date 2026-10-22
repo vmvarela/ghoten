@@ -105,6 +105,10 @@ For a new upstream stable release:
 
 The release workflow independently verifies that `ghoten.env` points to OpenTofu's globally latest stable SemVer release and that the pinned commit is exactly the commit behind the upstream tag. Stable Ghoten releases therefore use the same base version as the OpenTofu release they wrap.
 
+If npm publication fails for a published stable release, dispatch `Release` with the `npm-only` operation. It reuses that release's five platform archives and `sha256sums.txt` for the pinned version, verifies every archive against the checksum manifest, and publishes the platform packages before the main package. It rebuilds nothing, does not change the release, tag, or assets, and does not update APT.
+
+`npm-only` fails when the release for the pinned version is missing, still a draft, marked as a prerelease, has a different tag, lacks a required asset, or fails checksum verification. It requires npm Trusted Publishing to be enabled for the repository. Because it publishes from a new workflow run, its provenance points at the recovery commit rather than the original build.
+
 Release Drafter prepares notes only under the neutral `next` draft. It never chooses a Ghoten version. Prereleases do not consume that stable-release draft.
 
 ## Read-only ORAS state history

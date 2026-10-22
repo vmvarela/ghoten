@@ -11,6 +11,7 @@ on:
         options:
           - prerelease
           - stable
+          - npm-only
       prerelease_suffix:
         description: "Prerelease suffix, for example rc.1 (ignored for stable releases)"
         required: false
@@ -28,6 +29,7 @@ concurrency:
 jobs:
   verify:
     name: Verify release
+    if: inputs.release_type != 'npm-only'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -302,9 +304,11 @@ jobs:
     name: Publish to npm
     needs: [verify, release]
     if: >-
-      ${{ vars.NPM_TRUSTED_PUBLISHING == 'true'
-      && needs.verify.outputs.prerelease == 'false'
-      && needs.release.result == 'success' }}
+      ${{ !cancelled()
+      && vars.NPM_TRUSTED_PUBLISHING == 'true'
+      && (inputs.release_type == 'npm-only'
+      || (needs.verify.outputs.prerelease == 'false'
+      && needs.release.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -313,7 +317,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.verify.outputs.source_sha }}
+          ref: ${{ needs.verify.outputs.source_sha || github.sha }}
 
       - uses: actions/setup-node@v7
         with:
@@ -321,14 +325,42 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
+      - name: Resolve package version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          VERIFIED_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_TYPE" == "npm-only" ]]; then
+            source ./ghoten.env
+            VERSION="$GHOTEN_VERSION"
+          else
+            VERSION="$VERIFIED_VERSION"
+          fi
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No version resolved for release type $RELEASE_TYPE."
+            exit 1
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        if: inputs.release_type == 'npm-only'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash ./scripts/fetch-npm-assets.sh "$VERSION" artifacts
+
       - uses: actions/download-artifact@v8
+        if: inputs.release_type != 'npm-only'
         with:
           path: artifacts/
           merge-multiple: true
 
       - name: Extract binaries
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -341,7 +373,7 @@ jobs:
 
       - name: Stage npm packages
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: node packaging/npm/stage.js "$VERSION" npm-bin npm-out
 
       - name: Publish to npm
