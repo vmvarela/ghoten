@@ -44,8 +44,10 @@ checksum() {
     sha256sum "$file" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
   else
-    fail "sha256sum or shasum is required"
+    fail "sha256sum, shasum, or openssl is required"
   fi
 }
 
@@ -75,7 +77,16 @@ fi
 version=${version#v}
 
 case "$version" in
-  ''|*[!0-9A-Za-z.-]*) fail "invalid VERSION: $version" ;;
+  ''|*[!0-9.]*|.*|*.|*..*) fail "VERSION must be a stable semantic version: $version" ;;
+esac
+major=${version%%.*}
+rest=${version#*.}
+minor=${rest%%.*}
+patch=${rest#*.}
+[ "$version" = "$major.$minor.$patch" ] ||
+  fail "VERSION must be a stable semantic version: $version"
+case "$major$minor$patch" in
+  ''|*[!0-9]*) fail "VERSION must be a stable semantic version: $version" ;;
 esac
 
 tag="v$version"
@@ -93,15 +104,17 @@ expected=$(awk -v file="$archive" '$2 == file || $2 == "*" file { print $1; exit
 actual=$(checksum "$archive_path")
 [ "$actual" = "$expected" ] || fail "checksum mismatch for $archive"
 
-tar -xzf "$archive_path" -C "$tmpdir"
-[ -f "$tmpdir/ghoten" ] || fail "release archive does not contain ghoten"
+mkdir "$tmpdir/extract"
+tar -xzf "$archive_path" -C "$tmpdir/extract" ghoten ||
+  fail "release archive does not contain the expected ghoten executable"
+[ -f "$tmpdir/extract/ghoten" ] || fail "release archive does not contain ghoten"
 
 mkdir -p "$INSTALL_DIR" 2>/dev/null || fail "cannot create $INSTALL_DIR"
 if command -v install >/dev/null 2>&1; then
-  install -m 0755 "$tmpdir/ghoten" "$INSTALL_DIR/ghoten" ||
+  install -m 0755 "$tmpdir/extract/ghoten" "$INSTALL_DIR/ghoten" ||
     fail "cannot install to $INSTALL_DIR/ghoten (set INSTALL_DIR to a writable directory)"
 else
-  cp "$tmpdir/ghoten" "$INSTALL_DIR/ghoten" ||
+  cp "$tmpdir/extract/ghoten" "$INSTALL_DIR/ghoten" ||
     fail "cannot install to $INSTALL_DIR/ghoten (set INSTALL_DIR to a writable directory)"
   chmod 0755 "$INSTALL_DIR/ghoten"
 fi
