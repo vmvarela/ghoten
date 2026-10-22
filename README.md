@@ -107,7 +107,7 @@ The release workflow independently verifies that `ghoten.env` points to OpenTofu
 
 If npm publication fails for a published stable release, dispatch `Release` with the `npm-only` operation. It reuses that release's five platform archives and `sha256sums.txt` for the pinned version, verifies every archive against the checksum manifest, and publishes the platform packages before the main package. It rebuilds nothing, does not change the release, tag, or assets, and does not update APT.
 
-`npm-only` fails when the release for the pinned version is missing, still a draft, marked as a prerelease, has a different tag, lacks a required asset, or fails checksum verification. It also fails when npm Trusted Publishing is not enabled for the repository; recovery is never reported as successful without publishing. Because it publishes from a new workflow run, its provenance points at the recovery commit rather than the original build.
+`npm-only` fails when the release for the pinned version is missing, still a draft, marked as a prerelease, has a different tag, lacks a required asset, or fails checksum verification. If the repository variable `NPM_TRUSTED_PUBLISHING` is not `true`, the recovery job fails instead of silently skipping publication. Because it publishes from a new workflow run, its provenance points at the recovery commit rather than the original build.
 
 Recovery is limited to failures that happened before npm accepted any package of that version. It does not resume a partial publication, skip packages already present, or delete versions; if a package version already exists, npm rejects that publish and the recovery fails.
 
