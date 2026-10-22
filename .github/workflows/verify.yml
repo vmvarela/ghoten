@@ -23,6 +23,9 @@ jobs:
       - name: Verify release publication failure handling
         run: python3 scripts/test-publish-release.py
 
+      - name: Verify npm recovery asset handling
+        run: python3 scripts/test-fetch-npm-assets.py
+
       - name: Verify patches and focused tests
         env:
           GHOTEN_VERIFY_ARM64_OUTPUT: ${{ runner.temp }}/ghoten-arm64
