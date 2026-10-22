@@ -1,0 +1,28 @@
+{
+  "name": "@vmvarela/ghoten",
+  "version": "0.0.0",
+  "description": "Ghoten: OpenTofu distribution with the ORAS backend",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vmvarela/ghoten.git"
+  },
+  "homepage": "https://github.com/vmvarela/ghoten",
+  "bugs": "https://github.com/vmvarela/ghoten/issues",
+  "bin": {
+    "ghoten": "bin/ghoten.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@vmvarela/ghoten-linux-x64": "0.0.0",
+    "@vmvarela/ghoten-linux-arm64": "0.0.0",
+    "@vmvarela/ghoten-darwin-x64": "0.0.0",
+    "@vmvarela/ghoten-darwin-arm64": "0.0.0",
+    "@vmvarela/ghoten-win32-x64": "0.0.0"
+  }
+}

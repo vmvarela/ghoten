@@ -11,6 +11,7 @@ on:
         options:
           - prerelease
           - stable
+          - npm-only
       prerelease_suffix:
         description: "Prerelease suffix, for example rc.1 (ignored for stable releases)"
         required: false
@@ -21,12 +22,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-workflow
+  queue: max
   cancel-in-progress: false
 
 jobs:
   verify:
     name: Verify release
+    if: inputs.release_type != 'npm-only'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -214,13 +217,27 @@ jobs:
 
   release:
     name: Publish ${{ needs.verify.outputs.tag }}
-    needs: [verify, build]
+    needs: [verify, build, package-native]
+    if: >-
+      ${{ !cancelled()
+      && needs.verify.result == 'success'
+      && needs.build.result == 'success'
+      && (needs.verify.outputs.prerelease == 'true' || needs.package-native.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+    # Serialize release metadata mutation with the Release Drafter draft job.
+    concurrency:
+      group: release-metadata
+      queue: max
+      cancel-in-progress: false
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -238,42 +255,166 @@ jobs:
           SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
           IS_PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         shell: bash
+        run: bash ./scripts/publish-release.sh
+
+  package-native:
+    name: Package Linux (${{ matrix.arch }})
+    needs: [verify, build]
+    if: needs.verify.outputs.prerelease == 'false' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ghoten-linux-${{ matrix.arch }}
+          path: artifacts
+
+      - name: Install nFPM
+        run: bash ./scripts/install-nfpm.sh
+
+      - name: Build native packages
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          GOARCH: ${{ matrix.arch }}
+          GHOTEN_BIN: ${{ runner.temp }}/pkg-work/ghoten
+          PACKAGE_OUTPUT: ${{ runner.temp }}/native-packages
+        shell: bash
         run: |
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            # Prereleases never consume the Release Drafter draft for the next stable release.
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
-              --title "$TAG" \
-              --generate-notes \
-              --prerelease \
-              --latest=false
-          else
-            # Stable releases publish the prepared Release Drafter draft when available.
-            DRAFT_ID="$(
-              gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[] | select(.draft == true and .name == "Next Ghoten release") | .id' |
-                head -n1
-            )"
+          mkdir -p "$RUNNER_TEMP/pkg-work"
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_${GOARCH}.tar.gz" -C "$RUNNER_TEMP/pkg-work"
+          bash ./scripts/package-native.sh
 
-            if [[ -n "$DRAFT_ID" ]]; then
-              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" \
-                -f tag_name="$TAG" \
-                -f target_commitish="$SOURCE_SHA" \
-                -f name="$TAG" \
-                -F draft=false \
-                -F prerelease=false \
-                -f make_latest=true >/dev/null
-            else
-              gh release create "$TAG" \
-                --repo "$GITHUB_REPOSITORY" \
-                --target "$SOURCE_SHA" \
-                --title "$TAG" \
-                --generate-notes \
-                --latest
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ghoten-native-${{ matrix.arch }}
+          path: ${{ runner.temp }}/native-packages/*
+          if-no-files-found: error
+
+  # Platform packages publish before the main package, which references them by exact version.
+  publish-npm:
+    name: Publish to npm
+    needs: [verify, release]
+    if: >-
+      ${{ !cancelled()
+      && (inputs.release_type == 'npm-only'
+      || (vars.NPM_TRUSTED_PUBLISHING == 'true'
+      && needs.verify.outputs.prerelease == 'false'
+      && needs.release.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha || github.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          VERIFIED_VERSION: ${{ needs.verify.outputs.version }}
+          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_TYPE" == "npm-only" ]]; then
+            if [[ "${NPM_TRUSTED_PUBLISHING:-}" != "true" ]]; then
+              echo "::error::npm-only requires the repository variable NPM_TRUSTED_PUBLISHING=true."
+              exit 1
             fi
+            source ./ghoten.env
+            VERSION="$GHOTEN_VERSION"
+          else
+            VERSION="$VERIFIED_VERSION"
           fi
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No version resolved for release type $RELEASE_TYPE."
+            exit 1
+          fi
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
 
-          gh release upload "$TAG" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+      - name: Download release assets
+        if: inputs.release_type == 'npm-only'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash ./scripts/fetch-npm-assets.sh "$VERSION" artifacts
+
+      - uses: actions/download-artifact@v8
+        if: inputs.release_type != 'npm-only'
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Extract binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p npm-bin/linux-x64 npm-bin/linux-arm64 npm-bin/darwin-x64 npm-bin/darwin-arm64 npm-bin/win32-x64
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_amd64.tar.gz" -C npm-bin/linux-x64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_linux_arm64.tar.gz" -C npm-bin/linux-arm64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_darwin_amd64.tar.gz" -C npm-bin/darwin-x64 ghoten
+          tar -xzf "artifacts/ghoten_${VERSION}_darwin_arm64.tar.gz" -C npm-bin/darwin-arm64 ghoten
+          unzip -q "artifacts/ghoten_${VERSION}_windows_amd64.zip" ghoten.exe -d npm-bin/win32-x64
+
+      - name: Stage npm packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node packaging/npm/stage.js "$VERSION" npm-bin npm-out
+
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          # "./" keeps each argument a local path; bare "npm-out/..." is parsed as a GitHub shorthand.
+          npm publish ./npm-out/ghoten-linux-x64 --provenance --access public
+          npm publish ./npm-out/ghoten-linux-arm64 --provenance --access public
+          npm publish ./npm-out/ghoten-darwin-x64 --provenance --access public
+          npm publish ./npm-out/ghoten-darwin-arm64 --provenance --access public
+          npm publish ./npm-out/ghoten-win32-x64 --provenance --access public
+          npm publish ./npm-out/ghoten --provenance --access public
+
+  update-apt:
+    name: Update APT repository
+    needs: [release, verify]
+    if: >-
+      ${{ !cancelled() &&
+      needs.verify.outputs.prerelease == 'false' &&
+      needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch vmvarela/apt-packages update-ghoten
+        env:
+          PACKAGE_DISTRIBUTION_TOKEN: ${{ secrets.PACKAGE_DISTRIBUTION_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PACKAGE_DISTRIBUTION_TOKEN}" ]]; then
+            echo "::error::The PACKAGE_DISTRIBUTION_TOKEN secret is not configured on this repository."
+            exit 1
+          fi
+          GH_TOKEN="${PACKAGE_DISTRIBUTION_TOKEN}" gh api \
+            repos/vmvarela/apt-packages/dispatches \
+            --method POST \
+            -f event_type=update-ghoten \
+            -F client_payload[version]="${VERSION}"
+          echo "Dispatched update-ghoten for v${VERSION}"

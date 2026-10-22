@@ -17,6 +17,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+    # Serialize with the Release workflow's publish job.
+    concurrency:
+      group: release-metadata
+      queue: max
+      cancel-in-progress: false
     steps:
       - uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7
 
