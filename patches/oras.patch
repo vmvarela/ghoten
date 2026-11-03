@@ -519,13 +519,14 @@ new file mode 100644
 index 000000000..b7bf601b5
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/client.go
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,114 @@
 +package oras
 +
 +import (
 +	"context"
 +	"crypto/md5"
 +	"errors"
++	"fmt"
 +
 +	orasstate "github.com/vmvarela/oras-state"
 +
@@ -537,6 +538,7 @@ index 000000000..b7bf601b5
 +	client    *orasstate.Client
 +	workspace string
 +	retryCfg  RetryConfig
++	lockID    string // id returned by Lock; verified before Put
 +}
 +
 +var _ remote.Client = (*RemoteClient)(nil)
@@ -557,9 +559,17 @@ index 000000000..b7bf601b5
 +}
 +
 +func (c *RemoteClient) Put(ctx context.Context, data []byte) error {
-+	if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
-+		return c.client.Put(ctx, c.workspace, data)
-+	}); err != nil {
++	// Fail closed if the lock is gone or its lease expired: another process
++	// may have taken over and written state since we read it.
++	if c.lockID != "" {
++		if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++			return c.client.VerifyLock(ctx, c.workspace, c.lockID)
++		}); err != nil {
++			return fmt.Errorf("refusing to write state: this process no longer holds the state lock: %w", err)
++		}
++	}
++	// Retrying the whole Put could publish after the lease expired, unchecked.
++	if err := c.client.Put(ctx, c.workspace, data); err != nil {
 +		return err
 +	}
 +	c.client.WaitForRetention()
@@ -590,6 +600,7 @@ index 000000000..b7bf601b5
 +		return c.client.Lock(ctx, c.workspace, shared)
 +	})
 +	if err == nil {
++		c.lockID = id
 +		return id, nil
 +	}
 +
@@ -613,9 +624,15 @@ index 000000000..b7bf601b5
 +}
 +
 +func (c *RemoteClient) Unlock(ctx context.Context, id string) error {
-+	return withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++	if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
 +		return c.client.Unlock(ctx, c.workspace, id)
-+	})
++	}); err != nil {
++		return err
++	}
++	if id == c.lockID {
++		c.lockID = ""
++	}
++	return nil
 +}
 diff --git a/internal/backend/remote-state/oras/retry.go b/internal/backend/remote-state/oras/retry.go
 new file mode 100644
