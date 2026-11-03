@@ -519,7 +519,7 @@ new file mode 100644
 index 000000000..b7bf601b5
 --- /dev/null
 +++ b/internal/backend/remote-state/oras/client.go
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,114 @@
 +package oras
 +
 +import (
@@ -568,9 +568,8 @@ index 000000000..b7bf601b5
 +			return fmt.Errorf("refusing to write state: this process no longer holds the state lock: %w", err)
 +		}
 +	}
-+	if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
-+		return c.client.Put(ctx, c.workspace, data)
-+	}); err != nil {
++	// Retrying the whole Put could publish after the lease expired, unchecked.
++	if err := c.client.Put(ctx, c.workspace, data); err != nil {
 +		return err
 +	}
 +	c.client.WaitForRetention()
@@ -625,10 +624,15 @@ index 000000000..b7bf601b5
 +}
 +
 +func (c *RemoteClient) Unlock(ctx context.Context, id string) error {
-+	c.lockID = ""
-+	return withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
++	if err := withRetryNoResult(ctx, c.retryCfg, func(ctx context.Context) error {
 +		return c.client.Unlock(ctx, c.workspace, id)
-+	})
++	}); err != nil {
++		return err
++	}
++	if id == c.lockID {
++		c.lockID = ""
++	}
++	return nil
 +}
 diff --git a/internal/backend/remote-state/oras/retry.go b/internal/backend/remote-state/oras/retry.go
 new file mode 100644

@@ -295,14 +295,30 @@ if [[ "$TTL_STATUS" -eq 0 ]]; then
   echo "ERROR: apply persisted state after its lock lease expired." >&2
   exit 1
 fi
-if ! grep -qi "lock" <<<"$TTL_OUTPUT"; then
-  echo "ERROR: expired-lease apply failed, but not with a recognizable lock diagnostic." >&2
+if ! grep -q "refusing to write state" <<<"$TTL_OUTPUT"; then
+  echo "ERROR: expired-lease apply did not fail with the adapter's refusal diagnostic." >&2
   printf '%s\n' "$TTL_OUTPUT" >&2
   exit 1
 fi
-if "$GHOTEN_BIN" -chdir="$TTL_DIR" state pull 2>/dev/null | grep -q "terraform_data"; then
-  echo "ERROR: expired-lease apply wrote state anyway." >&2
+# Diagnostics wrap at 80 columns, so match the token that cannot be split.
+if ! grep -q "lease_expiry" <<<"$TTL_OUTPUT"; then
+  echo "ERROR: refusal was not caused by the expired lock lease." >&2
+  printf '%s\n' "$TTL_OUTPUT" >&2
   exit 1
 fi
+# Without this the apply could have failed before reaching the state write, and
+# the refusal above would never have been exercised.
+if ! grep -q "terraform_data" "$TTL_DIR/errored.tfstate"; then
+  echo "ERROR: no errored.tfstate holding the applied resource; the apply never reached the state write." >&2
+  exit 1
+fi
+TTL_STATE="$("$GHOTEN_BIN" -chdir="$TTL_DIR" state pull)"
+TTL_STATE="$TTL_STATE" python3 - <<'PY'
+import json, os, sys
+state = json.loads(os.environ["TTL_STATE"])
+if state.get("resources"):
+    print("ERROR: expired-lease apply wrote state anyway: %r" % state["resources"], file=sys.stderr)
+    sys.exit(1)
+PY
 
 echo "ORAS backend E2E lifecycle passed."
